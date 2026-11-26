@@ -3,6 +3,7 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -692,12 +693,44 @@ func group(t *testing.T, env, arg string) (int, int, <-chan struct{}) {
 	return cmd.Process.Pid, child, gone
 }
 
+// testRun is unique to one fixture, including simultaneous test binaries.
+func testRun(t *testing.T) string {
+	t.Helper()
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	return hex.EncodeToString(id[:])
+}
+
+// leftoverRunner checks only processes this fixture started, so unrelated
+// user processes cannot make the sweep incomplete or be signalled.
+func leftoverRunner(t *testing.T, pids ...int) *Runner {
+	t.Helper()
+	var logged syncBuffer
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("runner log:\n%s", logged.String())
+		}
+	})
+	return &Runner{State: t.TempDir(), Log: slog.New(slog.NewTextHandler(&logged, nil)),
+		processes: func() ([]int, error) {
+			var live []int
+			for _, pid := range pids {
+				if running(pid) {
+					live = append(live, pid)
+				}
+			}
+			return live, nil
+		}}
+}
+
 // What an earlier run left is killed before the plugin starts again, and
 // only that: processes of another run, of none, with the run's value in an
 // argument instead of the environment, and of a run recorded in another
 // boot, are not signalled.
 func TestLeftovers(t *testing.T) {
-	const run = "0123456789abcdef0123456789abcdef"
+	run := testRun(t)
 	boot, err := bootID()
 	if err != nil {
 		t.Fatal(err)
@@ -709,14 +742,14 @@ func TestLeftovers(t *testing.T) {
 		signalled bool
 	}{
 		{"the earlier run", EnvRun + "=" + run, "", boot, true},
-		{"another run", EnvRun + "=fedcba9876543210fedcba9876543210", "", boot, false},
+		{"another run", EnvRun + "=" + testRun(t), "", boot, false},
 		{"no run", "", "", boot, false},
 		{"the run's value in an argument", "", EnvRun + "=" + run, boot, false},
 		{"another boot", EnvRun + "=" + run, "", "an earlier boot", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, child, ended := group(t, tc.env, tc.arg)
-			r := &Runner{State: t.TempDir(), Log: slog.New(slog.DiscardHandler)}
+			leader, child, ended := group(t, tc.env, tc.arg)
+			r := leftoverRunner(t, leader, child)
 			g := Grant{ID: "scan"}
 			os.MkdirAll(filepath.Dir(r.recordPath(g, run)), 0o700)
 			b, _ := json.Marshal(runRecord{Run: run, Boot: tc.boot})
@@ -785,11 +818,12 @@ while [ ! -e "$HATAORI_PLUGIN_STATE/away" ]; do sleep 0.05; done; exit 3`)
 // A record whose processes could not be looked for is kept, and done at
 // the next start.
 func TestLeftoversTriedAgain(t *testing.T) {
-	const run = "0123456789abcdef0123456789abcdef"
+	run := testRun(t)
 	boot, _ := bootID()
-	_, _, ended := group(t, EnvRun+"="+run, "")
-	r := &Runner{State: t.TempDir(), Log: slog.New(slog.DiscardHandler),
-		processes: func() ([]int, error) { return nil, errors.New("cannot list") }}
+	leader, child, ended := group(t, EnvRun+"="+run, "")
+	r := leftoverRunner(t, leader, child)
+	list := r.processes
+	r.processes = func() ([]int, error) { return nil, errors.New("cannot list") }
 	g := Grant{ID: "scan"}
 	os.MkdirAll(filepath.Dir(r.recordPath(g, run)), 0o700)
 	b, _ := json.Marshal(runRecord{Run: run, Boot: boot})
@@ -798,7 +832,7 @@ func TestLeftoversTriedAgain(t *testing.T) {
 	if _, err := os.Stat(r.recordPath(g, run)); err != nil {
 		t.Fatal("a record that could not be done is dropped")
 	}
-	r.processes = nil
+	r.processes = list
 	r.leftovers(context.Background(), g)
 	select {
 	case <-ended:
@@ -820,12 +854,14 @@ func TestLeftoversOfAPluginNoLongerConfigured(t *testing.T) {
 }
 
 func leftoversOf(t *testing.T, grants []Grant) {
-	const run = "0123456789abcdef0123456789abcdef"
+	run := testRun(t)
 	boot, _ := bootID()
-	_, _, ended := group(t, EnvRun+"="+run, "")
-	r := &Runner{State: t.TempDir(), Log: slog.New(slog.DiscardHandler), Grants: grants,
-		Tokens: &fakeTokens{live: map[string]bool{}}, As: func(control.Caller) control.API { return nil },
-		ReadToken: func(string) ([]byte, error) { return []byte("tok"), nil }}
+	leader, child, ended := group(t, EnvRun+"="+run, "")
+	r := leftoverRunner(t, leader, child)
+	r.Grants = grants
+	r.Tokens = &fakeTokens{live: map[string]bool{}}
+	r.As = func(control.Caller) control.API { return nil }
+	r.ReadToken = func(string) ([]byte, error) { return []byte("tok"), nil }
 	old := Grant{ID: "removed"}
 	os.MkdirAll(filepath.Dir(r.recordPath(old, run)), 0o700)
 	b, _ := json.Marshal(runRecord{Run: run, Boot: boot})
@@ -846,7 +882,7 @@ func leftoversOf(t *testing.T, grants []Grant) {
 
 // A look that the daemon's stop ends keeps its record.
 func TestLeftoversStopWithTheDaemon(t *testing.T) {
-	const run = "0123456789abcdef0123456789abcdef"
+	run := testRun(t)
 	boot, _ := bootID()
 	r := &Runner{State: t.TempDir(), Log: slog.New(slog.DiscardHandler)}
 	g := Grant{ID: "scan"}
@@ -864,7 +900,7 @@ func TestLeftoversStopWithTheDaemon(t *testing.T) {
 // A process of the run that the first listing did not show, as one forked
 // meanwhile, is found by the next pass.
 func TestLeftoversLookAgain(t *testing.T) {
-	const run = "0123456789abcdef0123456789abcdef"
+	run := testRun(t)
 	boot, _ := bootID()
 	leader, child, ended := group(t, EnvRun+"="+run, "")
 	calls := 0

@@ -171,10 +171,24 @@ func (h *host) attach(c *net.UnixConn, dec *json.Decoder, enc *json.Encoder, req
 		enc.Encode(response{Error: "the command runs on pipes: there is no terminal to attach to"})
 		return
 	}
-	h.attached.Add(1)
+	// The kernel identifies the peer even when it is an older attach client
+	// started through an unrelated link or renamed executable.
+	pid, err := peerPID(c)
+	if err != nil {
+		h.log.dropped("identifying an attached terminal", err)
+		pid = 0
+	}
+	h.attachMu.Lock()
+	if h.attachments == nil {
+		h.attachments = make(map[*net.UnixConn]int)
+	}
+	h.attachments[c] = pid
+	h.attachMu.Unlock()
 	defer func() {
+		h.attachMu.Lock()
+		delete(h.attachments, c)
 		h.detached.Store(time.Now().UnixMilli())
-		h.attached.Add(-1)
+		h.attachMu.Unlock()
 	}()
 	h.log.printf("a terminal attached")
 	// Written by the reader, which stream may leave running when it returns.

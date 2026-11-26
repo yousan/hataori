@@ -138,7 +138,7 @@ func TestPIDOneDoesNotOwnAdoptedTerminals(t *testing.T) {
 	if !slices.Equal(pids, []int{1248409}) {
 		t.Fatalf("own PIDs: %v", pids)
 	}
-	for _, recorded := range [][]int{nil, {1248409}} {
+	for _, recorded := range [][]int{nil, {1}, {1248409}, {1, 1248409}} {
 		hidden := ownedDevices(ps, slices.Concat(recorded, pids))
 		if hidden["/dev/pts/62"] || hidden["/dev/pts/63"] {
 			t.Errorf("adopted tmux terminals hidden: %v", hidden)
@@ -187,5 +187,22 @@ func TestPIDOneListsAndChecksPane(t *testing.T) {
 	}
 	if p, own, err := l.Check(context.Background(), "%1", nil, true); err != nil || p == nil || !own {
 		t.Fatalf("attach: %v %v %v", p, own, err)
+	}
+}
+
+// A renamed attach is not discoverable by its name, but its socket PID
+// protects its terminal and descendants, even under a PID 1 daemon.
+func TestConnectedPIDHidesRenamedAttach(t *testing.T) {
+	ps := parsePS(readTestdata(t, "ps-linux-procps-ng-4.0.4.txt"))
+	ps[0].comm = "hataori"
+	ps[1].ppid = 1
+	ps[3].comm = "unrelated-client"
+	hidden := ownedDevices(ps, []int{1, ps[3].pid})
+	if !hidden["/dev/pts/63"] || hidden["/dev/pts/62"] || hidden["/dev/pts/64"] {
+		t.Fatalf("hidden: %v", hidden)
+	}
+	ps[0].tty = "/dev/pts/99"
+	if !ownedDevices(ps, []int{1})["/dev/pts/99"] {
+		t.Fatal("PID 1's own terminal exposed")
 	}
 }

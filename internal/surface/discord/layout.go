@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"time"
 
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/snowflake/v2"
@@ -52,6 +53,7 @@ type layoutChannel struct {
 type guildLayout struct {
 	channels map[snowflake.ID]layoutChannel // channels and categories, obfuscated ones too
 	threads  map[snowflake.ID]layoutChannel // active threads
+	current  bool                           // from a Guild Create of this session
 }
 
 func newGuildLayout() *guildLayout {
@@ -101,6 +103,7 @@ func (d *Driver) layoutEvent(t string, payload []byte) (bool, error) {
 			return true, nil
 		}
 		gl := newGuildLayout()
+		gl.current = true
 		for _, c := range g.Channels {
 			gl.channels[c.ID] = c
 		}
@@ -179,7 +182,9 @@ func (d *Driver) layoutEvent(t string, payload []byte) (bool, error) {
 func (d *Driver) newSession(guilds []discord.UnavailableGuild) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for id := range d.guilds {
+	d.session = time.Now()
+	for id, l := range d.guilds {
+		l.current = false
 		if !slices.ContainsFunc(guilds, func(g discord.UnavailableGuild) bool { return g.ID == id }) {
 			delete(d.guilds, id)
 		}

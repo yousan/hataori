@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -172,7 +173,23 @@ func TestLimitLoginAndCrashEachGiveOneLineAndOneFailure(t *testing.T) {
 func TestProgressLineAppearsIsEditedAndRemoved(t *testing.T) {
 	c := &clock{}
 	withClock(t, c)
-	r := newChatRoot(t, nil)
+	// The fake tool waits for the test instead of racing an eight-second
+	// sleep against scheduling, outbox commits, and clock changes.
+	bin := t.TempDir()
+	release := filepath.Join(bin, "release")
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "sleep"), []byte("#!/bin/sh\nwhile [ ! -e \"$TOOL_RELEASE\" ]; do \"$REAL_SLEEP\" 0.01; done\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := newChatRoot(t, func(cfg map[string]any) {
+		adapters := cfg["adapters"].(map[string]any)
+		adapter := adapters[fake.Name].(fake.Config)
+		adapter.Env = []string{"PATH=" + bin, "TOOL_RELEASE=" + release, "REAL_SLEEP=" + sleep}
+		adapters[fake.Name] = adapter
+	})
 	startDaemon(t, r.root)
 	r.connected(t)
 	th := r.order(t, 0, "!go repo:"+bareRepo(t)+" tool wait 8s\nreply finished")
@@ -193,12 +210,35 @@ func TestProgressLineAppearsIsEditedAndRemoved(t *testing.T) {
 		}
 		return
 	}
+	db := r.db(t)
+	settled := func() {
+		t.Helper()
+		eventually(t, "the reader and outbox to settle", 10*time.Second, func() bool {
+			var pending int
+			var head, cursor uint64
+			err := db.QueryRow(`SELECT (SELECT coalesce(max(pos), 0) FROM events),
+				(SELECT coalesce(max(pos), 0) FROM chat_cursors),
+				(SELECT count(*) FROM chat_outbox WHERE state = 'pending')`).Scan(&head, &cursor, &pending)
+			return err == nil && cursor >= head && pending == 0
+		})
+	}
+	settled()
 	c.add(95 * time.Second)
 	eventually(t, "the line", 5*time.Second, func() bool { p, _, _ := line(); return p == 1 })
+	// A driver's Post is observed before its sent_at commit. Wait for
+	// that commit so the clock jump advances the edit age, not sent_at.
+	settled()
 	c.add(20 * time.Second)
 	eventually(t, "an edit", 5*time.Second, func() bool { _, e, _ := line(); return e >= 1 })
 	if len(r.events(t, "tool_ended", th)) != 0 {
 		t.Fatal("the tool ended before the line was edited")
+	}
+	settled()
+	// Core events use real time. Restore that clock before final text
+	// opens another quiet stretch, or a tick can post a second line.
+	c.add(-115 * time.Second)
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	r.posted(t, th, "finished")
 	eventually(t, "the line removed", 5*time.Second, func() bool { _, _, d := line(); return d == 1 })

@@ -16,8 +16,9 @@ The same value is replaced the same way in every file:
   READY's _trace and resume URL       -> fixed values
   profile tags, discriminators        -> TAG, 0000
 
-GUILD_CREATE and GUILD_ROLE_UPDATE are dropped: the driver does not read them, and they
-hold the server's member and role lists. created.json is dropped.
+GUILD_CREATE and GUILD_ROLE_UPDATE are dropped, as they hold the server's member and role
+lists, except a trimmed one ("trimmed" in the file): it holds only what the driver reads.
+created.json is dropped.
 """
 
 import json, os, re, sys
@@ -62,7 +63,7 @@ def main():
             if not n.endswith(".json") or n == "created.json":
                 continue
             d = json.load(open(os.path.join(r, n)))
-            if d.get("source") == "gateway" and d.get("t") in DROP:
+            if d.get("source") == "gateway" and d.get("t") in DROP and not d.get("trimmed"):
                 continue
             docs[(os.path.basename(r.rstrip("/")), n)] = d
 

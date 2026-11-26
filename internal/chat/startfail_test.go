@@ -41,7 +41,7 @@ func TestAStartThatFailsLaterIsShownOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The event names no files: the detail is the agent's, shown verbatim.
-	want := couldNotStart + "blocked at start.\n" + f.driver.Verbatim(trustBlocked)
+	want := couldNotStart + "\n" + f.driver.Verbatim("blocked at start") + "\n" + f.driver.Verbatim(trustBlocked)
 	calls := f.postedUntil(t, id, want)
 	if texts(calls) != "the prompt|"+want {
 		t.Fatalf("thread shows %q, want the prompt and one message with the reason", texts(calls))
@@ -84,7 +84,7 @@ func TestAStartFailureWithTheDialogPostsItBelowTheReason(t *testing.T) {
 	const after = "\nMore of the adapter's."
 	f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start",
 		"detail": why + "> " + strings.Join(shown, "\n> ") + after, "trust": []string{".agent/settings.json"}})
-	want := couldNotStart + "blocked at start.\n" + why + f.driver.Verbatim(strings.Join(shown, "\n")) + after + "\nWhat to do next: "
+	want := couldNotStart + "\n" + f.driver.Verbatim("blocked at start") + "\n" + why + f.driver.Verbatim(strings.Join(shown, "\n")) + after + "\nWhat to do next: "
 	var got string
 	waitFor(t, "the message", func() bool {
 		for _, c := range f.driver.Calls(f.conv(id)) {
@@ -107,7 +107,7 @@ func TestAStartFailuresOutputIsShownVerbatim(t *testing.T) {
 	f.showing(t)
 	const out = "> # not\n[a link](https://example.com)"
 	f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start", "detail": out})
-	want := couldNotStart + "blocked at start.\n" + f.driver.Verbatim(out)
+	want := couldNotStart + "\n" + f.driver.Verbatim("blocked at start") + "\n" + f.driver.Verbatim(out)
 	if got := texts(f.postedUntil(t, id, want)); got != "the prompt|"+want {
 		t.Fatalf("thread shows %q", got)
 	}
@@ -121,7 +121,7 @@ func TestAStartFailureWithTheScreenPostsTheReasonOnly(t *testing.T) {
 	f.showing(t)
 	f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start",
 		"detail": "\x1b[2J\x1b[HAccessing workspace:\r\n/w\r\n\x1b[1mQuick safety check\x1b[0m"})
-	want := couldNotStart + "blocked at start"
+	want := couldNotStart + "\n" + f.driver.Verbatim("blocked at start")
 	if got := texts(f.postedUntil(t, id, want)); got != "the prompt|"+want {
 		t.Fatalf("thread shows %q", got)
 	}
@@ -136,7 +136,7 @@ func TestALaterSessionsStartFailureIsShownToo(t *testing.T) {
 	f.event(t, id, "state", map[string]any{"from": "creating", "to": "idle"})
 	ev := map[string]any{"from": "creating", "to": "failed", "reason": "cannot resume"}
 	f.event(t, id, "state", ev)
-	want := couldNotStart + "cannot resume"
+	want := couldNotStart + "\n" + f.driver.Verbatim("cannot resume")
 	if got := texts(f.postedUntil(t, id, want)); got != "the prompt|"+want {
 		t.Fatalf("thread shows %q", got)
 	}
@@ -188,7 +188,7 @@ func TestAStartFailureWithALongDialogIsCut(t *testing.T) {
 			f.showing(t)
 			f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start",
 				"detail": why + "> " + strings.ReplaceAll(c.shown, "\n", "\n> "), "trust": []string{".agent/settings.json"}})
-			want := couldNotStart + "blocked at start.\n" + why + f.driver.Verbatim(c.want)
+			want := couldNotStart + "\n" + f.driver.Verbatim("blocked at start") + "\n" + why + f.driver.Verbatim(c.want)
 			if c.cut {
 				want += "\n" + detailCut
 			}
@@ -222,7 +222,7 @@ func TestAFailureReadBeforeThePromptIsPostedAfterIt(t *testing.T) {
 	f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start"})
 	time.Sleep(50 * time.Millisecond) // the outbox's retries, had it a row
 	f.fe.Message(trigger)
-	want := couldNotStart + "blocked at start"
+	want := couldNotStart + "\n" + f.driver.Verbatim("blocked at start")
 	calls := f.postedUntil(t, id, want)
 	if texts(calls) != "the prompt|"+want || calls[1].Message.ReplyTo == nil || *calls[1].Message.ReplyTo != calls[0].Ref {
 		t.Fatalf("posts %+v, want the prompt, then the failure replying to it", calls)
@@ -242,7 +242,7 @@ func TestAFailureWhosePromptIsLostIsPostedAfterTheWait(t *testing.T) {
 	st.DB.Exec(`DROP TRIGGER lost`)
 	f.showing(t)
 	f.event(t, id, "state", map[string]any{"from": "creating", "to": "failed", "reason": "blocked at start"})
-	want := couldNotStart + "blocked at start"
+	want := couldNotStart + "\n" + f.driver.Verbatim("blocked at start")
 	if got := texts(f.postedUntil(t, id, want)); got != want {
 		t.Fatalf("thread shows %q", got)
 	}
@@ -486,7 +486,7 @@ func TestAReplacedSessionsFailureIsNotShown(t *testing.T) {
 			}
 			var want []string
 			if !c.notShown {
-				want = append(want, couldNotStart+"cannot resume")
+				want = append(want, couldNotStart+"\n"+f.driver.Verbatim("cannot resume"))
 			}
 			// The trigger again, before the events are read: what it writes.
 			f.fe.Message(trigger)

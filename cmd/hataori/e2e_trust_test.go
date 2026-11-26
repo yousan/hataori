@@ -45,7 +45,7 @@ func TestTheChoicesOfABlockedStart(t *testing.T) {
 	r.driver.Inject(c1, fakesurface.Webhook(e2eHook), "!go repo:"+other+" reply first without")
 	thA := r.thread(t, 0)
 	msg := r.blockedMessage(t, thA)
-	for _, want := range []string{"This thread could not start: blocked at start", "What to do next: choose below.",
+	for _, want := range []string{"This thread could not start: \n" + r.driver.Verbatim("blocked at start"), "What to do next: choose below.",
 		`"trust_files" of the scope "c1"`, ".claude/settings.json"} {
 		if !strings.Contains(msg.Message.Text, want) {
 			t.Fatalf("the message has no %q: %q", want, msg.Message.Text)

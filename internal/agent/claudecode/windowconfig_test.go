@@ -18,6 +18,8 @@ func TestWindowHookReportsTheConfigDirInUse(t *testing.T) {
 	}{
 		{map[string]string{"CLAUDE_CONFIG_DIR": "/home/alice/.claude-work", "HOME": "/home/alice"}, "/home/alice/.claude-work"},
 		{map[string]string{"HOME": "/home/alice"}, "/home/alice/.claude"},
+		{map[string]string{"CLAUDE_CONFIG_DIR": "", "HOME": "/home/alice"}, "/home/alice/.claude"},
+		{map[string]string{"CLAUDE_CONFIG_DIR": "/home/alice/.claude", "HOME": "/home/alice"}, "/home/alice/.claude"},
 	} {
 		env := map[string]string{"TMUX": "/tmp/tmux-1000/default,4242,0", "TMUX_PANE": "%7", "CLAUDE_CODE_ENTRYPOINT": "cli"}
 		for k, v := range c.env {
@@ -28,7 +30,7 @@ func TestWindowHookReportsTheConfigDirInUse(t *testing.T) {
 			terminal: func(context.Context, int) (int, string, bool, error) { return 4242, "/dev/pts/9", true, nil },
 			send:     func(_ context.Context, _ string, r window.Report) error { sent = append(sent, r); return nil }}
 		h.main([]string{"--window", "--root", t.TempDir()}, bytes.NewReader(capturedPayload(t, "2.1.328/paste_tabs/hooks/01-SessionStart.json")), io.Discard)
-		if len(sent) != 1 || sent[0].ConfigDir != c.want {
+		if len(sent) != 1 || sent[0].ConfigDir != c.want || sent[0].ConfigDirDefault != (c.env["CLAUDE_CONFIG_DIR"] == "") {
 			t.Fatalf("%v: reported %+v, want the config dir %s", c.env, sent, c.want)
 		}
 	}

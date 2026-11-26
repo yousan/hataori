@@ -162,7 +162,7 @@ func (g mirrorRepo) replace(ctx context.Context, repo string) error {
 	// only for the value that was looked at.
 	if newHead != "" && inTheWay(oldHead, want) {
 		// No branch can be where the old one is, so HEAD goes first.
-		g.moveHead(ctx, oldHead, newHead, refs)
+		g.moveHead(ctx, oldHead, newHead, refs, want[oldHead] == "")
 		newHead = ""
 	}
 	g.change(ctx, deletes)
@@ -171,7 +171,7 @@ func (g mirrorRepo) replace(ctx context.Context, repo string) error {
 		if _, err := g.git(ctx, "", "rev-parse", "--verify", "--quiet", newHead); err != nil {
 			return nil // it could not be made
 		}
-		g.moveHead(ctx, oldHead, newHead, refs)
+		g.moveHead(ctx, oldHead, newHead, refs, want[oldHead] == "")
 	}
 	return nil
 }
@@ -236,8 +236,8 @@ func (g mirrorRepo) guard(ctx context.Context) error {
 	return nil
 }
 
-// head is the branch that the mirror's HEAD names, when repo has it no
-// longer, and the one that repo's HEAD names, or "" when that cannot be told:
+// head is the branch that the mirror's HEAD names, and the one that repo's
+// HEAD names, or "" when that cannot be told or is already the same:
 // a mirror whose HEAD names no branch is cloned without a working tree.
 func (g mirrorRepo) head(ctx context.Context, repo string, want map[string]string) (old, now string, err error) {
 	old, err = g.git(ctx, "", "symbolic-ref", "--quiet", "HEAD")
@@ -248,9 +248,7 @@ func (g mirrorRepo) head(ctx context.Context, repo string, want map[string]strin
 	if err != nil {
 		return "", "", err
 	}
-	if old = strings.TrimSpace(old); want[old] != "" {
-		return "", "", nil
-	}
+	old = strings.TrimSpace(old)
 	out, err := g.git(ctx, "", "ls-remote", "--symref", "--", repo, "HEAD")
 	if err != nil {
 		return old, "", nil
@@ -258,19 +256,23 @@ func (g mirrorRepo) head(ctx context.Context, repo string, want map[string]strin
 	for _, line := range strings.Split(out, "\n") {
 		target, ok := strings.CutPrefix(line, "ref: ")
 		if target, isHead := strings.CutSuffix(target, "\tHEAD"); ok && isHead && strings.HasPrefix(target, "refs/heads/") && want[target] != "" {
+			if target == old {
+				return old, "", nil
+			}
 			return old, target, nil
 		}
 	}
 	return old, "", nil
 }
 
-// moveHead points HEAD to the branch now and then deletes old, which it named.
-func (g mirrorRepo) moveHead(ctx context.Context, old, now string, before []mirrorRef) {
+// moveHead points HEAD to now. The old branch is deleted only when upstream
+// no longer has it; changing a default branch must not drop a branch.
+func (g mirrorRepo) moveHead(ctx context.Context, old, now string, before []mirrorRef, dropOld bool) {
 	if _, err := g.git(ctx, "", "symbolic-ref", "HEAD", now); err != nil {
 		return
 	}
 	for _, r := range before {
-		if r.name == old && !r.symref {
+		if dropOld && r.name == old && !r.symref {
 			g.change(ctx, []string{"delete " + r.name + " " + r.id})
 		}
 	}

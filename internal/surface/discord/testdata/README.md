@@ -91,6 +91,28 @@ The bot posted a message (`rest-lamp-post.json`) and reacted to it with the work
 
 Three posts show mentions. `rest-post-notify.json` mentions the bot itself, so that no person is pinged, with `allowed_mentions` `{parse: [], users: [<bot>]}`; the service reports exactly that user in `mentions`. `rest-post-everyone.json` holds `@everyone` and a role mention with `{parse: []}`; the service reports `mention_everyone: false`, no roles and no users. `rest-post-quiet.json` has flag 4096 (suppress notifications) and comes back with it. `scrub.py` keeps names made only of symbols, such as an emoji's.
 
+## Calls (taken for #869)
+
+`v10/calls/`, taken on 2026-11-26 with API v10 by a test bot in a test server's channel, with the environment above. The bot had a role of its own (it was invited with a permission), and the server had one more role. `TestCapturedCalls` reads every message of it.
+
+```sh
+python3 capture.py calls /tmp/raw/calls 60
+python3 capture.py cleanup /tmp/raw/calls
+python3 scrub.py /tmp/scrubbed /tmp/raw/calls && mv /tmp/scrubbed/calls v10/calls
+```
+
+The run says its steps on the terminal, one after another: what the person posts in the channel, word for word. A message that is another is not kept, and the run goes on waiting. The webhook's step is done with `curl`, as in the person run. Each message is kept as the gateway sends it (`gw-<step>.json`) and as REST reads it (`rest-<step>.json`); of a message that was edited, and of a reply whose post was deleted, the latter only, with the edit itself in `gw-edited-update.json`. Of Guild Create, `gw-guild.json` keeps the channel, and the two roles' `id`, `managed` and `tags`. No other dispatch is kept. A person deletes what they posted; the cleanup run deletes the bot's posts. Its ids are numbered on their own, from `1000000000000000001`.
+
+Two steps accept another message than the one they ask for, and the capture holds that one. Where the step asks for a quote begun with `>>> `, `quoted-lines` has `> ` at the start of each quoted line. `forward` is the step's text forwarded from another channel of the server, not from the message's own channel.
+
+What the service reported:
+
+- `mentions` lists a mention in a quote and in a code block left open, but not one in inline code or in a closed code block. The driver leaves out the block left open all the same.
+- `mention_everyone` is true for `@everyone` and for `@here`, from a person who may mention everyone.
+- A reply's ping puts the post's author in `mentions` when the mention is on, and not when it is off. Read after the post was deleted, the reply has `referenced_message: null`, and `mentions` still lists the author.
+- A forward is `type` 0 with flag 16384 (it has a snapshot), and has no content and no mentions of its own. Its `message_reference` is of `type` 1 and names the other channel. The snapshot's message holds the text, with no author.
+- A webhook's message has the webhook's id as its author's, with `bot: true`.
+
 ## Observed, and worth knowing
 
 - Messages read through REST have no `guild_id`, in a channel as in a direct conversation; only gateway messages say which they are.

@@ -2613,23 +2613,50 @@ func (a *api) checkHost(name string) error {
 	return fmt.Errorf("core: %s: %w", name, ErrForbidden)
 }
 
-// hostPIDs are the session hosts that may hold a terminal now.
+// hostPIDs includes session hosts and connected attach clients. The stored
+// launch is written before the host starts, its PID only afterward.
 func (c *Core) hostPIDs(ctx context.Context) ([]int, error) {
-	rows, err := c.Store.DB.QueryContext(ctx, `SELECT host_pid FROM sessions WHERE host_pid > 0 AND state NOT IN (?, ?, ?)`,
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT id, host_pid FROM sessions WHERE (host_pid > 0 OR spec != '') AND state NOT IN (?, ?, ?)`,
 		string(control.Asleep), string(control.Closed), string(control.Removed))
 	if err != nil {
 		return nil, fmt.Errorf("core: %w", err)
 	}
-	defer rows.Close()
-	var pids []int
+	type runningHost struct {
+		id  int64
+		pid int
+	}
+	var hosts []runningHost
 	for rows.Next() {
-		var pid int
-		if err := rows.Scan(&pid); err != nil {
+		var h runningHost
+		if err := rows.Scan(&h.id, &h.pid); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("core: %w", err)
 		}
-		pids = append(pids, pid)
+		hosts = append(hosts, h)
 	}
-	return pids, rows.Err()
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	var pids []int
+	for _, h := range hosts {
+		if h.pid > 0 {
+			pids = append(pids, h.pid)
+		}
+		r, ok := c.Runner.(interface {
+			AttachedPIDs(context.Context, int64) ([]int, error)
+		})
+		if !ok {
+			return nil, fmt.Errorf("core: session %d: attached processes cannot be identified", h.id)
+		}
+		attached, err := r.AttachedPIDs(ctx, h.id)
+		if err != nil {
+			return nil, err
+		}
+		pids = append(pids, attached...)
+	}
+	return pids, nil
 }
 
 func (a *api) HostTerminals(ctx context.Context) ([]control.HostTerminal, error) {

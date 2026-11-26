@@ -185,7 +185,14 @@ func startTmux(t *testing.T, cmd string) []string {
 		t.Skip("no tmux")
 	}
 	t.Setenv("TMUX", "")
-	sock := []string{"-L", fmt.Sprintf("hataori-hostterm-test-%d", os.Getpid()), "-f", "/dev/null"}
+	dir, err := os.MkdirTemp("/tmp", "hht") // short enough for macOS Unix sockets
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	// kill-server may return before the old server exits. A new fixture
+	// must never connect to its socket while that shutdown is in flight.
+	sock := []string{"-S", filepath.Join(dir, "s"), "-f", "/dev/null"}
 	tmux := func(args ...string) error {
 		out, err := exec.Command("tmux", slices.Concat(sock, args)...).CombinedOutput()
 		if err != nil {
@@ -198,6 +205,16 @@ func startTmux(t *testing.T, cmd string) []string {
 	}
 	t.Cleanup(func() { tmux("kill-server") })
 	return sock
+}
+
+// Every fixture has a server of its own, including two alive at once.
+// Its socket is never reused while an earlier server may still be exiting.
+func TestTmuxFixturesAreIndependent(t *testing.T) {
+	first := startTmux(t, "exec sleep 600")
+	second := startTmux(t, "exec sleep 600")
+	if slices.Equal(first, second) {
+		t.Fatal("tmux fixtures share a socket")
+	}
 }
 
 // Only the fixed commands run: to list and read, which change nothing, ps
