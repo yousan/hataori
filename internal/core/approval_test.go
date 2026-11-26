@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -250,6 +251,45 @@ func approvalState(t *testing.T, f *fixture, req control.RequestID) string {
 		t.Fatal(err)
 	}
 	return state
+}
+
+// #902: the window refuses the interrupt, but the approved reason was
+// taken and handed over. A later refusal must not contradict that input.
+func TestApprovalCannotBeRefusedAfterItsInterruptWasNotTaken(t *testing.T) {
+	ctx := context.Background()
+	f, _, sid, _, req := approvalFixture(t)
+	f.runner.interruptErr = fmt.Errorf("the fake's window: %w", control.ErrNotInterrupted)
+	before := f.runner.Calls()
+	if err := f.owner.Answer(ctx, req, control.Answer{Allow: true}); !errors.Is(err, control.ErrNotInterrupted) {
+		t.Fatalf("the approval: %v", err)
+	}
+	if got := strings.TrimPrefix(f.runner.Calls(), before+"; "); got != "deliver supervisor\nurgent" {
+		t.Fatalf("runner calls after the approval: %q", got)
+	}
+	if err := f.owner.Answer(ctx, req, control.Answer{Choices: []string{"refuse"}}); !errors.Is(err, ErrNotOpen) {
+		t.Errorf("a refusal after the reason was given: %v", err)
+	}
+	if got := approvalState(t, f, req); got != "not_interrupted" {
+		t.Errorf("approval state: %q", got)
+	}
+	var data []byte
+	if err := f.core.Store.DB.QueryRow(`SELECT data FROM events WHERE kind = 'approval_answered'`).Scan(&data); err != nil {
+		t.Fatal(err)
+	}
+	var answer struct {
+		Allow   bool   `json:"allow"`
+		Outcome string `json:"outcome"`
+	}
+	if err := json.Unmarshal(data, &answer); err != nil {
+		t.Fatal(err)
+	}
+	if !answer.Allow || answer.Outcome != "not_interrupted" {
+		t.Errorf("approval_answered contradicts the accepted reason: %s", data)
+	}
+	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.TurnEnded, Status: agent.Completed})
+	if calls := f.runner.Calls(); strings.Contains(calls, "interrupt") || strings.Count(calls, "deliver supervisor\nurgent") != 1 {
+		t.Fatalf("runner calls after the turn ended: %q", calls)
+	}
 }
 
 // #523: the first answer's interrupt fails (the session is not reconnected
