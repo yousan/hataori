@@ -231,13 +231,18 @@ func (r *waking) asked(ctx context.Context) (map[control.ThreadID]bool, error) {
 // before it: that wake left the turn ends a gate held.
 func (r *waking) wokenTo(ctx context.Context, id control.ThreadID) (uint64, error) {
 	var to sql.NullInt64
-	if err := r.w.Core.Store.DB.QueryRowContext(ctx, `SELECT max(woken) FROM supervisor_asked WHERE scope = ? AND thread = ?`,
-		r.w.Scope, int64(id)).Scan(&to); err != nil {
+	if err := r.w.Core.Store.DB.QueryRowContext(ctx, `SELECT max(woken) FROM supervisor_asked WHERE scope = ? AND thread = ? AND woken_home = ?`,
+		r.w.Scope, int64(id), int64(r.w.target)).Scan(&to); err != nil {
 		return 0, fmt.Errorf("supervisor: threads asked for by a person: %w", err)
 	}
 	var given sql.NullInt64
-	if err := r.w.Core.Store.DB.QueryRowContext(ctx, `SELECT upto FROM supervisor_given WHERE scope = ? AND thread = ?`,
-		r.w.Scope, int64(id)).Scan(&given); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	query := `SELECT upto FROM supervisor_given WHERE scope = ? AND thread = ?`
+	args := []any{r.w.Scope, int64(id)}
+	if r.w.target != 0 {
+		query = `SELECT upto FROM supervisor_conversation_given WHERE scope = ? AND thread = ? AND home = ?`
+		args = append(args, int64(r.w.target))
+	}
+	if err := r.w.Core.Store.DB.QueryRowContext(ctx, query, args...).Scan(&given); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("supervisor: threads given past a hold: %w", err)
 	}
 	return uint64(max(to.Int64, given.Int64)), nil
@@ -278,7 +283,8 @@ func (r *waking) carries(ctx context.Context, key string, threads []Ended) (func
 // made again.
 func (r *waking) drops(ctx context.Context) func(*store.Tx) error {
 	return func(tx *store.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE supervisor_asked SET wake = NULL WHERE scope = ? AND woken IS NULL`, r.w.Scope)
+		_, err := tx.ExecContext(ctx, `UPDATE supervisor_asked SET wake = NULL WHERE scope = ? AND woken IS NULL AND
+			CASE WHEN ? = 0 THEN instr(coalesce(wake, ''), '~') = 0 ELSE substr(wake, instr(wake, '~') + 1) = CAST(? AS TEXT) AND instr(wake, '~') > 0 END`, r.w.Scope, int64(r.w.target), int64(r.w.target))
 		return err
 	}
 }
@@ -295,8 +301,8 @@ func (r *waking) renames(ctx context.Context, from, to string) func(*store.Tx) e
 // in the transaction that stores it as given, up to to.
 func (r *waking) clears(ctx context.Context, key string, to uint64) func(*store.Tx) error {
 	return func(tx *store.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE supervisor_asked SET woken = ? WHERE scope = ? AND wake = ? AND woken IS NULL`,
-			int64(to), r.w.Scope, key)
+		_, err := tx.ExecContext(ctx, `UPDATE supervisor_asked SET woken = ?, woken_home = ? WHERE scope = ? AND wake = ? AND woken IS NULL`,
+			int64(to), int64(r.w.target), r.w.Scope, key)
 		return err
 	}
 }

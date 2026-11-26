@@ -785,6 +785,35 @@ var migrations = []Migration{
 	{Name: "pending_inputs.written_text", Up: execAll(
 		`ALTER TABLE pending_inputs ADD COLUMN written_text TEXT`,
 	)},
+	// The accepted input's confined origin, at the event-log boundary before
+	// it was taken. Keeping the history routes old turn ends consistently.
+	{Name: "thread_homes", Up: execAll(
+		`ALTER TABLE supervisor_asked ADD COLUMN woken_home INTEGER NOT NULL DEFAULT 0`,
+		`CREATE TABLE supervisor_conversation_given (
+			scope TEXT NOT NULL,
+			home INTEGER NOT NULL,
+			thread INTEGER NOT NULL,
+			upto INTEGER NOT NULL,
+			PRIMARY KEY (scope, home, thread)
+		)`,
+		`CREATE TABLE thread_homes (
+			thread INTEGER NOT NULL REFERENCES threads(id),
+			after INTEGER NOT NULL,
+			home INTEGER NOT NULL REFERENCES threads(id),
+			PRIMARY KEY (thread, after)
+		)`,
+		`CREATE TABLE supervisor_conversation_wakes (
+			scope TEXT NOT NULL,
+			thread INTEGER NOT NULL,
+			pos INTEGER NOT NULL,
+			since INTEGER NOT NULL,
+			send_to INTEGER,
+			send_key TEXT,
+			send_text TEXT,
+			send_files TEXT,
+			PRIMARY KEY (scope, thread)
+		)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

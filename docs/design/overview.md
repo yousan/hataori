@@ -1875,6 +1875,8 @@ Declared in `internal/control`, `internal/surface` and `internal/agent`; the pac
 
 ### Control API
 
+Worker input routing (#877) uses the connection's daemon-bound `Caller.AsksIn` as the confined origin. `Start` and `Send` record it atomically with accepted input, including when an approved proposal or interrupt reconstructs the original caller. A repeated key or a refused operation changes no home, and ordinary person input changes none. The store retains origins at event-log boundaries: each worker end belongs to its origin when written, so a later send cannot reroute an earlier pending end. There is no client-supplied home field and no wire or event encoding change. Waker positions and pending digests are independent per origin; a dead conversation's reader delivers its pending work to the own thread, using a key that keeps the original reader's identity even after fallback. Conversation wakes use ordinary `Send` with `NoAnswer` and `Refuse`, through the conversation-place scheduler; only the own thread uses `AsFresh` and the sleep-before-wake path.
+
 ```go
 // Package control: everything a client can ask of the core.
 

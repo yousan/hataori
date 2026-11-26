@@ -286,6 +286,9 @@ func (r *waking) carriesReminders(ctx context.Context, key string, due []Reminde
 // wake, as it is made again.
 func (r *waking) dropsReminders(ctx context.Context) func(*store.Tx) error {
 	return func(tx *store.Tx) error {
+		if r.w.target != 0 {
+			return nil
+		}
 		_, err := tx.ExecContext(ctx, `UPDATE supervisor_reminders SET wake = NULL WHERE scope = ? AND state = ?`, r.w.Scope, reminderOpen)
 		return err
 	}
@@ -328,6 +331,7 @@ func ReminderKey(sv control.ThreadID, to uint64, numbers ...int64) string {
 // WakeReminders returns the reminders that a wake's key says are all it
 // gave; nil for any other wake.
 func WakeReminders(key string) []int64 {
+	key, _, _ = strings.Cut(key, "~")
 	rest, _ := strings.CutPrefix(key, WakeKeyPrefix)
 	parts := strings.SplitN(rest, "-", 3)
 	if len(parts) < 3 {
