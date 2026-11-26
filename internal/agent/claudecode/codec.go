@@ -224,6 +224,7 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 		q := queued{id: in.ID, text: text}
 		if c.spec.Confine != nil {
 			clean := cleanPaste(in.Text)
+			q.controls = noControls(clean) != clean
 			for _, o := range []string{bangOrSlash(clean), bangOrSlash(strings.ReplaceAll(clean, "@", atSign))} {
 				q.older = append(q.older, normalize(o))
 				// What this hataori would not paste as it is may be in
@@ -255,6 +256,11 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 type queued struct {
 	id, text string
 	older    []string
+	// controls is set for one with control characters, which an older
+	// hataori pasted and this one takes out: what this one pastes for it may
+	// then be another input's paste too, of one that is not held, so it is
+	// not known by that (#914).
+	controls bool
 }
 
 // Bracketed paste: what the terminal sends around pasted text. The holder
@@ -1260,8 +1266,12 @@ func (c *codec) starter(prompt string) (agent.Starter, string) {
 			continue
 		}
 		// One that may be in the box is known also by what the CLI
-		// reports of it, since nothing else releases it.
-		if p.text == text || slices.Contains(p.older, text) || held && p.shows(text) {
+		// reports of what an older hataori pasted for it, since nothing
+		// else releases it; not by what the CLI reports of this one's
+		// paste, which can be another input's, and not by this one's paste
+		// if that took out control characters (controls). Without them,
+		// another input that is pasted as this one is is held too.
+		if !p.controls && p.text == text || slices.Contains(p.older, text) || held && p.shows(text) {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
 			if c.sent != nil && c.sent.text == p.text {
 				c.sent = nil // delivered
@@ -1299,10 +1309,6 @@ func unwrapPaste(prompt string) string {
 	return strings.TrimSuffix(s[open+1:], end)
 }
 
-// normalize is the text an input and a prompt are compared by: trimmed,
-// with CRLF as LF, and each tab as four spaces. The CLI's input box turns a
-// pasted tab into exactly four spaces, not spaces up to the next tab stop
-// (2.1.328, testdata/2.1.328/paste_tabs).
 // shown is text as the CLI reports a paste of it in a prompt: without the
 // escape sequences that start with ESC [ and without the characters that do
 // not show (Unicode's Cf), which it takes out (testdata, mention_*).
@@ -1318,12 +1324,16 @@ func shown(text string) string {
 var controlSequence = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]") // ESC [, parameters, intermediates and a final byte
 
 // shows reports whether prompt, normalized, is what the CLI reports of a
-// paste of q's text, or of a text an older hataori pasted for it.
+// paste of a text an older hataori pasted for q.
 func (q queued) shows(prompt string) bool {
 	p := normalize(shown(prompt))
-	return slices.ContainsFunc(append([]string{q.text}, q.older...), func(t string) bool { return normalize(shown(t)) == p })
+	return slices.ContainsFunc(q.older, func(t string) bool { return normalize(shown(t)) == p })
 }
 
+// normalize is the text an input and a prompt are compared by: trimmed,
+// with CRLF as LF, and each tab as four spaces. The CLI's input box turns a
+// pasted tab into exactly four spaces, not spaces up to the next tab stop
+// (2.1.328, testdata/2.1.328/paste_tabs).
 func normalize(s string) string {
 	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\t", "    ")
 	return strings.TrimSpace(s)

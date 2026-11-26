@@ -99,7 +99,10 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 			// The prompt the CLI reports is known as hataori's input, also
 			// by the codec after a restart. The CLI takes characters that do
 			// not show out of a paste, so that one is not known (#916); an
-			// escape sequence is not pasted (#914).
+			// escape sequence is not pasted (#914). After a restart, one with
+			// an escape sequence is not known by this paste either: an older
+			// hataori pasted the sequence, and this paste, without it, can be
+			// another input's.
 			known := mc.Case != "after_invisible"
 			if by, _ := c.starter(mc.Prompt); (by == agent.ByCaller) != known {
 				t.Errorf("%s: the prompt %q counts as started by %v", id, mc.Prompt, by)
@@ -108,7 +111,7 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 			if a, err := c.Input(agent.Input{ID: "in-1", Text: mc.Text, Written: true}); err != nil || len(a.Keys) != 0 {
 				t.Fatalf("%s: after a restart: writes %q, %v", id, a.Keys, err)
 			}
-			if by, _ := c.starter(mc.Prompt); (by == agent.ByCaller) != known {
+			if by, _ := c.starter(mc.Prompt); (by == agent.ByCaller) != (known && mc.Case != "after_escape") {
 				t.Errorf("%s: after a restart: the prompt %q counts as started by %v", id, mc.Prompt, by)
 			}
 		}
@@ -180,6 +183,32 @@ func TestPromptShowsThePaste(t *testing.T) {
 				t.Errorf("%s %s %s: %q shows as %q; the CLI reported %q", name, mc.Session, mc.Case, mc.Pasted, got, want)
 			}
 		}
+	}
+}
+
+// An input that may be in the box after a restart is not known by what the
+// CLI reports of a paste that no hataori made for it: one with a character
+// that does not show at its start, by the prompt of the same text without
+// it, as the CLI reports hataori's paste of either (#914).
+func TestHeldInputIsNotKnownByAnotherPaste(t *testing.T) {
+	n := 0
+	for _, name := range []string{"mention_restricted_pasted", "mention_unrestricted_pasted"} {
+		for _, mc := range mentionCases(t, name) {
+			if mc.Case != "first" {
+				continue
+			}
+			n++
+			c := confinedCodec(t)
+			if _, err := c.Input(agent.Input{ID: "in-1", Text: "\u200b" + mc.Text, Written: true}); err != nil || len(c.leftover) != 1 {
+				t.Fatalf("%s %s: held %q, %v", name, mc.Session, c.leftover, err)
+			}
+			if by, id := c.starter(mc.Prompt); by == agent.ByCaller {
+				t.Errorf("%s %s: the prompt %q counts as input %q", name, mc.Session, mc.Prompt, id)
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("no capture of a text pasted after the prefix")
 	}
 }
 
