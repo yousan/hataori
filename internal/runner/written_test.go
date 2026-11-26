@@ -154,7 +154,7 @@ func TestWrittenInputSaysWhichRunnerWroteIt(t *testing.T) {
 	check("after this runner wrote two", map[string]bool{firstInputID: false, "10": true, "11": false, "12": true})
 	r.unmarkWritten(lv, []string{"11"})
 	check("after it unmarked one", map[string]bool{firstInputID: false, "10": true, "12": true})
-	if err := r.newAgent(1); err != nil {
+	if err := r.newAgent(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
 	check("after a new agent started", map[string]bool{firstInputID: false, "10": false, "12": false})

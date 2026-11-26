@@ -205,8 +205,8 @@ var migrations = []Migration{
 		// read yet; after a restart the codec is told, and writes nothing.
 		// 1 from a runner before #914; 2 from one since, also for one written
 		// to an agent before the one that runs (agent.Input.Earlier). A runner
-		// before #914 does not know 2: after going back to one, such an input
-		// is not known as written.
+		// before #914 takes a row with 2 neither as pending (0) nor as
+		// written (1): before going back to one, set 2 to 1.
 		`ALTER TABLE pending_inputs ADD COLUMN written INTEGER NOT NULL DEFAULT 0`,
 	)},
 	{Name: "chat: inbound cursors", Up: execAll(

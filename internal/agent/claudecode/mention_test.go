@@ -189,9 +189,11 @@ func TestPromptShowsThePaste(t *testing.T) {
 // it, as the CLI reports hataori's paste of either; one that an older
 // hataori pasted as it is, by the prompt of another input that is this
 // hataori's paste for it, which an older one pasted as it is too; and one
-// with a character that does not show at its start, by the prompt of an
-// input pasted before it that has the character elsewhere, which is not
-// known by that prompt (#914, #916).
+// with a character that does not show at its start, or a carriage return
+// at its end, by the prompt of an input pasted before it that has a
+// character that does not show elsewhere, which is not known by that
+// prompt, whether an older hataori pasted that input or this one did
+// (#914, #916).
 func TestHeldInputIsNotKnownByAnotherPaste(t *testing.T) {
 	n := 0
 	for _, name := range []string{"mention_restricted_pasted", "mention_unrestricted_pasted"} {
@@ -231,9 +233,33 @@ func TestHeldInputIsNotKnownByAnotherPaste(t *testing.T) {
 			continue
 		}
 		n++
+		for _, held := range []string{"\u200b" + strings.ReplaceAll(mc.Text, "\u200b", ""), mc.Prompt + "\r"} {
+			c := confinedCodec(t)
+			for _, in := range []agent.Input{{ID: "in-1", Text: mc.Text}, {ID: "in-2", Text: held}} {
+				in.Written, in.Earlier = true, true
+				if _, err := c.Input(in); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !slices.Equal(c.leftover, []string{"in-2"}) {
+				t.Fatalf("%s %q: held %q", mc.Session, held, c.leftover)
+			}
+			if by, id := c.starter(mc.Prompt); by == agent.ByCaller {
+				t.Errorf("%s %q: the prompt %q of the input before it counts as input %q", mc.Session, held, mc.Prompt, id)
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("no capture of a text with a character that does not show")
+	}
+	n = 0
+	for _, mc := range mentionCases(t, "mention_restricted_pasted") {
+		if mc.Case != "after_invisible" {
+			continue
+		}
+		n++
 		c := confinedCodec(t)
-		for _, in := range []agent.Input{{ID: "in-1", Text: mc.Text}, {ID: "in-2", Text: "\u200b" + strings.ReplaceAll(mc.Text, "\u200b", "")}} {
-			in.Written, in.Earlier = true, true
+		for _, in := range []agent.Input{{ID: "in-1", Text: mc.Text, Written: true}, {ID: "in-2", Text: "\u200b" + mc.Prompt, Written: true, Earlier: true}} {
 			if _, err := c.Input(in); err != nil {
 				t.Fatal(err)
 			}
@@ -242,11 +268,11 @@ func TestHeldInputIsNotKnownByAnotherPaste(t *testing.T) {
 			t.Fatalf("%s: held %q", mc.Session, c.leftover)
 		}
 		if by, id := c.starter(mc.Prompt); by == agent.ByCaller {
-			t.Errorf("%s: the prompt %q of the input before it counts as input %q", mc.Session, mc.Prompt, id)
+			t.Errorf("%s: the prompt %q of this hataori's paste before it counts as input %q", mc.Session, mc.Prompt, id)
 		}
 	}
 	if n == 0 {
-		t.Fatal("no capture of a text with a character that does not show")
+		t.Fatal("no capture of a confined paste with a character that does not show")
 	}
 }
 

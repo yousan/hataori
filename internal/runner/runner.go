@@ -428,6 +428,9 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		}
 	}
 	sb, _ := json.Marshal(storedSpec{Agent: agentName, Spec: spec, Config: config})
+	if err := r.newAgent(ctx, id); err != nil {
+		return agent.Spec{}, err
+	}
 	// launch = 2: the host is being started. Until it is recorded as
 	// started, a daemon that comes back launches the session again, and
 	// keeps the host it finds running instead of starting another.
@@ -458,6 +461,18 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
 	return spec, nil
+}
+
+// newAgent records, before session id's agent is launched, that what was
+// written to an agent before it is not in the new one's box: it is marked
+// writtenNow, so that no codec holds it as what an older runner may have
+// left there (#914). It is recorded before the launch, so that a daemon that
+// dies after it does not take that for what was written to the new agent.
+func (r *Runner) newAgent(ctx context.Context, id int64) error {
+	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE pending_inputs SET written = ? WHERE session_id = ? AND written != 0`, writtenNow, id); err != nil {
+		return fmt.Errorf("runner: session %d: %w", id, err)
+	}
+	return nil
 }
 
 // own is hataori's own session host, the holder of every session's terminal.
@@ -910,8 +925,10 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 		return err
 	}
 	if !resumed {
-		if err := r.newAgent(id); err != nil {
-			return err
+		// Rows left by an agent before this one are not this one's input, and
+		// carry nothing to it.
+		if _, err := r.Store.DB.Exec(`UPDATE pending_inputs SET stale = 1, context = '' WHERE session_id = ?`, id); err != nil {
+			return fmt.Errorf("runner: session %d: %w", id, err)
 		}
 	}
 	if resumed {
@@ -986,18 +1003,6 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 	return nil
 }
 
-// newAgent records that session id's agent is a new one. Rows left by an
-// agent before it are not its input, and carry nothing to it; and what was
-// written of them is not in its box, so it is marked writtenNow: no codec
-// holds it as what an older runner may have left there (#914).
-func (r *Runner) newAgent(id int64) error {
-	if _, err := r.Store.DB.Exec(`UPDATE pending_inputs SET stale = 1, context = '',
-		written = CASE written WHEN 0 THEN 0 ELSE ? END WHERE session_id = ?`, writtenNow, id); err != nil {
-		return fmt.Errorf("runner: session %d: %w", id, err)
-	}
-	return nil
-}
-
 // handOverPending hands the session's pending input and answers to its
 // agent, oldest first: those the core accepted and a daemon that died did
 // not hand over, or whose input the agent had not reported. lv.mu is held.
@@ -1069,7 +1074,7 @@ func (r *Runner) handOverWritten(lv *live) {
 		var in control.Input
 		if rows.Scan(&id, &data, &earlier, &written) == nil && json.Unmarshal([]byte(data), &in) == nil {
 			// One that a runner before this one wrote, maybe to this agent,
-			// also after the row was marked stale.
+			// also after the row was marked stale (newAgent).
 			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true, Earlier: written != writtenNow})
 		}
 	}

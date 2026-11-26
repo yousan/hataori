@@ -18,6 +18,8 @@ import (
 // config's changed. One that a daemon that died had begun may find the host
 // that daemon started, with what it was given then: the record of that
 // stays, so that the session still counts as launched with another config.
+// What was written to an agent before is recorded as not in the box of the
+// one launched (#914).
 func TestLaunchRecordsWhatItWasGiven(t *testing.T) {
 	f := newFixture(t, options{confines: true})
 	model, effort, part := "m-1", "low", "x"
@@ -55,6 +57,10 @@ func TestLaunchRecordsWhatItWasGiven(t *testing.T) {
 	if _, err := f.st.DB.Exec(`UPDATE sessions SET model = 'm-1-reported' WHERE id = 1`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.st.DB.Exec(`INSERT INTO pending_inputs (id, session_id, request, data, written)
+		VALUES (20, 1, '', '{"text":"one"}', 1), (21, 1, '', '{"text":"two"}', 0)`); err != nil {
+		t.Fatal(err)
+	}
 	for _, p := range []string{"y", "z", "another effort"} {
 		killSessions(f.root)
 		waitFor(t, "the host's end", 10*time.Second, func() bool { return len(hosts(t, StateDir(f.root, 1))) == 0 })
@@ -67,6 +73,10 @@ func TestLaunchRecordsWhatItWasGiven(t *testing.T) {
 		}
 		if s, column = stored(); s.Config == nil || s.Config.Parts["a part"] != p || column != "m-1-reported" {
 			t.Fatalf("stored %+v, model %q; want the part %q, and the model the agent reported", s, column, p)
+		}
+		var w1, w2 int64
+		if err := f.st.DB.QueryRow(`SELECT (SELECT written FROM pending_inputs WHERE id = 20), (SELECT written FROM pending_inputs WHERE id = 21)`).Scan(&w1, &w2); err != nil || w1 != writtenNow || w2 != 0 {
+			t.Fatalf("%s: written %d and %d, %v; want %d and 0", p, w1, w2, err, writtenNow)
 		}
 		var e string
 		if err := f.st.DB.QueryRow(`SELECT effort FROM sessions WHERE id = 1`).Scan(&e); err != nil || e != effort {

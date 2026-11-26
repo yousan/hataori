@@ -1264,19 +1264,19 @@ func (c *codec) starter(prompt string) (agent.Starter, string) {
 	shadowed := false
 	for i, p := range c.pasted {
 		held := slices.Contains(c.leftover, p.id)
-		if held && notification(prompt) {
+		if held && (notification(prompt) || shadowed) {
 			// A notification starts a turn with the box as it is, also
-			// one that is the text of the input that may be in it.
+			// one that is the text of the input that may be in it; and a
+			// prompt that may be an input's pasted before it (shadowed) is
+			// not the prompt of one in the box after it.
 			continue
 		}
 		// One that an older hataori pasted is known by what it pasted
 		// (older), and one that may be in the box also by what the CLI
-		// reports of that, since nothing else releases it, unless the
-		// prompt may be an input's pasted before it (shadowed). Prompts
-		// come in the order of the pastes, as c.pasted is, and the prompt of
-		// an input pasted after one in the box would have that one in it
-		// too.
-		if p.older == nil && p.text == text || slices.Contains(p.older, text) || held && !shadowed && p.shows(text) {
+		// reports of that, since nothing else releases it. Prompts come in
+		// the order of the pastes, as c.pasted is, and the prompt of an
+		// input pasted after one in the box would have that one in it too.
+		if p.older == nil && p.text == text || slices.Contains(p.older, text) || held && p.shows(text) {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
 			if c.sent != nil && c.sent.text == p.text {
 				c.sent = nil // delivered
