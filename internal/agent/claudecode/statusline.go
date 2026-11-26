@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"syscall"
@@ -27,15 +28,16 @@ import (
 // line, so the command runs the user's own one with the same input and
 // prints what it printed: the user's line still shows in hataori's panes.
 // It hands rate_limits to the session host as a hook call of the event
-// statusLineEvent, when they changed or every limitsEvery.
+// statusLineEvent, only when they change. A repeated value may be cached
+// by an idle CLI and is no evidence of a new observation (#923).
 const (
 	statusLineEvent = "hataori:statusline"
-	// limitsEvery is how often the status line hands on rate_limits that
-	// did not change, and so the Every of its Limits events.
+	// limitsEvery is how long a reported snapshot is treated as current
+	// without a changed observation, and so the Every of its Limits events.
 	limitsEvery = 5 * time.Minute
 	// statusLineRefresh is the refreshInterval hataori sets, in seconds,
 	// unless the user's status line asks for a shorter one: the command runs
-	// at least that often, so a report is never more than limitsEvery late.
+	// at least that often, so a changed snapshot is noticed promptly.
 	statusLineRefresh = 60
 	// statusLineLast is the file in the state directory that holds what
 	// was last handed on, and when.
@@ -129,9 +131,10 @@ const StatusLineUsageText = `usage: hataori statusline --last FILE [--run COMMAN
 
 Claude Code's status line in a hataori session. Reads the status line's
 input on stdin, hands its rate_limits to the session host named by
-$` + host.HookEnvVar + ` when they changed or every 5 minutes (FILE keeps what
-was handed on last), runs COMMAND with sh and the same input, and prints
-what it printed. Exit status 0, or 64 for bad arguments.
+$` + host.HookEnvVar + ` when they change (FILE keeps what was handed on
+last). Unchanged cached values do not renew the report's age. Runs COMMAND
+with sh and the same input, and prints what it printed. Exit status 0, or
+64 for bad arguments.
 `
 
 // StatusLineMain is `hataori statusline`. Nothing it fails to do stops
@@ -179,8 +182,10 @@ type lastHandedOn struct {
 }
 
 // handOn hands the input's rate_limits to the host, unless the same was
-// handed on less than limitsEvery ago. An input without rate_limits hands
-// on nothing: the account reports none (or none yet).
+// already handed on. An unchanged CLI snapshot may be arbitrarily old, so
+// even a periodic refresh must not give it a new observation time.
+// An input without rate_limits hands on nothing: the account reports none
+// (or none yet).
 func handOn(socket, last string, input []byte, now time.Time) {
 	var in struct {
 		RateLimits json.RawMessage `json:"rate_limits"`
@@ -195,7 +200,7 @@ func handOn(socket, last string, input []byte, now time.Time) {
 	payload, _ := json.Marshal(map[string]any{"hook_event_name": statusLineEvent, "rate_limits": json.RawMessage(compact.Bytes())})
 	var prev lastHandedOn
 	if b, err := os.ReadFile(last); err == nil && json.Unmarshal(b, &prev) == nil &&
-		bytes.Equal(prev.Payload, payload) && now.Sub(time.UnixMilli(prev.At)) < limitsEvery {
+		sameStatusLinePayload(prev.Payload, payload) {
 		return
 	}
 	if _, err := host.Call(socket, payload, false, 5*time.Second); err != nil {
@@ -216,6 +221,14 @@ func handOn(socket, last string, input []byte, now time.Time) {
 	if err != nil {
 		os.Remove(f.Name())
 	}
+}
+
+// sameStatusLinePayload compares values rather than JSON spelling: object
+// order, whitespace and numeric formatting do not make a new observation.
+// The previous file may have been written by an older version.
+func sameStatusLinePayload(a, b []byte) bool {
+	var av, bv any
+	return json.Unmarshal(a, &av) == nil && json.Unmarshal(b, &bv) == nil && reflect.DeepEqual(av, bv)
 }
 
 // windowMinutes are the lengths of the windows Claude Code names.
