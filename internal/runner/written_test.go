@@ -7,11 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
+	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 )
 
@@ -111,7 +111,8 @@ func (c *handed) Input(in agent.Input) (agent.Actions, error) {
 // before agent.Input.Earlier wrote, maybe to the agent that runs, also after
 // its row was marked stale, and which one this runner wrote: the first input
 // and a pending one alike. What was written to an agent before the one a
-// runner starts is removed before it starts, and what was not stays (#914).
+// runner starts is removed before it starts. Unwritten input fails instead
+// of reaching that new agent (#780).
 func TestWrittenInputSaysWhichRunnerWroteIt(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "state"), 0o700)
@@ -132,7 +133,7 @@ func TestWrittenInputSaysWhichRunnerWroteIt(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	r := &Runner{Store: st, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r := &Runner{Store: st, Machine: &session.Machine{Store: st}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	c := &handed{got: map[string]agent.Input{}}
 	lv := &live{id: 1, codec: c}
 	check := func(when string, want map[string]bool) {
@@ -170,8 +171,8 @@ func TestWrittenInputSaysWhichRunnerWroteIt(t *testing.T) {
 		left = append(left, id)
 	}
 	rows.Close()
-	if !slices.Equal(left, []int64{11}) {
-		t.Errorf("after a new agent started, rows %v are left, want only the one not written", left)
+	if len(left) != 0 {
+		t.Errorf("after a new agent started, rows %v are left", left)
 	}
 }
 
