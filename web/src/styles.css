@@ -1360,6 +1360,7 @@ body {
   padding: 8px;
   border-radius: 4px;
   border: 1px solid var(--st-waiting);
+  overflow-wrap: anywhere;
 }
 
 .details-top.failure {
@@ -1723,6 +1724,7 @@ a.chat-link:hover {
 .answers-text {
   margin: 0 0 4px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .answers-row {
@@ -1735,6 +1737,13 @@ a.chat-link:hover {
 .answers-row button,
 .answers-field button {
   font: inherit;
+}
+
+.answers-row button,
+.answers-check {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .answers-check {

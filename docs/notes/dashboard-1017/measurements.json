@@ -1,0 +1,414 @@
+[
+  {
+    "name": "long-split",
+    "width": 1440,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "13px"
+      },
+      {
+        "font": "13px"
+      }
+    ],
+    "filter": null,
+    "question": null,
+    "answer": {
+      "width": 240.671875,
+      "height": 90.9375,
+      "scrollWidth": 241,
+      "clientWidth": 241
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 272.671875,
+      "height": 840.203125,
+      "scrollWidth": 273,
+      "clientWidth": 273
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 166.921875
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 16.796875,
+        "width": 240.671875
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 48.75
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 16.796875,
+        "width": 240.671875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 60.5625,
+        "width": 240.671875
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 128.984375
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 120.828125
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 63.890625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-split",
+    "width": 1440,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "13px"
+      },
+      {
+        "font": "13px"
+      }
+    ],
+    "filter": null,
+    "question": null,
+    "answer": {
+      "width": 240.671875,
+      "height": 90.9375,
+      "scrollWidth": 241,
+      "clientWidth": 241
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 272.671875,
+      "height": 840.203125,
+      "scrollWidth": 273,
+      "clientWidth": 273
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 166.921875
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 16.796875,
+        "width": 240.671875
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 48.75
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 16.796875,
+        "width": 240.671875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 60.5625,
+        "width": 240.671875
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 128.984375
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 120.828125
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 63.890625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  }
+]
