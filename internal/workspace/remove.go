@@ -776,6 +776,9 @@ func (c *checker) find() ([]repo, error) {
 			return c.unreadable(p, err)
 		}
 		if p == c.top {
+			if isGitDir(p) {
+				return c.unreadable(p, errors.New("workspace top is also a git directory"))
+			}
 			return c.part(p, nil)
 		}
 		dir := filepath.Dir(p)
