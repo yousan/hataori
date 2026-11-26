@@ -943,6 +943,10 @@ type WorkspaceState struct {
 	// Fetched is when the remote-tracking refs were last updated, by a
 	// fetch, a push or the clone; absent when the repository does not say.
 	Fetched *time.Time `json:"fetched,omitempty"`
+	// FiltersDisabled says configured Git filters were disabled for this
+	// read. The file/line counts compare raw bytes; even an unchanged
+	// filter-managed file may appear modified after its cached times change.
+	FiltersDisabled bool `json:"filters_disabled,omitempty"`
 }
 
 // TerminalChunk is one piece of a session's terminal output. Positions

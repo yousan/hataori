@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.42**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.43**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -910,6 +910,7 @@ Since 1.4.
 | `uncommitted` | integer | required | files modified, staged or untracked, each once; ignored files are not counted, and untracked files add no lines |
 | `unpushed` | integer | required | commits reachable from the checked-out commit or a local branch and from no remote-tracking ref |
 | `fetched` | time | optional | when the remote-tracking refs were last updated, by a fetch, a push or the clone; absent when the repository does not say |
+| `filters_disabled` | boolean | optional | configured Git filters were disabled for this read; file and line counts compare raw bytes, so an unchanged filter-managed file may appear modified when its cached file times change; since 3.43 |
 
 ### Type `Reopened`
 

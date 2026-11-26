@@ -69,6 +69,7 @@ func (m Maker) state(ctx context.Context, dir string) (control.WorkspaceState, e
 	if err := g.disarm(ctx); err != nil {
 		return st, err
 	}
+	st.FiltersDisabled = g.filtersOff
 	head, err := g.line(ctx, "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}")
 	if err != nil {
 		return st, err
@@ -113,9 +114,10 @@ func (m Maker) state(ctx context.Context, dir string) (control.WorkspaceState, e
 
 // reader runs git in one repository, read-only.
 type reader struct {
-	dir   string
-	env   []string
-	extra []string // options for every git command after the first
+	dir        string
+	env        []string
+	extra      []string // options for every git command after the first
+	filtersOff bool     // configured filters are disabled; counts compare raw files
 }
 
 // disarm reads the repository's configuration and refuses what would make
@@ -150,10 +152,6 @@ func (g *reader) disarm(ctx context.Context) error {
 	}
 	below := slices.Collect(maps.Keys(names))
 	g.turnOff(below)
-	for _, name := range below {
-		// git would fail on a changed file under a filter that is required.
-		g.set("filter."+name+".required", "false")
-	}
 	return nil
 }
 
@@ -161,8 +159,12 @@ func (g *reader) disarm(ctx context.Context) error {
 // submodules, run no filter driver of these names.
 func (g *reader) turnOff(names []string) {
 	for _, name := range names {
+		g.filtersOff = true
 		g.set("filter."+name+".clean", "")
 		g.set("filter."+name+".process", "")
+		// Required filters must be disabled with their commands, or git
+		// fails instead of comparing a changed file's raw bytes.
+		g.set("filter."+name+".required", "false")
 	}
 }
 
@@ -178,10 +180,10 @@ func (g *reader) set(key, value string) {
 }
 
 // filters are the names of the filter drivers that the repository's
-// configuration has a command for.
+// configuration has a command or required flag for.
 func (g reader) filters(ctx context.Context) ([]string, error) {
 	// Exit 1: none is set.
-	out, code, err := g.run(ctx, "config", "--null", "--name-only", "--get-regexp", `^filter\..*\.(clean|process)$`)
+	out, code, err := g.run(ctx, "config", "--null", "--name-only", "--get-regexp", `^filter\..*\.(clean|process|required)$`)
 	if err != nil && code != 1 {
 		return nil, err
 	}
