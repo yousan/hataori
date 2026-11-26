@@ -175,7 +175,7 @@ func examples(t *testing.T) map[string]any {
 		"AskInterrupt": control.RequestID("approval-1"),
 		"Link":         control.LinkRef{Client: "discord", Channel: "C0999", Thread: "T0999"},
 		"Workspace": control.WorkspaceState{Branch: "fix-build", Base: "9fceb02d0ae598e95dc970b74767f19372d61af8",
-			Added: 12, Removed: 3, Uncommitted: 2, Unpushed: 1, Fetched: &exampleTime},
+			Added: 12, Removed: 3, Uncommitted: 2, Unpushed: 1, Fetched: &exampleTime, FiltersDisabled: true},
 		"SignInLink": "https://dashboard.example.com/signin#t=Q2hhbmdlIG1lIGV2ZXJ5IHRpbWU",
 		"HostTerminals": []control.HostTerminal{
 			{Device: "/dev/pts/3", Process: "vim", Activity: &exampleTime, Tmux: &control.TmuxPane{Pane: "%3",

@@ -300,6 +300,8 @@ const en = {
   "details.uncommitted": "Uncommitted files",
   "details.unpushed": "Unpushed commits",
   "details.terminal": "Terminal",
+  "workspace.filtersDisabled": "Counts compare files without Git filters. Unchanged filter-managed files may be counted as changed.",
+  "workspace.filterMark": "*",
 
   "narrow.label": "Threads",
   "narrow.attention": "Needs attention",
@@ -663,6 +665,8 @@ const ja: Catalog = {
   "details.uncommitted": "未コミットのファイル",
   "details.unpushed": "未プッシュのコミット",
   "details.terminal": "端末",
+  "workspace.filtersDisabled": "Git フィルターを使わず比較しています。フィルター対象の未変更ファイルが変更数に含まれることがあります。",
+  "workspace.filterMark": "*",
   "narrow.label": "スレッド",
   "narrow.attention": "要確認",
   "narrow.running": "実行中",

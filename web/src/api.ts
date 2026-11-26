@@ -281,6 +281,7 @@ export interface WorkspaceState {
   uncommitted: number;
   unpushed: number;
   fetched?: string;
+  filters_disabled?: boolean;
 }
 
 // workspace reads a thread's workspace. A thread that is gone, or a

@@ -159,6 +159,7 @@ export function Details({ x, attention, workspace, subscribe, opens, scopes, lay
           )}
           <Field name="terminal" label={t("details.terminal")} value={x.terminal || dash()} />
         </dl>
+        {ws?.filters_disabled ? <p className="empty" data-field="filtersDisabled">{t("workspace.filtersDisabled")}</p> : null}
       </section>
       <Recent key={x.id} x={x} subscribe={subscribe} opens={opens} />
     </div>

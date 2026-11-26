@@ -145,7 +145,10 @@ function Row(props: { x: ThreadInfo; w: Workspace | undefined; now: number; sele
       )}
       {cell(
         "changes",
-        <td data-col="changes">{ws ? t("table.changesValue", { added: ws.added, removed: ws.removed, files: ws.uncommitted }) : dash()}</td>,
+        <td data-col="changes" title={ws?.filters_disabled ? t("workspace.filtersDisabled") : undefined}>
+          {ws ? t("table.changesValue", { added: ws.added, removed: ws.removed, files: ws.uncommitted }) : dash()}
+          {ws?.filters_disabled ? t("workspace.filterMark") : null}
+        </td>,
       )}
       {cell("unpushed", <td data-col="unpushed">{ws ? numbers.format(ws.unpushed) : dash()}</td>)}
       {cell(
