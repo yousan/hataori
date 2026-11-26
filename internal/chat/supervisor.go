@@ -369,7 +369,7 @@ func (f *FrontEnd) holdTx(ctx context.Context, tx *store.Tx, r *reader) error {
 	}
 	for _, n := range r.named {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO chat_named (client, thread, end_at, name, times, pos) VALUES (?, ?, ?, ?, 1, ?)
-			ON CONFLICT (client, thread, end_at, name) DO UPDATE SET times = times + 1, pos = max(pos, excluded.pos)`,
+			ON CONFLICT DO NOTHING`,
 			f.Name, int64(n.thread), n.end.UnixMilli(), n.name, int64(n.pos)); err != nil {
 			return err
 		}
@@ -431,41 +431,73 @@ func (f *FrontEnd) flushHeld(ctx context.Context, now time.Time) error {
 		}
 		scopes[id] = scope
 	}
-	// One row for each conversation, the first first; the copies mention
-	// nobody (everyLink). A thread shown nowhere here gets nothing.
-	every := func(id control.ThreadID, row Row) []Row {
-		if len(convs[id]) == 0 {
-			return nil
-		}
-		row.Conv = convs[id][0]
-		return everyLink([]Row{row}, convs[id])
-	}
 	var rows []Row
 	err = f.Outbox.Store.Update(ctx, func(tx *store.Tx) error {
 		rows = nil
-		digests, err := f.dueDigests(ctx, tx, at)
+		// Render each boundary's constituents separately. Using only the
+		// newest event of a digest would let an old answer ride with a new
+		// one into a restored link. Continuously served links keep it all.
+		groups := map[uint64]map[control.ThreadID][]surface.Conversation{}
+		for id, cc := range convs {
+			for _, conv := range cc {
+				var after uint64
+				if err := tx.QueryRowContext(ctx, `SELECT output_after FROM links WHERE client = ? AND channel = ? AND thread = ?`,
+					f.Name, conv.Channel, conv.Thread).Scan(&after); err != nil {
+					return err
+				}
+				if groups[after] == nil {
+					groups[after] = map[control.ThreadID][]surface.Conversation{}
+				}
+				groups[after][id] = append(groups[after][id], conv)
+			}
+		}
+		ends, err := f.dueQuietEnds(ctx, tx, at, 0)
 		if err != nil {
 			return err
 		}
-		for _, d := range digests {
-			rows = append(rows, every(d.thread, Row{Event: d.pos, Part: digestPart, Message: surface.Message{Text: d.text}})...)
-		}
-		ends, err := f.dueQuietEnds(ctx, tx, at)
-		if err != nil {
-			return err
+		for after, linked := range groups {
+			// Mentions still belong only to the thread's first served
+			// conversation, even when another has a different boundary.
+			every := func(id control.ThreadID, row Row) {
+				for _, conv := range linked[id] {
+					r := row
+					r.Conv = conv
+					if conv != convs[id][0] {
+						r.Message.Notify = nil
+					}
+					rows = append(rows, r)
+				}
+			}
+			digests, err := f.dueDigests(ctx, tx, at, after)
+			if err != nil {
+				return err
+			}
+			for _, d := range digests {
+				every(d.thread, Row{Event: d.pos, Part: digestPart, Message: surface.Message{Text: d.text}})
+			}
+			filtered := ends
+			if after != 0 {
+				if filtered, err = f.dueQuietEnds(ctx, tx, at, after); err != nil {
+					return err
+				}
+			}
+			for _, q := range filtered {
+				p := f.postsOf(scopes[q.thread])
+				if p.Quiet.in(now) {
+					continue
+				}
+				if p.Never {
+					q.notify = nil
+				}
+				every(q.thread, Row{Event: q.pos, Part: quietEndPart, Message: surface.Message{Text: q.text, Notify: q.notify}})
+			}
 		}
 		for _, q := range ends {
-			// Told at the end of quiet hours, also late after a restart, but
-			// not during the next ones: then at their end. Under mention
-			// "never" it mentions nobody.
-			p := f.postsOf(scopes[q.thread])
-			if p.Quiet.in(now) {
+			// Also discard a summary that no link may receive. Keep it
+			// only when the next quiet hours still hold it, as before.
+			if f.postsOf(scopes[q.thread]).Quiet.in(now) {
 				continue
 			}
-			if p.Never {
-				q.notify = nil
-			}
-			rows = append(rows, every(q.thread, Row{Event: q.pos, Part: quietEndPart, Message: surface.Message{Text: q.text, Notify: q.notify}})...)
 			if _, err := tx.ExecContext(ctx, `DELETE FROM chat_named WHERE client = ? AND thread = ? AND end_at = ?`,
 				f.Name, int64(q.thread), q.end); err != nil {
 				return err
@@ -489,9 +521,9 @@ type dueDigest struct {
 }
 
 // dueDigests returns the digests due by now, each one message.
-func (f *FrontEnd) dueDigests(ctx context.Context, tx *store.Tx, now int64) ([]dueDigest, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT thread, due_at, pos, at, text FROM chat_held WHERE client = ? AND due_at <= ?
-		ORDER BY thread, due_at, pos`, f.Name, now)
+func (f *FrontEnd) dueDigests(ctx context.Context, tx *store.Tx, now int64, after uint64) ([]dueDigest, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT thread, due_at, pos, at, text FROM chat_held WHERE client = ? AND due_at <= ? AND pos > ?
+		ORDER BY thread, due_at, pos`, f.Name, now, after)
 	if err != nil {
 		return nil, err
 	}
@@ -540,9 +572,9 @@ type dueQuietEnd struct {
 // dueQuietEnds returns the messages at the ends of quiet hours due by now:
 // one per thread and end, naming each person named during them, with how
 // many times, and mentioning them.
-func (f *FrontEnd) dueQuietEnds(ctx context.Context, tx *store.Tx, now int64) ([]dueQuietEnd, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT thread, end_at, name, times, pos FROM chat_named WHERE client = ? AND end_at <= ?
-		ORDER BY thread, end_at, name`, f.Name, now)
+func (f *FrontEnd) dueQuietEnds(ctx context.Context, tx *store.Tx, now int64, after uint64) ([]dueQuietEnd, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT thread, end_at, name, sum(times), max(pos) FROM chat_named WHERE client = ? AND end_at <= ? AND pos > ?
+		GROUP BY thread, end_at, name ORDER BY thread, end_at, name`, f.Name, now, after)
 	if err != nil {
 		return nil, err
 	}
