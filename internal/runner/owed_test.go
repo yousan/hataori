@@ -3,10 +3,10 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -195,9 +195,8 @@ func TestFirstMessageAfterAnAttachTellsTheEarlierConversation(t *testing.T) {
 		want(t, f, *recs, []string{helloContext + "reply more"}, []string{"reply hello", "reply more"})
 	})
 	// A message queued behind a typed turn, whose agent died before it was
-	// given to it. The next agent of the session is told with what wakes it,
-	// and the row of the message, which a daemon hands over later, tells it
-	// nothing more.
+	// given to it. It fails visibly before the next agent starts; a daemon
+	// restart must not deliver it later, including into a separate conversation.
 	queued := func(t *testing.T) (*fixture, *[]*recorder, func() options) {
 		f, recs, opts := replaced(t)
 		c, err := host.Dial(StateDir(f.root, 2))
@@ -216,44 +215,60 @@ func TestFirstMessageAfterAnAttachTellsTheEarlierConversation(t *testing.T) {
 		waitFor(t, "asleep", 15*time.Second, func() bool { return sessionState(t, f.st, 2) == "asleep" })
 		return f, recs, opts
 	}
-	t.Run("the agent died before it", func(t *testing.T) {
-		f, recs, opts := queued(t)
-		given := len((*recs)[0].of(f.root, 2))
-		if err := owner(f.core).Send(context.Background(), thread, "m3", control.Input{Text: "reply last"}, control.Deliver); err != nil {
-			t.Fatal(err)
-		}
-		waitFor(t, "its turn", 15*time.Second, f.has("text", 2))
-		restart(t, f, opts)
-		waitFor(t, "the queued message", 15*time.Second, f.has("text", 3))
-		if got, want := (*recs)[0].of(f.root, 2)[given:], []string{helloContext + "reply last"}; !slices.Equal(got, want) {
-			t.Errorf("after the wake: %q, want %q", got, want)
-		}
-		if got, want := (*recs)[1].of(f.root, 2), []string{"reply more"}; !slices.Equal(got, want) {
-			t.Errorf("after the restart: %q, want %q", got, want)
-		}
-	})
-	t.Run("a conversation of one input's own", func(t *testing.T) {
-		f, recs, opts := queued(t)
-		fresh := f.core.AsFresh(control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all})
-		if err := fresh.Send(context.Background(), thread, "w1", control.Input{Text: "tool wake 5s\nreply woken"}, control.Deliver); err != nil {
-			t.Fatal(err)
-		}
-		waitFor(t, "its tool", 15*time.Second, f.has("tool_started", 2))
-		restart(t, f, opts)
-		waitFor(t, "the queued message", 30*time.Second, func() bool { return len((*recs)[1].of(f.root, 2)) > 0 })
-		waitFor(t, "asleep again", 30*time.Second, func() bool { return sessionState(t, f.st, 2) == "asleep" })
-		send(t, owner(f.core), thread, "m3", "reply last")
-		waitFor(t, "the session's own conversation", 15*time.Second, func() bool {
-			got := (*recs)[1].of(f.root, 2)
-			return len(got) > 0 && strings.HasSuffix(got[len(got)-1], "reply last")
-		})
-		for _, text := range (*recs)[1].of(f.root, 2) {
-			// Of these, only the one the set-aside conversation goes on with.
-			if strings.HasPrefix(text, contextStart) != strings.HasSuffix(text, "reply last") {
-				t.Errorf("given: %q", (*recs)[1].of(f.root, 2))
+	for _, again := range []bool{false, true} {
+		t.Run(fmt.Sprintf("the agent died before it/restart=%t", again), func(t *testing.T) {
+			f, recs, opts := queued(t)
+			given := len((*recs)[0].of(f.root, 2))
+			send(t, owner(f.core), thread, "m3", "reply last")
+			waitFor(t, "its turn", 15*time.Second, f.has("text", 2))
+			if again {
+				restart(t, f, opts)
 			}
-		}
-	})
+			waitFor(t, "the queued input's failure", 15*time.Second, f.has("input_failed", 1))
+			if got, want := (*recs)[0].of(f.root, 2)[given:], []string{helloContext + "reply last"}; !slices.Equal(got, want) {
+				t.Errorf("after the wake: %q, want %q", got, want)
+			}
+			if again && len((*recs)[1].of(f.root, 2)) != 0 {
+				t.Errorf("after the restart: %q, want no old input", (*recs)[1].of(f.root, 2))
+			}
+			failed := f.eventData("input_failed")
+			if len(failed) != 1 || failed[0]["key"] != "m2" || failed[0]["text"] != "reply more" {
+				t.Fatalf("failures: %v", failed)
+			}
+			if n := count(t, f.st, "pending_inputs"); n != 0 {
+				t.Fatalf("%d old pending inputs left", n)
+			}
+		})
+		t.Run(fmt.Sprintf("a conversation of one input's own/restart=%t", again), func(t *testing.T) {
+			f, recs, opts := queued(t)
+			given := len((*recs)[0].of(f.root, 2))
+			fresh := f.core.AsFresh(control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all})
+			if err := fresh.Send(context.Background(), thread, "w1", control.Input{Text: "tool wake 2s\nreply woken"}, control.Deliver); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "its tool", 15*time.Second, f.has("tool_started", 2))
+			if again {
+				restart(t, f, opts)
+			}
+			waitFor(t, "asleep again", 30*time.Second, func() bool { return sessionState(t, f.st, 2) == "asleep" })
+			if !f.has("input_failed", 1)() || count(t, f.st, "pending_inputs") != 0 {
+				t.Fatalf("old input not retired: %v", counts(t, f.st))
+			}
+			send(t, owner(f.core), thread, "m3", "reply last")
+			waitFor(t, "the session's own conversation", 15*time.Second, f.has("text", 3))
+			for i, rec := range *recs {
+				start := 0
+				if i == 0 {
+					start = given
+				}
+				for _, text := range rec.of(f.root, 2)[start:] {
+					if text == "reply more" {
+						t.Errorf("old input reached a new agent: %q", rec.of(f.root, 2))
+					}
+				}
+			}
+		})
+	}
 	t.Run("restart before the message", func(t *testing.T) {
 		f, recs, opts := replaced(t)
 		restart(t, f, opts)

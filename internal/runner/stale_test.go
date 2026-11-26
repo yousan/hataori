@@ -20,7 +20,7 @@ import (
 // stays, so that the session still counts as launched with another config.
 // What was written to an agent before is removed, since it is not in the
 // box of the one launched and nothing reports it any more, and what was not
-// written stays (#914).
+// written fails visibly before the next agent starts (#780).
 func TestLaunchRecordsWhatItWasGiven(t *testing.T) {
 	f := newFixture(t, options{confines: true})
 	model, effort, part := "m-1", "low", "x"
@@ -76,8 +76,8 @@ func TestLaunchRecordsWhatItWasGiven(t *testing.T) {
 			t.Fatalf("stored %+v, model %q; want the part %q, and the model the agent reported", s, column, p)
 		}
 		var n, w, a int64
-		if err := f.st.DB.QueryRow(`SELECT (SELECT count(*) FROM pending_inputs WHERE id = 20), (SELECT written FROM pending_inputs WHERE id = 21), (SELECT count(*) FROM pending_inputs WHERE id = 22)`).Scan(&n, &w, &a); err != nil || n != 0 || w != 0 || a != 1 {
-			t.Fatalf("%s: %d rows written before, the other written %d, %d answers, %v; want none, 0 and the answer", p, n, w, a, err)
+		if err := f.st.DB.QueryRow(`SELECT (SELECT count(*) FROM pending_inputs WHERE id = 20), (SELECT count(*) FROM pending_inputs WHERE id = 21), (SELECT count(*) FROM pending_inputs WHERE id = 22)`).Scan(&n, &w, &a); err != nil || n != 0 || w != 0 || a != 0 {
+			t.Fatalf("%s: %d rows written before, unwritten rows left %d, %d answers, %v; want no rows", p, n, w, a, err)
 		}
 		var e string
 		if err := f.st.DB.QueryRow(`SELECT effort FROM sessions WHERE id = 1`).Scan(&e); err != nil || e != effort {
