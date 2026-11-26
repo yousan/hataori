@@ -212,16 +212,17 @@ type Launch struct {
 // the session, and sets sessions.launch; the runner clears launch when it
 // launches the agent, and keeps the input until a turn reports its id.
 type FirstInput struct {
-	Principal control.Principal `json:"principal"`
-	From      string            `json:"from,omitempty"`
-	Key       string            `json:"key"`
-	Text      string            `json:"text"`
-	Sent      bool              `json:"sent,omitempty"`     // the turn was started for it, and it was handed to the codec
-	Written   bool              `json:"written,omitempty"`  // it was written to the agent; see agent.Input.Written
-	Current   bool              `json:"current,omitempty"`  // Written was set by a runner that sets this; else it is agent.Input.Earlier
-	Wake      bool              `json:"wake,omitempty"`     // the session was asleep: its agent resumes
-	NoInput   bool              `json:"no_input,omitempty"` // woken with no input, as for an attach: the agent is only started
-	Dir       string            `json:"dir,omitempty"`      // the workspace, once it is made; a confined thread's from its start
+	Principal   control.Principal `json:"principal"`
+	From        string            `json:"from,omitempty"`
+	Key         string            `json:"key"`
+	Text        string            `json:"text"`
+	Sent        bool              `json:"sent,omitempty"`         // the turn was started for it, and it was handed to the codec
+	Written     bool              `json:"written,omitempty"`      // it was written to the agent; see agent.Input.Written
+	WrittenText *string           `json:"written_text,omitempty"` // text recorded by the codec when written; nil for older inputs
+	Current     bool              `json:"current,omitempty"`      // Written was set by a runner that sets this; else it is agent.Input.Earlier
+	Wake        bool              `json:"wake,omitempty"`         // the session was asleep: its agent resumes
+	NoInput     bool              `json:"no_input,omitempty"`     // woken with no input, as for an attach: the agent is only started
+	Dir         string            `json:"dir,omitempty"`          // the workspace, once it is made; a confined thread's from its start
 	// Link is the link the input came through, if any (design, section 5.2).
 	Link *control.LinkRef `json:"link,omitempty"`
 	// Via is the way of the daemon's own the input came through
