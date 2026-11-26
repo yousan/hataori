@@ -26,6 +26,9 @@ func TestSupervisorTwoWorkersIdleThenSingleAndBurst(t *testing.T) {
 	inputs, turns := len(wt.inputs(t, sv.ID)), wt.turns(t, sv.ID)
 	wt.hour()
 	time.Sleep(300 * time.Millisecond)
+	if got := wt.taken(t, sv.ID); got != 1 {
+		t.Fatalf("%d wakes accepted after the idle hour, want 1", got)
+	}
 	if got := len(wt.inputs(t, sv.ID)); got != inputs {
 		t.Fatalf("%d supervisor inputs after the idle hour, want %d", got, inputs)
 	}

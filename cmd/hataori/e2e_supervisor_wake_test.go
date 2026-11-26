@@ -332,8 +332,8 @@ func TestWakeOncePerTurnEndAndPerBurst(t *testing.T) {
 	eventually(t, "the quiet period to start", 10*time.Second, func() bool { return wt.clock().waiting() == 1 })
 	wt.clock().advance(30*time.Second - time.Millisecond)
 	time.Sleep(200 * time.Millisecond)
-	if got := wt.wakes(t, sv.ID); len(got) != 0 {
-		t.Fatalf("woken before the quiet period ended: %q", got)
+	if got := wt.taken(t, sv.ID); got != 0 {
+		t.Fatalf("%d wakes accepted before the quiet period ended, want 0", got)
 	}
 	wt.clock().advance(time.Millisecond)
 	got := wt.woken(t, owner, sv.ID, 1)

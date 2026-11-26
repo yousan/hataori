@@ -47,6 +47,26 @@ checks. The other tests below also cover restart and approval boundaries.
 | At the budget limit no supervisor turn starts, and a person is told once | `TestBudgetTurns` (including a restart and release in the next hour) |
 | The loop guard stops a two-worker ping-pong at the configured count | `TestLoopGuard` (including restart, unaffected workers and reset by a person) |
 
+Manual mutation checks on 2026-11-27 ran each test above with the relevant
+behavior disabled, one edit at a time, restoring the implementation after
+each run. Every test failed with its mutation and passed without it:
+
+| Temporary mutation | Failing tests |
+|---|---|
+| Add an hourly input after a wake, even with no new worker event | `TestSupervisorTwoWorkersIdleThenSingleAndBurst`, `TestWakeNotByItsOwnThreadOtherScopesOrAnIdleHour` |
+| Discard worker turn ends before folding them into a wake | `TestSupervisorTwoWorkersIdleThenSingleAndBurst` |
+| Schedule the quiet timer with zero delay | `TestSupervisorTwoWorkersIdleThenSingleAndBurst`, `TestWakeOncePerTurnEndAndPerBurst` |
+| Stop forcing the supervisor's busy-send policy to refuse | `TestSupervisorSendIsRefusedWhenBusyAndMarked` |
+| Interrupt the requested turn immediately when asking for approval | `TestInterruptAsksAPerson`, `TestInterruptApproved`, `TestInterruptRefused` |
+| Let the budget admit every wake | `TestBudgetTurns` |
+| Keep admitting a worker after its cycle limit | `TestLoopGuard` |
+
+The quiet-period mutation initially passed the older burst test: a wake
+could be accepted before its agent received input. Both burst tests now
+check accepted wake keys before the deadline, as well as inputs and actual
+turn starts after it. These mutations are validation edits only; no
+production behavior changes are part of #275.
+
 # Testing against the real agent CLIs
 
 `go test ./...` never runs a real agent CLI. It uses captures of real output under each adapter's `testdata/`, and fake binaries. The checks below run the installed CLI on purpose, and only when asked for.
