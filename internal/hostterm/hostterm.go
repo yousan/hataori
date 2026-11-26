@@ -341,7 +341,7 @@ func terminalOf(ps []proc, pid int) (int, string, bool) {
 }
 
 // ownedDevices is the set of terminals used by a process in owned or under
-// one.
+// one. PID 1 is an adoption boundary: it owns only its own terminal.
 func ownedDevices(ps []proc, owned []int) map[string]bool {
 	hidden := map[string]bool{}
 	if len(owned) == 0 {
@@ -357,7 +357,7 @@ func ownedDevices(ps []proc, owned []int) map[string]bool {
 				return true
 			}
 			next, ok := parent[pid]
-			if !ok || next == pid || next <= 0 {
+			if !ok || next == pid || next <= 1 {
 				return false
 			}
 			pid = next

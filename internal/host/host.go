@@ -41,11 +41,12 @@ type host struct {
 	term    *boundedLog // the terminal's raw log, or nil on pipes
 	run     string      // this run of the host; positions in term count from its start
 
-	follows  atomic.Int32 // follow and attach requests being served
-	attached atomic.Int32 // attach requests being served: a person's terminal is connected
-	detached atomic.Int64 // when the last attached terminal went, in Unix milliseconds; 0 for never
-	ln       *net.UnixListener
-	sock     string
+	follows     atomic.Int32 // follow and attach requests being served
+	attachMu    sync.Mutex
+	attachments map[*net.UnixConn]int // connected attach peers; zero means identity unknown
+	detached    atomic.Int64          // when the last attached terminal went, in Unix milliseconds; 0 for never
+	ln          *net.UnixListener
+	sock        string
 
 	events   *lineLog
 	calls    callTable
@@ -517,8 +518,10 @@ type response struct {
 	Device  string        `json:"device,omitempty"` // status: the terminal the command runs in; empty on pipes
 	// Attached, for status, is how many terminals of people are attached;
 	// Detached is when the last one went, in Unix milliseconds, 0 for never.
-	Attached int   `json:"attached,omitempty"`
-	Detached int64 `json:"detached,omitempty"`
+	Attached        int   `json:"attached,omitempty"`
+	Detached        int64 `json:"detached,omitempty"`
+	AttachPIDs      []int `json:"attach_pids,omitempty"`
+	AttachPIDsKnown bool  `json:"attach_pids_known,omitempty"`
 }
 
 func (h *host) serveConn(c *net.UnixConn) {
@@ -623,8 +626,9 @@ func (h *host) handle(req request) response {
 			device = ""
 		default:
 		}
+		pids, known, detached := h.attachmentPIDs()
 		return response{OK: true, PID: h.cmd.Process.Pid, Device: device,
-			Attached: int(h.attached.Load()), Detached: h.detached.Load()}
+			Attached: len(pids), Detached: detached, AttachPIDs: pids, AttachPIDsKnown: known}
 	case "tail":
 		return response{OK: true, Data: h.tail(int(req.Interrupt))}
 	case "screen":

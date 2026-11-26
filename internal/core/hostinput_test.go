@@ -339,7 +339,7 @@ func TestOperateHostEnds(t *testing.T) {
 
 // A batch is not sent when the pane's command cannot be read, nor when it
 // holds a key name off the list; the operation goes on. A batch that is
-// sent is checked by the command tmux reports, without the process table.
+// sent refreshes attached processes and checks the full process table.
 func TestOperateHostBatches(t *testing.T) {
 	ctx := context.Background()
 	in := &fakeInput{}
@@ -368,7 +368,7 @@ func TestOperateHostBatches(t *testing.T) {
 	if err := op.Send(ctx, keys); err != nil {
 		t.Fatal(err)
 	}
-	if in.sent() != 1 || !slices.Equal(in.keys[0], keys) || !slices.Equal(in.checks, []bool{false}) {
+	if in.sent() != 1 || !slices.Equal(in.keys[0], keys) || !slices.Equal(in.checks, []bool{true}) {
 		t.Errorf("sent %v after checks %v", in.keys, in.checks)
 	}
 	select {
