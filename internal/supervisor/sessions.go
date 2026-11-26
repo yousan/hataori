@@ -155,10 +155,6 @@ func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner
 	if !ok {
 		return runner.Confined{}, fmt.Errorf("scope %q names no supervisor", l.Scope)
 	}
-	kind, err := s.Core.Kind(ctx, l.Thread)
-	if err != nil {
-		return runner.Confined{}, err
-	}
 	token, err := s.bind(ctx, l.Session, l.Thread, l.Scope, l.StateDir, true)
 	if err != nil {
 		return runner.Confined{}, err
@@ -169,13 +165,10 @@ func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner
 			s.Log.Warn("a user's file of the supervisor is not given", "scope", l.Scope, "session", l.Session, "file", f.Name, "reason", f.Skipped)
 		}
 	}
-	// The own thread's wakes name the files that changed since it was told
-	// them: what a conversation's launch is given, it was not told.
-	if kind == control.KindSupervisor {
-		if err := s.given(ctx, l.Scope, files); err != nil {
-			return runner.Confined{}, err
-		}
+	if err := s.given(ctx, l.Session, l.Dir, files); err != nil {
+		return runner.Confined{}, err
 	}
+
 	s.CopyDocs(ctx, l.Scope, l.Thread)
 	return runner.Confined{
 		MCP:          []agent.MCPServer{{Name: MCPName, Argv: s.mcp(l.Scope), Env: []string{TokenEnv + "=" + token}, Reports: true}},

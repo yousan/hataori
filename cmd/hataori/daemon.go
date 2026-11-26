@@ -413,6 +413,8 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	// A start a person approved as a supervisor's proposal is checked
 	// against its scope's repos too, as they are now (#650).
 	c.ApprovedStart = sv.CheckStart
+	c.TurnContext = sv.TurnContext
+	r.TurnContext = sv.TurnContext
 	// A test's token: of the scope's autonomy, or, for a scope that names no
 	// supervisor, one that acts, as every token did before autonomy (#650).
 	issueSupervisor := func(scope string) (string, error) {

@@ -353,6 +353,9 @@ type Core struct {
 	// conversation's last turn (design, section 7.1, #676). Nil gives
 	// nothing.
 	Preface func(ctx context.Context, tx *store.Tx, thread control.ThreadID) (string, error)
+	// TurnContext supplies daemon context before an input, in the same
+	// transaction as its durable handoff; it never enters the input event.
+	TurnContext func(ctx context.Context, tx *store.Tx, session int64) (string, error)
 	// SupervisorOf, when set, returns the supervisor thread that started a
 	// thread of scope whose thread_created event, at pos, names from; 0
 	// when no supervisor did (FailedStart.Supervisor). Nil gives none.
@@ -1788,6 +1791,7 @@ func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 			err = record(FirstInput{Dir: l.Dir})
 		}
 	}
+
 	if err == nil {
 		err = c.Runner.Start(ctx, l)
 	}
@@ -2344,6 +2348,13 @@ func (c *Core) wakeTx(ctx context.Context, tx *store.Tx, id control.ThreadID, si
 		}
 		in.Context = earlier + in.Context
 	}
+	if c.TurnContext != nil {
+		context, err := c.TurnContext(ctx, tx, sid)
+		if err != nil {
+			return in, err
+		}
+		in.Context += context
+	}
 	fi, _ := json.Marshal(in)
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), sid); err != nil {
 		return in, fmt.Errorf("core: wake: %w", err)
@@ -2366,6 +2377,16 @@ func (c *Core) sendTx(ctx context.Context, tx *store.Tx, sid int64, in FirstInpu
 	if err != nil {
 		return 0, hand, err
 	}
+	var newContext string
+	if c.TurnContext != nil {
+		context, err := c.TurnContext(ctx, tx, sid)
+		if err != nil {
+			return 0, hand, err
+		}
+
+		newContext = context
+		earlier += context
+	}
 	hand = forAgent(in.Input())
 	origin := &session.InputOrigin{Principal: in.Principal, From: in.From, Key: in.Key, Via: in.Via, Text: in.Text}
 	if control.State(state) == control.Idle {
@@ -2373,7 +2394,7 @@ func (c *Core) sendTx(ctx context.Context, tx *store.Tx, sid int64, in FirstInpu
 			return 0, hand, err
 		}
 	}
-	pending, err = pend(ctx, tx, sid, "", session.PendingInput{Input: hand, Origin: origin}, earlier)
+	pending, err = pend(ctx, tx, sid, "", session.PendingInput{Input: hand, Origin: origin, NewContext: newContext}, earlier)
 	hand.Text = earlier + hand.Text
 	return pending, hand, err
 }

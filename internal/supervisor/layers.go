@@ -254,102 +254,84 @@ func Compose(sv Scope, forges map[string]forge.Forge, files []UserFile) string {
 	return strings.Join(parts, "\n\n") + "\n"
 }
 
-// hashes are the user's files' Hash, by name.
-func hashes(files []UserFile) map[string]string {
-	m := make(map[string]string, len(files))
-	for _, f := range files {
-		m[f.Name] = f.Hash()
+// given records only the user files actually supplied by this launch.
+func (s *Sessions) given(ctx context.Context, sid int64, dir string, files []UserFile) error {
+	root, _ := os.OpenRoot(dir)
+	if root != nil {
+		defer root.Close()
 	}
-	return m
-}
-
-// The user's files of a scope as its supervisor sessions were given them
-// (told), in supervisor_files: one row per scope and file, "" for a file
-// not given. The column seen, and files_pos and files_pending of
-// supervisor_wakes, are what told the files that a turn changed before the
-// daemon wrote them itself (supervisor_writes); nothing reads them.
-
-// given records files as given to a launch of scope's session.
-func (s *Sessions) given(ctx context.Context, scope string, files []UserFile) error {
 	return s.Core.Store.Update(ctx, func(tx *store.Tx) error {
 		for _, f := range files {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO supervisor_files (scope, name, told, seen) VALUES (?1, ?2, ?3, ?3)
-				ON CONFLICT (scope, name) DO UPDATE SET told = excluded.told`, scope, f.Name, f.Hash()); err != nil {
-				return fmt.Errorf("supervisor: the user's files given: %w", err)
+			hash := f.Hash()
+			if !f.Given && root != nil {
+				if st, err := root.Lstat(f.Name); err == nil && st.Mode().IsRegular() {
+					hash = fmt.Sprintf("stat:%d:%d", st.Size(), st.ModTime().UnixNano())
+				}
+			}
+			if err := remember(ctx, tx, sid, f.Name, hash); err != nil {
+				return err
 			}
 		}
 		return nil
 	})
 }
 
-// recorded returns what scope's sessions were given of its files, by name;
-// a file without a row is missing.
+// recorded is the own thread's current session's record, for callers that
+// need the legacy scope view. Conversations have separate rows.
 func (s *Sessions) recorded(ctx context.Context, scope string) (map[string]string, error) {
-	rows, err := s.Core.Store.DB.QueryContext(ctx, `SELECT name, told FROM supervisor_files WHERE scope = ?`, scope)
+	var sid int64
+	err := s.Core.Store.DB.QueryRowContext(ctx, `SELECT s.id FROM sessions s JOIN threads t ON t.id = s.thread_id
+ WHERE t.scope = ? AND t.kind = 'supervisor' ORDER BY t.id DESC, s.id DESC LIMIT 1`, scope).Scan(&sid)
 	if err != nil {
-		return nil, fmt.Errorf("supervisor: the user's files: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-	m := map[string]string{}
-	for rows.Next() {
-		var name, h string
-		if err := rows.Scan(&name, &h); err != nil {
-			return nil, fmt.Errorf("supervisor: the user's files: %w", err)
-		}
-		m[name] = h
-	}
-	return m, rows.Err()
+	return recordedSession(ctx, s.Core.Store.DB, sid)
 }
 
-// now returns the hashes of the user's files of thread's directory as
-// they are now: the directory its launches read.
-func (s *Sessions) now(ctx context.Context, thread control.ThreadID) (map[string]string, error) {
+// Change is the last told and current fingerprint of a file named in a wake.
+// Session keeps an accepted wake from advancing a replacement session.
+type Change struct {
+	Name    string `json:"name"`
+	Was     string `json:"was"`
+	Now     string `json:"now"`
+	Session int64  `json:"session,omitempty"`
+}
+
+func (s *Sessions) Changed(ctx context.Context, scope string, thread control.ThreadID) ([]Change, error) {
+	sid, err := sessionID(ctx, s.Core.Store.DB, thread)
+	if err != nil {
+		return nil, err
+	}
 	var dir string
 	if err := s.Core.Store.DB.QueryRowContext(ctx, `SELECT workspace FROM threads WHERE id = ?`, int64(thread)).Scan(&dir); err != nil {
-		return nil, fmt.Errorf("supervisor: the directory of thread %d: %w", thread, err)
+		return nil, err
 	}
-	return hashes(ReadUserFiles(dir)), nil
-}
-
-// Change is one of the user's files that a wake names: its hash as the
-// session was last given or told it when the wake was made (Was), and as
-// it was then (Now).
-type Change struct {
-	Name string `json:"name"`
-	Was  string `json:"was"`
-	Now  string `json:"now"`
-}
-
-// Changed is part of Files: the user's files in the directory of thread,
-// scope's supervisor thread, whose content differs from what its session
-// was last given or told.
-func (s *Sessions) Changed(ctx context.Context, scope string, thread control.ThreadID) ([]Change, error) {
-	now, err := s.now(ctx, thread)
+	now, err := s.memory(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
-	told, err := s.recorded(ctx, scope)
+	told, err := recordedSession(ctx, s.Core.Store.DB, sid)
 	if err != nil {
 		return nil, err
 	}
-	var changes []Change
-	for _, name := range UserFiles {
-		if told[name] != now[name] {
-			changes = append(changes, Change{Name: name, Was: told[name], Now: now[name]})
-		}
-	}
-	return changes, nil
+	return memoryChanges(sid, told, now), nil
 }
 
-// Told is part of Files: a wake that named changes was accepted. Each file
-// is told as it was when the wake was made, unless a launch gave the
-// session another content since (told is no longer Was), which stays.
+// Told advances the fingerprints named by an accepted wake, unless a
+// launch or file call supplied newer content in the meantime.
 func (s *Sessions) Told(ctx context.Context, scope string, changes []Change) error {
 	return s.Core.Store.Update(ctx, func(tx *store.Tx) error {
 		for _, c := range changes {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO supervisor_files (scope, name, told, seen) VALUES (?1, ?2, ?3, ?3)
-				ON CONFLICT (scope, name) DO UPDATE SET told = CASE WHEN told = ?4 THEN ?3 ELSE told END`, scope, c.Name, c.Now, c.Was); err != nil {
-				return fmt.Errorf("supervisor: the user's files: %w", err)
+			if c.Session == 0 {
+				// A wake persisted by an older daemon belongs to the own thread.
+				if err := tx.QueryRowContext(ctx, `SELECT s.id FROM sessions s JOIN threads t ON t.id = s.thread_id
+     WHERE t.scope = ? AND t.kind = 'supervisor' ORDER BY t.id DESC, s.id DESC LIMIT 1`, scope).Scan(&c.Session); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO supervisor_session_files (session_id, name, told) VALUES (?, ?, ?)
+    ON CONFLICT (session_id, name) DO UPDATE SET told = CASE WHEN told = ? THEN excluded.told ELSE told END`, c.Session, c.Name, c.Now, c.Was); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -420,6 +402,11 @@ func FilesNoticeOf(thread control.ThreadID, names []string) string {
 // FilesChanged is the part of a wake that names the user's files that
 // changed since the session was last given or told them.
 func FilesChanged(names []string) string {
+	for _, name := range names {
+		if strings.HasPrefix(name, "notes/") {
+			return "Changed in your directory since you were given them: " + list(names) + ". Read them again."
+		}
+	}
 	return "Changed in your directory since you were given them: " + list(names) + ". Read them again: they are the user's layer of your instructions."
 }
 

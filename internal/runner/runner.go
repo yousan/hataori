@@ -80,6 +80,9 @@ type Runner struct {
 	// fails, the launch fails: a confined session is never started
 	// unconfined, and never with what another launch was given.
 	Confine func(ctx context.Context, l ConfinedLaunch) (Confined, error)
+	// TurnContext supplies durable daemon context before a new session's
+	// first input, including replacements whose agent could not resume.
+	TurnContext func(ctx context.Context, tx *store.Tx, session int64) (string, error)
 	// Unconfine, when set, takes back what Confine gave the launches of a
 	// session of a thread and of those it replaced, such as a token: Shut
 	// calls it once the session is closed, before its agent is stopped. It
@@ -296,8 +299,22 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 	}
 	spec := agent.Spec{Dir: l.Dir, StateDir: StateDir(r.Root, l.Session), Model: l.Model, Effort: l.Effort,
 		Instructions: r.Instructions, Approvals: agent.AllowAll}
-	first := firstInput{Principal: l.Principal, From: l.From, Key: l.Key, Text: l.Input.Text, Context: l.Context, Link: l.Input.Link,
+	first := firstInput{Principal: l.Principal, From: l.From, Key: l.Key, Text: l.Input.Text, Context: l.Context, Dir: l.Dir, Link: l.Input.Link,
 		Before: l.Input.Before, After: l.Input.After, Via: l.Input.Via, NoInput: l.NoInput}
+	if r.TurnContext != nil && !first.NoInput {
+		if err := r.Store.Update(ctx, func(tx *store.Tx) error {
+			context, err := r.TurnContext(ctx, tx, l.Session)
+			if err != nil {
+				return err
+			}
+			first.Context += context
+			fb, _ := json.Marshal(first)
+			_, err = tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(fb), l.Session)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
 	spec, err := r.launch(ctx, l.Session, l.Agent, ad, spec, first)
 	if err != nil {
 		return err
@@ -395,7 +412,6 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		}
 	}
 	first.Dir = spec.Dir // so that a launch begun here can be begun again
-	fb, _ := json.Marshal(first)
 	var before, recorded int
 	var model, effort, stored string
 	if err := r.Store.DB.QueryRowContext(ctx, `SELECT launch, host_pid, model, effort, spec FROM sessions WHERE id = ?`, id).
@@ -429,9 +445,10 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		}
 	}
 	sb, _ := json.Marshal(storedSpec{Agent: agentName, Spec: spec, Config: config})
-	if err := r.newAgent(ctx, id); err != nil {
+	if err := r.newAgent(ctx, id, &first); err != nil {
 		return agent.Spec{}, err
 	}
+	fb, _ := json.Marshal(first)
 	// launch = 2: the host is being started. Until it is recorded as
 	// started, a daemon that comes back launches the session again, and
 	// keeps the host it finds running instead of starting another.
@@ -468,19 +485,58 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 // newAgent retires input belonging to the previous agent before a new
 // host can start. Unwritten messages fail visibly instead of reaching a
 // later agent; written messages cannot be reported by the new process.
-func (r *Runner) newAgent(ctx context.Context, id int64) error {
+func (r *Runner) newAgent(ctx context.Context, id int64, first ...*firstInput) error {
+	var salvaged string
 	err := r.Store.Update(ctx, func(tx *store.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT data FROM pending_inputs WHERE session_id = ? AND request = '' AND context != '' ORDER BY id`, id)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var data string
+			if err := rows.Scan(&data); err != nil {
+				rows.Close()
+				return err
+			}
+			var input session.PendingInput
+			if err := json.Unmarshal([]byte(data), &input); err != nil {
+				rows.Close()
+				return err
+			}
+			salvaged += input.NewContext
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		if salvaged != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = context || ? WHERE id = ? AND set_aside IS NULL`, salvaged, id); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET stale = 1, context = '' WHERE session_id = ?`, id); err != nil {
 			return err
 		}
 		if err := r.failStaleInput(ctx, tx, id); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE session_id = ? AND request = '' AND written != 0`, id)
+		if _, err = tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE session_id = ? AND request = '' AND written != 0`, id); err != nil {
+			return err
+		}
+		if len(first) > 0 && salvaged != "" {
+			next := *first[0]
+			next.Context += salvaged
+			data, _ := json.Marshal(next)
+			_, err = tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(data), id)
+		}
 		return err
 	})
 	if err != nil {
 		return fmt.Errorf("runner: session %d: %w", id, err)
+	}
+	if len(first) > 0 {
+		first[0].Context += salvaged
 	}
 	return nil
 }
@@ -1229,7 +1285,30 @@ func (r *Runner) handOver(lv *live, pending int64, answer bool, f func() (agent.
 
 // dropPending removes a pending input that cannot be handed over.
 func (r *Runner) dropPending(pending int64) {
-	if _, err := r.Store.DB.Exec(`DELETE FROM pending_inputs WHERE id = ?`, pending); err != nil {
+	ctx := context.Background()
+	err := r.Store.Update(ctx, func(tx *store.Tx) error {
+		var sid int64
+		var data, context string
+		err := tx.QueryRowContext(ctx, `SELECT session_id, data, context FROM pending_inputs WHERE id = ?`, pending).Scan(&sid, &data, &context)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var input session.PendingInput
+		if err := json.Unmarshal([]byte(data), &input); err != nil {
+			return err
+		}
+		if context != "" && input.NewContext != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = context || ? WHERE id = ? AND set_aside IS NULL`, input.NewContext, sid); err != nil {
+				return err
+			}
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE id = ?`, pending)
+		return err
+	})
+	if err != nil {
 		r.Log.Error("pending input", "pending", pending, "err", err)
 	}
 }
@@ -1811,7 +1890,7 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 		// typed at the terminal may be read with it. What its agent was to be
 		// told before an input waits for the next one.
 		if f.Context != "" {
-			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = ? WHERE id = ?`, f.Context, lv.id); err != nil {
+			if err := preserveContext(ctx, tx, lv.id, f.Context); err != nil {
 				return err
 			}
 		}
@@ -1829,7 +1908,7 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 		// The agent reported the turn: delivered, and with it what the
 		// agent was still to be told, except by an input that has a
 		// conversation of its own.
-		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = '' WHERE id = ? AND set_aside IS NULL`, lv.id); err != nil {
+		if err := consumeContext(ctx, tx, lv.id, f.Context); err != nil {
 			return err
 		}
 		f = firstInput{}
@@ -1839,7 +1918,7 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 		// Older launches may have kept the owed context only in this
 		// first input. Preserve it before discarding an undelivered call.
 		if f.Context != "" {
-			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = ? WHERE id = ? AND set_aside IS NULL`, f.Context, lv.id); err != nil {
+			if err := preserveContext(ctx, tx, lv.id, f.Context); err != nil {
 				return err
 			}
 		}
@@ -1913,10 +1992,25 @@ func clearReported(ctx context.Context, tx *store.Tx, id int64, evs []agent.Even
 		if err != nil {
 			continue // not one of ours
 		}
-		if e.Kind != agent.TurnEnded {
-			// The agent got what it was given before its text, if anything.
-			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = '' WHERE id = ?1
-				AND EXISTS (SELECT 1 FROM pending_inputs WHERE id = ?2 AND session_id = ?1 AND context != '')`, id, row); err != nil {
+		var context, data string
+		err = tx.QueryRowContext(ctx, `SELECT context, data FROM pending_inputs WHERE id = ? AND session_id = ? AND request = ''`, row, id).Scan(&context, &data)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		var input session.PendingInput
+		if data != "" {
+			if err := json.Unmarshal([]byte(data), &input); err != nil {
+				return err
+			}
+		}
+		if e.Kind == agent.TurnEnded {
+			if context != "" && input.NewContext != "" {
+				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET context = context || ? WHERE id = ? AND set_aside IS NULL`, input.NewContext, id); err != nil {
+					return err
+				}
+			}
+		} else {
+			if err := consumeContext(ctx, tx, id, strings.TrimSuffix(context, input.NewContext)); err != nil {
 				return err
 			}
 		}
@@ -1925,6 +2019,45 @@ func clearReported(ctx context.Context, tx *store.Tx, id int64, evs []agent.Even
 		}
 	}
 	return nil
+}
+
+// preserveContext returns an unreported input's context to the session.
+// An owed prefix already carried by that input is kept only once.
+func preserveContext(ctx context.Context, tx *store.Tx, id int64, text string) error {
+	if text == "" {
+		return nil
+	}
+	var owed string
+	if err := tx.QueryRowContext(ctx, `SELECT context FROM sessions WHERE id = ?`, id).Scan(&owed); err != nil {
+		return err
+	}
+	if strings.HasPrefix(owed, text) {
+		return nil
+	}
+	if strings.HasPrefix(text, owed) {
+		owed = text
+	} else {
+		owed += text
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE sessions SET context = ? WHERE id = ? AND set_aside IS NULL`, owed, id)
+	return err
+}
+
+// consumeContext removes only the context this input carried. Context added
+// for another queued input remains owed until that input reports delivery.
+func consumeContext(ctx context.Context, tx *store.Tx, id int64, text string) error {
+	if text == "" {
+		return nil
+	}
+	var owed string
+	if err := tx.QueryRowContext(ctx, `SELECT context FROM sessions WHERE id = ?`, id).Scan(&owed); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(owed, text) {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE sessions SET context = ? WHERE id = ? AND set_aside IS NULL`, strings.TrimPrefix(owed, text), id)
+	return err
 }
 
 // firstInputID is the Input.ID of a session's first input. It is not a

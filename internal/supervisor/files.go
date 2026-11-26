@@ -120,7 +120,7 @@ func (s *ScopeFiles) do(ctx context.Context, scope string, thread control.Thread
 	case control.FilesList:
 		return s.list(ctx, dir)
 	case control.FilesRead:
-		return s.read(dir, parts)
+		return s.read(ctx, thread, dir, parts)
 	case control.FilesWrite:
 		if r.Text == nil {
 			return control.FilesAnswer{}, refusal("a write without a text")
@@ -288,6 +288,7 @@ func (s *ScopeFiles) way(root *os.Root, parts []string) (*os.Root, []string, err
 // text only when Files reads it.
 type found struct {
 	control.ScopeFile
+	stamp string
 	access
 }
 
@@ -383,7 +384,7 @@ func (s *ScopeFiles) look(dir *os.Root, name, path string) (*found, error) {
 	if !st.Mode().IsRegular() {
 		return nil, refusal("not a regular file")
 	}
-	f := &found{ScopeFile: control.ScopeFile{Path: path, Size: st.Size()}}
+	f := &found{ScopeFile: control.ScopeFile{Path: path, Size: st.Size()}, stamp: fmt.Sprintf("stat:%d:%d", st.Size(), st.ModTime().UnixNano())}
 	if st.Size() > FileMax {
 		return f, nil
 	}
@@ -490,7 +491,7 @@ func entries(at *os.Root) ([]fs.DirEntry, error) {
 }
 
 // read gives the file at parts in dir.
-func (s *ScopeFiles) read(dir string, parts []string) (control.FilesAnswer, error) {
+func (s *ScopeFiles) read(ctx context.Context, thread control.ThreadID, dir string, parts []string) (control.FilesAnswer, error) {
 	root, err := s.open(dir)
 	if err != nil {
 		return control.FilesAnswer{}, err
@@ -514,7 +515,14 @@ func (s *ScopeFiles) read(dir string, parts []string) (control.FilesAnswer, erro
 	case f.Version == "":
 		return control.FilesAnswer{}, refusal("the file is over 256 KB, or not UTF-8")
 	}
-	return control.FilesAnswer{File: f.with()}, nil
+	name, version := strings.Join(parts, "/"), f.Version
+	if user := userFile(root, name); user != "" {
+		name = user
+		if f.Size > UserFileMax {
+			version = f.stamp
+		}
+	}
+	return control.FilesAnswer{File: f.with()}, s.acknowledge(ctx, thread, name, version)
 }
 
 // write makes r's write or edit of the file at parts in dir.
@@ -546,7 +554,7 @@ func (s *ScopeFiles) write(ctx context.Context, scope string, thread control.Thr
 		return control.FilesAnswer{File: cur.with(), Refused: why}, nil
 	}
 	if cur != nil && cur.Text == next {
-		return control.FilesAnswer{File: cur.without()}, nil
+		return control.FilesAnswer{File: cur.without()}, s.acknowledgeFile(ctx, thread, root, r.Path, cur.Version, cur.Size)
 	}
 	if err := s.allowed(ctx, root, parts, cur, next); err != nil {
 		return control.FilesAnswer{}, err
@@ -591,7 +599,7 @@ func (s *ScopeFiles) write(ctx context.Context, scope string, thread control.Thr
 		return control.FilesAnswer{}, err
 	}
 	s.Log.Info("a supervisor's file is written", "scope", scope, "thread", int64(thread), "path", path, "bytes", len(next), "new", cur == nil)
-	return control.FilesAnswer{File: &control.ScopeFile{Path: path, Size: int64(len(next)), Version: w.version}}, nil
+	return control.FilesAnswer{File: &control.ScopeFile{Path: path, Size: int64(len(next)), Version: w.version}}, s.acknowledgeFile(ctx, thread, root, path, w.version, int64(len(next)))
 }
 
 // same reports whether a and b are two names of one thing in root.

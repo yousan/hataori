@@ -785,6 +785,19 @@ var migrations = []Migration{
 	{Name: "pending_inputs.written_text", Up: execAll(
 		`ALTER TABLE pending_inputs ADD COLUMN written_text TEXT`,
 	)},
+	{Name: "supervisor_session_files", Up: execAll(
+		`CREATE TABLE supervisor_session_files (
+   session_id INTEGER NOT NULL REFERENCES sessions(id),
+   name TEXT NOT NULL,
+   told TEXT NOT NULL,
+   PRIMARY KEY (session_id, name)
+  )`,
+		`INSERT INTO supervisor_session_files (session_id, name, told)
+   SELECT (SELECT max(s.id) FROM sessions s WHERE s.thread_id = t.id), f.name, f.told
+   FROM supervisor_files f JOIN threads t ON t.scope = f.scope AND t.kind = 'supervisor'
+   WHERE t.id = (SELECT max(t2.id) FROM threads t2 WHERE t2.scope = f.scope AND t2.kind = 'supervisor')
+   AND EXISTS (SELECT 1 FROM sessions s WHERE s.thread_id = t.id)`,
+	)},
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {
