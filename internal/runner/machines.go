@@ -465,7 +465,7 @@ func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) (result
 			failed(true)
 			return err
 		}
-		if err := r.machineEffect(ctx, lv.id, remote, m, r.actionInputs(lv, a.Inputs)...); err != nil {
+		if err := r.machineEffectFor(ctx, lv, remote, m, r.actionInputs(lv, a.Inputs)...); err != nil {
 			var nothing *holder.NotSent
 			failed(errors.As(err, &nothing))
 			return err
@@ -492,7 +492,7 @@ func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) (result
 		if err != nil {
 			return err
 		}
-		if err := r.machineEffect(ctx, lv.id, remote, m, r.actionInputs(lv, nil)...); err != nil {
+		if err := r.machineEffectFor(ctx, lv, remote, m, r.actionInputs(lv, nil)...); err != nil {
 			return err
 		}
 	}
@@ -500,6 +500,11 @@ func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) (result
 }
 
 func (r *Runner) machineEffect(ctx context.Context, id int64, remote *machineio.Remote, m workerproto.Message, inputs ...string) error {
+	return r.machineEffectFor(ctx, &live{id: id}, remote, m, inputs...)
+}
+
+func (r *Runner) machineEffectFor(ctx context.Context, lv *live, remote *machineio.Remote, m workerproto.Message, inputs ...string) error {
+	id := lv.id
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err
@@ -523,7 +528,7 @@ func (r *Runner) machineEffect(ctx context.Context, id int64, remote *machineio.
 		}
 	}
 	if state == "refused" && len(inputs) > 0 {
-		resolution := r.recordActionResolution(&live{id: id}, action, string(inputJSON), state)
+		resolution := r.recordActionResolution(lv, action, string(inputJSON), state)
 		if errors.Is(resolution, core.ErrMachineUnchecked) {
 			resolution = nil
 		}

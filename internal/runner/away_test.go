@@ -755,3 +755,65 @@ func TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn(t *testing.T) {
 		})
 	}
 }
+
+// The resident's metadata read succeeds, then the answer connection is refused
+// before any bytes are sent. This exercises handOver -> actRemote -> the effect
+// journal with the actual follower, followed by another committed agent event.
+func TestAwayImmediateAnswerRefusalPreservesRealFollowerSequence(t *testing.T) {
+	f, _ := remoteFixture(t, true)
+	enableFixtureAway(t, f)
+	seedRemote(t, f, 1, "ask colour\nreply after answer")
+	waitFor(t, "worker hook before refusal", 5*time.Second, f.has("request", 1))
+	lv, err := f.run.get(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.run.Close()
+	lv.mu.Lock()
+	defer lv.mu.Unlock()
+	var request string
+	if err := f.st.DB.QueryRow(`SELECT request FROM requests WHERE state='open'`).Scan(&request); err != nil {
+		t.Fatal(err)
+	}
+	var pending int64
+	if err := f.st.Update(context.Background(), func(tx *store.Tx) error {
+		if err := f.core.Machine.ApplyTx(context.Background(), tx, 1, session.Input{Kind: session.Answer, Principal: "owner", Request: request, Key: "refused-answer", Text: "red"}); err != nil {
+			return err
+		}
+		var turn int64
+		if err := tx.QueryRow(`SELECT max(id) FROM turns WHERE session_id=1 AND ended_at IS NULL`).Scan(&turn); err != nil {
+			return err
+		}
+		res, err := tx.Exec(`INSERT INTO pending_inputs(session_id,request,data,context,caller_turn) VALUES(1,?,'{"text":"red"}','',?)`, request, turn)
+		if err != nil {
+			return err
+		}
+		pending, err = res.LastInsertId()
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	remote := lv.io.(*machineio.Remote)
+	open := remote.Open
+	calls := 0
+	remote.Open = func(ctx context.Context) (net.Conn, *workerproto.Connection, error) {
+		calls++
+		if calls == 2 {
+			return nil, nil, errors.New("isolated answer connection refused before write")
+		}
+		return open(ctx)
+	}
+	f.run.RevalidatePending = nil // acceptance provenance is constructed explicitly above
+	before := lv.seq
+	err = f.run.handOver(lv, pending, true, func() (agent.Actions, error) { return lv.codec.Answer(agent.Answer{Request: request, Text: "red"}) })
+	if err == nil || calls != 2 || lv.seq != before+1 {
+		t.Fatalf("immediate answer refusal lost actual follower sequence: %v calls=%d seq=%d/%d", err, calls, lv.seq, before)
+	}
+	countBefore := counts(t, f.st)["turn_started"]
+	if _, err := f.run.commit(lv, batch{events: []agent.Event{{Kind: agent.TurnStarted, StartedBy: agent.ByTerminal, Input: "autonomous"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if lv.seq != before+2 || counts(t, f.st)["turn_started"] != countBefore+1 {
+		t.Fatalf("next agent event dropped after immediate refusal: seq=%d events=%v", lv.seq, counts(t, f.st))
+	}
+}

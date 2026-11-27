@@ -28,6 +28,8 @@ cases = [
  ("accepted answer caller-turn binding", "internal/core/core.go", 'if req != "" {\n\t\tif err := tx.QueryRowContext(ctx, `SELECT coalesce(max(id),0) FROM turns', 'if false && req != "" {\n\t\tif err := tx.QueryRowContext(ctx, `SELECT coalesce(max(id),0) FROM turns', './internal/core', '^TestAwayAnswerAcceptanceBindsItsNewCallerTurn$'),
  ("rejected answer completes bound caller turn", "internal/runner/away.go", 'if turn != 0 {', 'if false && turn != 0 {', './internal/runner', '^TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn$'),
 
+ ("immediate answer follower sequence", "internal/runner/machines.go", 'r.machineEffectFor(ctx, lv, remote, m, r.actionInputs(lv, nil)...)', 'r.machineEffect(ctx, lv.id, remote, m, r.actionInputs(lv, nil)...)', './internal/runner', '^TestAwayImmediateAnswerRefusalPreservesRealFollowerSequence$'),
+
 ]
 # The gone check appears twice; remove both to cover both warm and new reads.
 selected=set(sys.argv[1:])
