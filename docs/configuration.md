@@ -92,6 +92,13 @@ Model and effort are chosen in this order: the order's `model:` / `effort:`, the
 
 Names in `drivers`, `adapters` and `scopes[].client` start with a lowercase letter and contain only lowercase letters, digits and `-`.
 
+### Machine configuration foundation
+
+The machine-core foundation records stable machine bindings and keeps existing
+threads on `local`, without moving their workspace or session files. Machine
+placement, SSH connections and worker execution follow in later steps of #956;
+configuring a worker does not start a connection or install a service.
+
 ### `scopes[]`
 
 | Key | Type | Default | Meaning |
