@@ -379,6 +379,11 @@ func TestMachineConfinedAndReservationGuards(t *testing.T) {
 	}
 	machineThread(t, s, 10, "local", "ordinary")
 	if err := s.Update(ctx, func(tx *Tx) error {
+		return tx.PutPendingPlacement(ctx, PendingPlacement{Thread: 10, Machine: "build", Agent: "fake", Data: "wrong machine"})
+	}); err == nil {
+		t.Fatal("pending placement contradicted a placed thread's machine")
+	}
+	if err := s.Update(ctx, func(tx *Tx) error {
 		return tx.ReserveMachine(ctx, MachineReservation{Thread: 10, Machine: "build", Agent: "fake", Operation: "wrong"})
 	}); err == nil {
 		t.Fatal("reservation for another machine accepted")
