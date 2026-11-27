@@ -8,7 +8,7 @@
       "--- FAIL: TestAwayGraceCatchupAndPersistentActiveAge (0.14s)",
       "away_test.go:38: inventory alone bypassed session catch-up",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/store\t0.144s",
+      "FAIL\tgithub.com/yousan/hataori/internal/store\t0.142s",
       "FAIL"
     ]
   },
@@ -18,11 +18,11 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestAwayHeldSendBindsOriginalTargetInsideAcceptance (0.16s)",
-      "--- FAIL: TestAwayHeldSendBindsOriginalTargetInsideAcceptance/new_run (0.16s)",
+      "--- FAIL: TestAwayHeldSendBindsOriginalTargetInsideAcceptance (0.15s)",
+      "--- FAIL: TestAwayHeldSendBindsOriginalTargetInsideAcceptance/new_run (0.15s)",
       "away_test.go:220: retargeted held answer: dispatched [answer q1]",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.175s",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.158s",
       "FAIL"
     ]
   },
@@ -32,11 +32,11 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestAwayReadinessCutAtWriteAndStopBoundary (0.13s)",
-      "--- FAIL: TestAwayReadinessCutAtWriteAndStopBoundary/input (0.13s)",
+      "--- FAIL: TestAwayReadinessCutAtWriteAndStopBoundary (0.15s)",
+      "--- FAIL: TestAwayReadinessCutAtWriteAndStopBoundary/input (0.15s)",
       "away_test.go:293: definitely-unsent input retained written marker",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.143s",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.163s",
       "FAIL"
     ]
   },
@@ -46,11 +46,11 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestAwayReadinessCutAtWriteAndStopBoundary (0.13s)",
-      "--- FAIL: TestAwayReadinessCutAtWriteAndStopBoundary/stop (0.13s)",
+      "--- FAIL: TestAwayReadinessCutAtWriteAndStopBoundary (0.14s)",
+      "--- FAIL: TestAwayReadinessCutAtWriteAndStopBoundary/stop (0.14s)",
       "away_test.go:284: readiness refusal hidden: <nil>",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.143s",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.152s",
       "FAIL"
     ]
   },
@@ -63,7 +63,7 @@
       "--- FAIL: TestAwayUnknownInventoryAndConfirmedGoneDuringWarmReplay (0.16s)",
       "away_test.go:338: unknown inventory was interpreted as reboot",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.180s",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.173s",
       "FAIL"
     ]
   },
@@ -73,10 +73,10 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestAwayUnknownInventoryAndConfirmedGoneDuringWarmReplay (0.13s)",
+      "--- FAIL: TestAwayUnknownInventoryAndConfirmedGoneDuringWarmReplay (0.14s)",
       "away_test.go:349: confirmed gone warm replay did not terminate recovery",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.145s",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.151s",
       "FAIL"
     ]
   },
@@ -89,7 +89,7 @@
       "--- FAIL: TestAwayClosedCleanupPreservesRemainingActiveAge (0.15s)",
       "away_test.go:249: cleanup counted absence: 0 <nil> asks=0",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.152s",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.151s",
       "FAIL"
     ]
   },
@@ -102,7 +102,7 @@
       "--- FAIL: TestAwayWrittenDeliveryBudgetSurvivesCodecRebuild (0.13s)",
       "away_test.go:221: rebuild reset delivery budget: []",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.143s",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.144s",
       "FAIL"
     ]
   },
@@ -119,7 +119,7 @@
       "away_test.go:110: attach unchecked: core: worker attachment is unavailable: refused",
       "away_test.go:118: restart dispatched before catch-up [deliver later interrupt turn 1]",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.162s"
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.166s"
     ]
   },
   {
@@ -134,7 +134,7 @@
       "--- FAIL: TestAwayRevokedInitialInputKeepsHostMonitoringAndAudit/true (0.14s)",
       "away_test.go:316: initial authority not rechecked: <nil>",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.290s",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.283s",
       "FAIL"
     ]
   },
@@ -160,7 +160,7 @@
       "--- FAIL: TestAwayAcceptedQueueReceiptCommitsBeforeRunnerWrite (0.17s)",
       "away_test.go:271: durable acceptance lost to transport error: pending",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.178s",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.174s",
       "FAIL"
     ]
   },
@@ -170,11 +170,11 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestAwayExpiredWorkerHookIsWithdrawnBeforeHeldAnswer (10.70s)",
+      "--- FAIL: TestAwayExpiredWorkerHookIsWithdrawnBeforeHeldAnswer (10.92s)",
       "away_test.go:56: timed out waiting for expired hook reconciled before readiness",
-      "remote_test.go:39: time=2026-11-28T04:18:05.261+09:00 level=WARN msg=\"session I/O paused\" session=1 reason=\"the owning machine is unavailable or catching up\"",
+      "remote_test.go:39: time=2026-11-28T04:20:43.927+09:00 level=WARN msg=\"session I/O paused\" session=1 reason=\"the owning machine is unavailable or catching up\"",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t10.714s",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t10.935s",
       "FAIL"
     ]
   },
@@ -184,11 +184,11 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup (0.15s)",
-      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup/first (0.15s)",
-      "away_capture_test.go:133: acknowledged written input retained: \"{\\\"principal\\\":\\\"owner\\\",\\\"key\\\":\\\"\\\",\\\"text\\\":\\\"Before doing anything else, say in one short sentence what you will do. Then run the shell command `echo start-ok`. Then answer: what is 2+3?\\\",\\\"sent\\\":true,\\\"turn_id\\\":1,\\\"written_at\\\":1795807099498,\\\"written\\\":true,\\\"current\\\":true}\" pending=0",
+      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup (0.21s)",
+      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup/first (0.21s)",
+      "away_capture_test.go:133: acknowledged written input retained: \"{\\\"principal\\\":\\\"owner\\\",\\\"key\\\":\\\"\\\",\\\"text\\\":\\\"Before doing anything else, say in one short sentence what you will do. Then run the shell command `echo start-ok`. Then answer: what is 2+3?\\\",\\\"sent\\\":true,\\\"turn_id\\\":1,\\\"written_at\\\":1795807258206,\\\"written\\\":true,\\\"current\\\":true}\" pending=0",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.160s",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.226s",
       "FAIL"
     ]
   },
@@ -198,13 +198,13 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup (0.30s)",
-      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup/first (0.15s)",
-      "away_capture_test.go:133: acknowledged written input retained: \"{\\\"principal\\\":\\\"owner\\\",\\\"key\\\":\\\"\\\",\\\"text\\\":\\\"Before doing anything else, say in one short sentence what you will do. Then run the shell command `echo start-ok`. Then answer: what is 2+3?\\\",\\\"sent\\\":true,\\\"turn_id\\\":1,\\\"written_at\\\":1795807103623,\\\"written\\\":true,\\\"current\\\":true}\" pending=0",
-      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup/pending (0.15s)",
+      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup (0.69s)",
+      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup/first (0.56s)",
+      "away_capture_test.go:133: acknowledged written input retained: \"{\\\"principal\\\":\\\"owner\\\",\\\"key\\\":\\\"\\\",\\\"text\\\":\\\"Before doing anything else, say in one short sentence what you will do. Then run the shell command `echo start-ok`. Then answer: what is 2+3?\\\",\\\"sent\\\":true,\\\"turn_id\\\":1,\\\"written_at\\\":1795807262770,\\\"written\\\":true,\\\"current\\\":true}\" pending=0",
+      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup/pending (0.13s)",
       "away_capture_test.go:133: acknowledged written input retained: \"\" pending=1",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.306s",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.701s",
       "FAIL"
     ]
   },
@@ -214,10 +214,10 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestAwayNewNativeHookUsesWallClockAfterPause (0.14s)",
+      "--- FAIL: TestAwayNewNativeHookUsesWallClockAfterPause (0.16s)",
       "away_capture_test.go:174: paused delivery clock delayed a new expired worker hook: []",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.150s",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.175s",
       "FAIL"
     ]
   },
@@ -227,11 +227,11 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestAwayAcceptedAnswerRefusalIsDurable (0.14s)",
-      "--- FAIL: TestAwayAcceptedAnswerRefusalIsDurable/codec_expired (0.14s)",
+      "--- FAIL: TestAwayAcceptedAnswerRefusalIsDurable (0.15s)",
+      "--- FAIL: TestAwayAcceptedAnswerRefusalIsDurable/codec_expired (0.15s)",
       "away_test.go:427: terminal answer outcome lost: 0 dispatched",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.153s",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.164s",
       "FAIL"
     ]
   },
@@ -241,11 +241,11 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestAwayMissingReceiptAfterAppliedWriteNeverAllowsRetry (0.64s)",
+      "--- FAIL: TestAwayMissingReceiptAfterAppliedWriteNeverAllowsRetry (0.49s)",
       "away_test.go:608: missing receipt became no-write proof: refused",
-      "remote_test.go:39: time=2026-11-28T04:18:36.526+09:00 level=WARN msg=\"session I/O paused\" session=1 reason=\"the owning machine is unavailable or catching up\"",
+      "remote_test.go:39: time=2026-11-28T04:21:15.465+09:00 level=WARN msg=\"session I/O paused\" session=1 reason=\"the owning machine is unavailable or catching up\"",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.649s",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.506s",
       "FAIL"
     ]
   },
@@ -255,10 +255,10 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestAwayRefusedReceiptAndWrittenMarkerCommitAtomically (0.18s)",
+      "--- FAIL: TestAwayRefusedReceiptAndWrittenMarkerCommitAtomically (0.16s)",
       "away_test.go:524: partial resolution committed: refused 2",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.188s",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.169s",
       "FAIL"
     ]
   },
@@ -268,10 +268,10 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestAwayImmediateNoWriteRefusalIsAtomic (0.13s)",
+      "--- FAIL: TestAwayImmediateNoWriteRefusalIsAtomic (0.16s)",
       "away_test.go:703: immediate refusal partially committed: refused 2",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.139s",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.166s",
       "FAIL"
     ]
   },
@@ -281,10 +281,10 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestAwayAnswerAcceptanceBindsItsNewCallerTurn (0.15s)",
+      "--- FAIL: TestAwayAnswerAcceptanceBindsItsNewCallerTurn (0.16s)",
       "away_test.go:370: answer lost caller-turn binding: 0 2",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.158s",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.169s",
       "FAIL"
     ]
   },
@@ -294,13 +294,41 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn (0.49s)",
-      "--- FAIL: TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn/codec_expired (0.20s)",
+      "--- FAIL: TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn (0.40s)",
+      "--- FAIL: TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn/codec_expired (0.14s)",
       "away_test.go:752: refused answer left synthetic running turn: 1 seq=5",
-      "--- FAIL: TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn/authority_revoked (0.14s)",
+      "--- FAIL: TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn/authority_revoked (0.13s)",
       "away_test.go:752: refused answer left synthetic running turn: 1 seq=5",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.495s",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.414s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "immediate answer follower sequence",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayImmediateAnswerRefusalPreservesRealFollowerSequence$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayImmediateAnswerRefusalPreservesRealFollowerSequence (0.50s)",
+      "away_test.go:810: immediate answer refusal lost actual follower sequence: isolated answer connection refused before write; nothing was sent calls=2 seq=3/3",
+      "remote_test.go:39:",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.508s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "idle remaining active time",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayIdleBudgetDoesNotExpireDuringDisconnection$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayIdleBudgetDoesNotExpireDuringDisconnection (3.53s)",
+      "away_idle_test.go:37: runner: session 1 is not running",
+      "remote_test.go:39: time=2026-11-28T04:22:23.648+09:00 level=WARN msg=\"session I/O paused\" session=1 reason=\"the owning machine is unavailable or catching up\"",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t3.537s",
       "FAIL"
     ]
   }

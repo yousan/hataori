@@ -30,6 +30,8 @@ cases = [
 
  ("immediate answer follower sequence", "internal/runner/machines.go", 'r.machineEffectFor(ctx, lv, remote, m, r.actionInputs(lv, nil)...)', 'r.machineEffect(ctx, lv.id, remote, m, r.actionInputs(lv, nil)...)', './internal/runner', '^TestAwayImmediateAnswerRefusalPreservesRealFollowerSequence$'),
 
+ ("idle remaining active time", "internal/runner/away.go", 'func (r *Runner) activeAge(ctx context.Context, q store.RowQuerier, id int64, since time.Time) time.Duration {', 'func (r *Runner) activeAge(ctx context.Context, q store.RowQuerier, id int64, since time.Time) time.Duration { return time.Since(since)', './internal/runner', '^TestAwayIdleBudgetDoesNotExpireDuringDisconnection$'),
+
 ]
 # The gone check appears twice; remove both to cover both warm and new reads.
 selected=set(sys.argv[1:])
