@@ -44,10 +44,25 @@ jobs:
       fail-fast: false
       matrix:
         version: ['3.2', '3.2a', '3.4', '3.8']
+        include:
+          # Start requires >=3.2; these release families exercise the exact
+          # pipe command directly, including versions before that minimum.
+          - version: '3.0a'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.1c'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.3a'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.5a'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.6b'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.7c'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
     env:
       TMUX_VERSION: ${{ matrix.version }}
       TEST_COUNT: ${{ inputs.count || '1' }}
-      TEST_NAMES: ${{ inputs.tests || '.' }}
+      TEST_NAMES: ${{ matrix.tests || inputs.tests || '.' }}
     steps:
       - uses: actions/checkout@v4
         with:
