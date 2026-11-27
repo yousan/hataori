@@ -92,6 +92,7 @@ Events are stored, and a reader reads them from a position, possibly long after 
 | `forbidden` | error code | - | the caller may not make this call in this scope |
 | `disabled` | error code | - | the scope is not enabled, or it is no longer in the config: nothing starts in it, and its threads are only read, stopped, closed and removed |
 | `busy` | error code | - | a turn is running and the call said to refuse; for `OperateHost`, the pane is being operated already (since 3.11) |
+| `action_held` | error code | - | the named stop is held while its machine is unavailable; nothing has been stopped; since 3.47 |
 | `not_found` | error code | - | no such thread or request; also a thread, a request or a conversation's thread of a scope that is not the caller's, which is answered as one that does not exist, with the same message |
 | `closed` | error code | - | the thread is closed or removed: nothing was sent, and a message does not wake it; since 2.3 |
 | `removal_refused` | error code | - | the workspace may hold work that exists nowhere else, so it was not removed; the message says why; since 2.3 |
@@ -1437,6 +1438,13 @@ thread's existing event stream. Required: `machine` string, `state` string,
 `since` integer (first failure Unix milliseconds, zero after recovery), and
 `reason` string. This is availability, not a session state transition.
 
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `machine` | string | required | configured machine key |
+| `state` | string | required | observed availability state |
+| `since` | integer | required | first failure Unix milliseconds, zero after recovery |
+| `reason` | string | required | availability reason |
+
 ### Event `machine_action`
 
 Since 3.47. Required fields: `action` string (`held`, `send`, `answer`, `stop`
@@ -1445,6 +1453,12 @@ or `pending input` / `initial input`), `state` string (`pending`, `dispatched`, 
 is visible and never means a queued action reached another run/turn/request.
 A dispatched input is accepted for the normal receipt-based delivery path; it
 does not claim arbitrary command exactly-once execution.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `action` | string | required | action being held, dispatched or refused |
+| `state` | string | required | pending, dispatched or refused |
+| `reason` | string | required | bounded explanation of the action's outcome |
 
 ### Event `placement`
 
