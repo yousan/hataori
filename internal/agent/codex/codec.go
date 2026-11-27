@@ -63,6 +63,8 @@ type codec struct {
 	requests     map[int]string  // outstanding request methods by id
 	session      string          // current thread id
 	pendingReady *agent.Event    // waits for current confined instructions to be injected
+	injection    []byte          // exact trusted request reconstructed from retained output
+	recoverGate  bool            // first live tick reconciles an unopened codec's injection
 	ready        bool            // the thread has been reported
 	closed       bool            // the session has ended
 	running      bool            // a turn is running or requested
@@ -88,6 +90,7 @@ func NewCodec(spec agent.Spec, opts Options) agent.Codec {
 		// same handshake ids so rate-limit response ordering cannot satisfy
 		// the current-instructions gate by accident.
 		c.next = 4
+		c.recoverGate = true
 		c.requests[1], c.requests[2], c.requests[3] = "initialize", "thread/start", RateLimitsRead
 		if spec.ResumeID != "" {
 			c.requests[2] = "thread/resume"
@@ -123,6 +126,7 @@ func (c *codec) Open() agent.Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var a agent.Actions
+	c.recoverGate = false // this process receives its original handshake actions
 	if c.spec.Confine != nil && c.opts.confinedInstructions == "" {
 		c.closed = true
 		c.emit(&a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
@@ -231,11 +235,23 @@ func (c *codec) Interrupt() agent.Actions {
 	return a
 }
 
-// Tick expires unreported inputs and writes the next queued input.
+// Tick reconciles an unopened codec's instruction gate, expires unreported
+// inputs and writes the next queued input.
 func (c *codec) Tick(now time.Time) agent.Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var a agent.Actions
+	if c.recoverGate {
+		c.recoverGate = false
+		// warmIO reconstructs the pending request but discards its Write.
+		// The runner reads/commits available output before Tick, so an ack
+		// already waiting at the host clears this gate without a retry.
+		// Only this trusted, turn-free snapshot is safe to repeat. Keep its
+		// original id/bytes: either successful ack releases the same gate.
+		if !c.closed && c.pendingReady != nil && len(c.injection) != 0 {
+			a.Write = append(a.Write, append([]byte(nil), c.injection...))
+		}
+	}
 	remaining := c.sent[:0]
 	for _, s := range c.sent {
 		// The app-server answers steer requests; if it exits, the session ends.
@@ -381,6 +397,7 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 			c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: reason})
 		case method == "thread/inject_items":
 			c.closed = true
+			c.injection = nil
 			c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
 		case method == "initialize" || method == "thread/start":
 			c.closed = true
@@ -405,6 +422,7 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 		return
 	}
 	if method == "thread/inject_items" && c.pendingReady != nil && !c.closed {
+		c.injection = nil
 		var ack map[string]json.RawMessage
 		if json.Unmarshal(m.Result, &ack) != nil || ack == nil || len(ack) != 0 {
 			c.closed = true
@@ -439,11 +457,17 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 		c.session = r.Thread.ID
 		ready := agent.Event{Kind: agent.SessionReady, SessionID: c.session, Model: r.Model, Effort: r.Effort}
 		if c.spec.Confine != nil {
+			if c.opts.confinedInstructions == "" {
+				c.closed = true
+				c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
+				return
+			}
 			c.pendingReady = &ready
 			// Resume restores static instructions from history. Inject the current
 			// trusted composition into model-visible history before any turn.
 			text := "Current supervisor launch instructions replace earlier supervisor instruction snapshots. Preserve the layer precedence within this snapshot.\n\n" + c.opts.confinedInstructions
 			c.write(a, "thread/inject_items", map[string]any{"threadId": c.session, "items": []any{map[string]any{"type": "message", "role": "developer", "content": []any{map[string]any{"type": "input_text", "text": text}}}}}, true)
+			c.injection = append([]byte(nil), a.Write[len(a.Write)-1]...)
 		} else {
 			c.ready = true
 			c.emit(a, ready)
