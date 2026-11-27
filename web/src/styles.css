@@ -1832,6 +1832,11 @@ a.chat-link:hover {
   padding: 4px 6px;
 }
 
+.shell.narrow .box-row textarea,
+.shell.narrow .answers-field textarea {
+  font-size: 16px;
+}
+
 /* A thread that failed as it started: what it was asked, who started it,
    why it stopped, and its choices (FailedStart.tsx). */
 .failed-start {
