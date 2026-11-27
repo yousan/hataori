@@ -54,6 +54,7 @@ var eventData = map[control.EventKind]string{
 	"post_cancelled":    `{"edit":true,"event":41,"failed":true,"link":{"channel":"C0123","client":"discord","thread":"T0456"},"part":0,"plugin":"secret-scan","reason":"it did not answer within 5s"}`,
 	"post_refused":      `{"event":41,"link":{"channel":"C0123","client":"discord","thread":"T0456"},"message":"M0999","part":0,"reason":"discord: post: 403 Missing Access (code 50001)"}`,
 	"input":             `{"after":"Say which tests failed.","before":"Answer in English.","from":"discord:W1","link":{"channel":"C0123","client":"discord","thread":"T0456"},"principal":"dispatch","session":3,"text":"Run the tests.","turn":12,"via":"dashboard"}`,
+	"input_waiting":     `{"session":3,"input":"42","reason":"Enter could not be handed to the agent's window"}`,
 	"input_waits":       `{"running":[12,15],"session":3}`,
 	"input_failed":      `{"from":"discord:W1","input":"42","key":"M0789","link":{"channel":"C0123","client":"discord","thread":"T0456"},"principal":"dispatch","reason":"not delivered","session":3,"text":"Run the tests.","via":"dashboard"}`,
 	"answer":            `{"from":"discord:W1","link":{"channel":"C0123","client":"discord","thread":"T0456"},"principal":"dispatch","request":"3:toolu_2","session":3,"text":"blue","turn":13,"via":"dashboard"}`,
@@ -140,6 +141,7 @@ func examples(t *testing.T) map[string]any {
 		"Remind":               control.RemindRequest{At: &exampleTime, Note: "Has thread 7 ended?"},
 		"Files":                control.FilesRequest{Op: control.FilesWrite, Path: "notes/plan.md", Text: &written, Version: exampleVersion},
 		"AttachTerminal":       attachTerminalArgs{ID: exampleID},
+		"AttachWorker":         attachTerminalArgs{ID: exampleID},
 		"OperateHost":          operateHostArgs{Pane: "%3"},
 		"HostKeys": hostKeysArgs{Keys: []control.HostKey{{Key: "C-c"}, {Text: "make test"}, {Key: "Enter"},
 			{Text: "line one\nline two", Paste: true}}},
@@ -191,6 +193,7 @@ func examples(t *testing.T) map[string]any {
 		"HostView":       control.HostView{Screen: "$ make\nok\n$ ", CursorX: 2, CursorY: 2},
 		"OperateHost":    hostOperation{Idle: 300},
 		"AttachTerminal": control.Attachment{Socket: "/srv/hataori/state/sessions/7/host.sock", Number: 7},
+		"AttachWorker":   control.WorkerAttachment{Number: 7, Destination: "worker-alias", Root: "/srv/worker", Main: "main-A", Installation: "worker-A", Thread: 7, Session: "s-7", Run: "run-A"},
 		"Clients":        []control.ClientState{{Client: "discord", Connected: false, Since: exampleTime}},
 		"Forge": control.ForgeAnswer{Repo: "acme/widgets", Pull: &control.ForgePullDetail{
 			ForgePull: control.ForgePull{Number: 42, Title: "Fix the build", State: "open", Branch: "fix-build", Base: "main",

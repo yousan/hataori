@@ -1,0 +1,1 @@
+{"kind":"reply","id":"request-probe","binding":{"main":"main-A","worker":"worker-A"},"op":"probe","body":{"agent":"fake","config":"default","config_dir":"/worker/agent-profile","installed":true,"login":"logged_out","installation":"installed"}}

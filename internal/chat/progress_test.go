@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
@@ -64,16 +65,25 @@ func (f *front) lines(id control.ThreadID) (calls []string, shown int) {
 	return calls, len(lines)
 }
 
+// waitLines waits for the expected calls and their persisted acknowledgements.
+// Failed or dropped rows are not visible calls and need not finish first.
 func (f *front) waitLines(t *testing.T, id control.ThreadID, want ...string) {
 	t.Helper()
+	conv := f.conv(id)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		got, _ := f.lines(id)
-		if strings.Join(got, "|") == strings.Join(want, "|") {
+		var sent int
+		if err := f.fe.Outbox.Store.DB.QueryRow(`SELECT count(*) FROM chat_outbox
+			WHERE client = ? AND channel = ? AND thread = ? AND state = 'sent'
+			AND (part >= ? OR part = ?)`, f.fe.Outbox.Client, conv.Channel, conv.Thread, linePart, deletePart).Scan(&sent); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(got, "|") == strings.Join(want, "|") && sent == len(want) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("progress line calls\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+			t.Fatalf("progress line calls\n%s\nwant\n%s\n%d acknowledged rows, want %d", strings.Join(got, "\n"), strings.Join(want, "\n"), sent, len(want))
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
@@ -95,6 +105,134 @@ func (f *front) advance(t *testing.T, c *clock, s int) {
 // settle lets the reader tick a few times at the clock's time.
 func settle() { time.Sleep(30 * time.Millisecond) }
 
+// heldProgressReply makes a progress call visible before its sender can
+// record the successful reply. Other driver calls complete normally.
+type heldProgressReply struct {
+	*fake.Driver
+	op      fake.Op
+	called  chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (d *heldProgressReply) hold(ctx context.Context, op fake.Op) error {
+	var err error
+	if op == d.op {
+		d.once.Do(func() {
+			close(d.called)
+			select {
+			case <-d.release:
+			case <-ctx.Done():
+				err = ctx.Err()
+			}
+		})
+	}
+	return err
+}
+
+func (d *heldProgressReply) Post(ctx context.Context, conv surface.Conversation, key string, m surface.Message) (surface.MessageRef, error) {
+	ref, err := d.Driver.Post(ctx, conv, key, m)
+	if err == nil && strings.HasPrefix(m.Text, "Still working") {
+		err = d.hold(ctx, fake.OpPost)
+	}
+	return ref, err
+}
+
+func (d *heldProgressReply) Edit(ctx context.Context, ref surface.MessageRef, m surface.Message) error {
+	if err := d.Driver.Edit(ctx, ref, m); err != nil {
+		return err
+	}
+	return d.hold(ctx, fake.OpEdit)
+}
+
+func (d *heldProgressReply) Delete(ctx context.Context, ref surface.MessageRef) error {
+	if err := d.Driver.Delete(ctx, ref); err != nil {
+		return err
+	}
+	return d.hold(ctx, fake.OpDelete)
+}
+
+// A visible post, edit or delete is not yet an acknowledged outbox row.
+// The next clock step must wait for that acknowledgement, even when the
+// reader's cursor has already caught up. synctest makes the interleaving
+// deterministic without a real-time allowance for an unfinished send.
+func TestProgressClockWaitsForOutboxAcknowledgement(t *testing.T) {
+	for _, op := range []fake.Op{fake.OpPost, fake.OpEdit, fake.OpDelete} {
+		t.Run(op.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				heldAt := t0.Add(91 * time.Second)
+				c := &clock{t: heldAt}
+				d := &heldProgressReply{op: op, called: make(chan struct{}), release: make(chan struct{})}
+				f := newFront(t, workspaces{}, withClock(c), func(fe *FrontEnd) {
+					d.Driver = fe.Driver.(*fake.Driver)
+					fe.Outbox.Driver = d
+				})
+				var release sync.Once
+				unblock := func() { release.Do(func() { close(d.release) }) }
+				t.Cleanup(unblock)
+				id, _ := f.started(t)
+				f.showing(t)
+				f.advance(t, c, 91) // cursor convergence alone must not release the next step
+				conv := f.conv(id)
+				const text = "Still working: 1m 31s without output."
+				row := Row{Event: 1 << 40, Part: linePart, Conv: conv, Decoration: true, Message: surface.Message{Text: text}}
+				want := []string{"post " + text}
+				write := func() {
+					t.Helper()
+					if err := f.fe.Outbox.Write(context.Background(), row); err != nil {
+						t.Fatal(err)
+					}
+				}
+				state := func() (string, int64) {
+					t.Helper()
+					var state string
+					var sent int64
+					if err := f.fe.Outbox.Store.DB.QueryRow(`SELECT state, coalesce(sent_at, 0) FROM chat_outbox
+						WHERE client = ? AND channel = ? AND thread = ? AND event = ? AND part = ?`,
+						f.fe.Name, conv.Channel, conv.Thread, row.Event, row.Part).Scan(&state, &sent); err != nil {
+						t.Fatal(err)
+					}
+					return state, sent
+				}
+				write()
+				if op != fake.OpPost {
+					waitFor(t, "the initial progress post acknowledgement", func() bool { s, _ := state(); return s == "sent" })
+					row.Target = &RowKey{Event: row.Event, Part: linePart}
+					if op == fake.OpEdit {
+						row.Op, row.Part = Edit, linePart+1
+						row.Message.Text = "Still working: edited."
+						want = append(want, "edit "+row.Message.Text)
+					} else {
+						row.Op, row.Event, row.Part = Delete, row.Event+1, deletePart
+						want = append(want, "delete")
+					}
+					write()
+				}
+				<-d.called // visible on the fake service, but the reply is held
+				if s, _ := state(); s != "pending" {
+					t.Fatalf("held reply row is %s, want pending", s)
+				}
+				advanced := make(chan struct{})
+				go func() {
+					defer close(advanced)
+					f.waitLines(t, id, want...)
+					f.advance(t, c, 104)
+				}()
+				synctest.Wait()
+				if now := c.now(); !now.Equal(heldAt) {
+					t.Errorf("clock advanced to %s before the outbox acknowledged the %s", now, op)
+				}
+				unblock()
+				<-advanced
+				waitFor(t, "the held progress acknowledgement", func() bool { s, _ := state(); return s == "sent" })
+				if _, sent := state(); sent != heldAt.UnixMilli() {
+					t.Errorf("sent_at = %s, want the held clock %s", time.UnixMilli(sent).UTC(), heldAt)
+				}
+			})
+		})
+	}
+}
+
 func TestProgressLineAppearsIsEditedAndRemoved(t *testing.T) {
 	c := &clock{t: t0}
 	f := newFront(t, workspaces{}, withClock(c))
@@ -107,7 +245,7 @@ func TestProgressLineAppearsIsEditedAndRemoved(t *testing.T) {
 	f.waitLines(t, id)
 	f.advance(t, c, 91)
 	f.waitLines(t, id, "post Still working: 1m 31s without output. Running Bash.")
-	f.advance(t, c, 104) // within 15 seconds of the post: no edit
+	f.advance(t, c, 105) // first edit slot, but only 14 seconds since the post: no edit
 	settle()
 	f.waitLines(t, id, "post Still working: 1m 31s without output. Running Bash.")
 	f.advance(t, c, 106)

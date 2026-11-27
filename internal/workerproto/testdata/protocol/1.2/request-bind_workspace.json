@@ -1,0 +1,1 @@
+{"kind":"request","id":"request-bind_workspace","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"bind_workspace","key":"key-bind_workspace","body":{"previous":{"thread":7,"session":"session-old","run":"run-old"},"workspace":"workspace-A"}}

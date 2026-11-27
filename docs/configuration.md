@@ -3,6 +3,13 @@
 This is everything hataori reads to configure itself: the instance root, the config file, the files the config points to, environment variables and command-line flags.
 It is written from the code. When the two disagree, the code is right and this file is a bug.
 
+## Worker protocol status
+
+The separately versioned [worker protocol](worker-protocol.md) has an encoding
+and validation foundation. It adds no configuration fields, command, resident
+or SSH connection yet. Local-only operation remains the shipped default;
+worker installation and platform support require the later gates in #956.
+
 ## The instance root
 
 One instance is one directory, its root. hataori reads and writes only under it.
@@ -32,7 +39,7 @@ The config file is `<root>/config/hataori.json`. It is read once when the daemon
 
 - It must be a regular file that only its owner can read: a mode with any group or other bit set is refused (`chmod 600`).
 - It is one JSON object. Unknown keys are refused, a `null` value is refused, and anything after the object is refused.
-- Spaces around string values are ignored.
+- Spaces around string values are ignored, except canonical machine keys and agent/machine references, which must be written exactly.
 - Every error names the key it is about.
 
 A complete example for one Discord channel and Claude Code, with the owner, one more person and a webhook that posts orders:
@@ -73,6 +80,7 @@ A complete example for one Discord channel and Claude Code, with the owner, one 
 | `effort` | string | empty | The effort of a thread of the default agent (`agent`) whose order, scope and adapter section name none. Empty leaves it to the agent's own default. |
 | `context_bytes` | integer | `8192` | When the agent no longer has a thread's conversation and a new session replaces it, the thread's earlier inputs and final answers are given to the new session, cut to this many bytes. Must be greater than 0. |
 | `login_relay` | boolean | `true` | When turns fail because the agent is logged out, the owner gets one direct message about it. With `true`, hataori also runs the agent's login command, sends the owner the sign-in link, and passes the code the owner replies with back to it, or, for a login that takes no code back (Codex), shows the code to enter on the page. `false` keeps the alert and switches the relay off. |
+| `machines` | array | implicit `local` | Machine configuration and durable identity records (below). Worker execution and scheduling are not available yet. |
 | `scopes` | array | empty | The channels hataori serves, one object each (below). A channel that is not listed, or not enabled, starts nothing. When a scope is taken out, its threads stay: the owner still reads, stops, closes and removes them, with the `hataori` command and in the dashboard, and nothing starts in them until the scope is back. |
 | `drivers` | object | empty | One section per chat surface, by name. This binary has one: `discord` (below). A name it does not have is refused at start. |
 | `forges` | object | empty | One section per forge, by name. This binary has one: `github` (below). A name this binary does not have is refused at start. |
@@ -92,10 +100,89 @@ Model and effort are chosen in this order: the order's `model:` / `effort:`, the
 
 Names in `drivers`, `adapters` and `scopes[].client` start with a lowercase letter and contain only lowercase letters, digits and `-`.
 
+### `machines[]`
+
+The machine-core foundation (#958) validates machine configuration at startup
+and records stable machine bindings in SQLite. Without `machines`, the implicit
+`local` machine keeps the existing behavior. An entry with `key: "local"` may
+configure its allowed agents and admission limits; it cannot have `ssh` or
+`root`. Other entries describe worker installations:
+
+```json
+"machines": [
+  {"key": "local"},
+  {
+    "key": "build",
+    "ssh": "worker-alias",
+    "root": "/srv/hataori-worker",
+    "agents": ["codex"],
+    "max_resident": 8,
+    "max_starting": 2,
+    "max_load": 0.9,
+    "min_free_memory_bytes": 1073741824,
+    "min_free_disk_bytes": 5368709120
+  }
+]
+```
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `key` | string | required | Stable, unique machine identity: starts with `a`–`z`, then only `a`–`z`, digits and `-`. Case changes and surrounding whitespace are refused. `local` is reserved for the main machine. |
+| `installation` | string | absent | Explicit worker installation ID from `worker init`, required for first contact. The verified handshake pins it durably. A different ID after pinning is refused; removing/re-adding a machine does not replace it. Never set on `local`. |
+| `ssh` | string | required for workers | System OpenSSH destination (`[user@]host` or an SSH configuration alias), without whitespace, options, slashes or port syntax. Configure the port through OpenSSH. Absent for `local`. No SSH connection is made by this foundation. |
+| `root` | string | required for workers | Canonical absolute POSIX directory on the worker, other than `/`; no `..`, redundant separators or control characters. Never opened or resolved as a path on the main. Absent for `local`. |
+| `agents` | array of strings | all configured adapters | Allowed agent names from `adapters`; unknown or duplicate names are refused. An explicit empty array permits no ordinary starts on the machine. |
+| `max_resident` | positive integer | unset | Resident slot admission limit, counting idle/waiting/running agents. Parsed now; enforced by the later placement implementation. |
+| `max_starting` | positive integer | unset | Concurrent starting/reserved slot limit. Parsed now; enforced by later placement. Zero is refused; omit for no limit. |
+| `max_load` | positive finite number | unset | Maximum one-minute load divided by logical CPUs for admitting work. Parsed now; enforced by later placement. |
+| `min_free_memory_bytes` | nonnegative integer | `0` | Required free memory for admitting work. Parsed now; enforced by later placement. |
+| `min_free_disk_bytes` | nonnegative integer | `0` | Required free disk room for admitting work. Parsed now; enforced by later placement. |
+
+`scopes[].machines` restricts ordinary new threads: omitted permits all configured
+machines, `[]` permits none, and a list permits only its named machines. Unknown,
+duplicate or noncanonical references are refused. Until placement ships, new
+ordinary starts run on `local` only when both the scope and its agent allowlist
+permit it; otherwise the start is refused before creating a chat thread or
+workspace. There is no remote fallback or capacity-waiting behavior yet.
+Supervisors, conversations with them and look-ups stay local in their existing
+shared directories, independently of these ordinary-work restrictions. Machine
+configuration adds no person or scope permissions.
+
+The schema migration assigns every existing thread and login/usage record to
+`local`. It changes no workspace, session spec, recorded path, host identity or
+file, and never moves a directory. A thread awaiting its first future placement
+may have no machine yet; once set, its machine cannot change. Pending starts and
+reservations have durable records under the same thread number and operation
+key; they do not launch anything themselves.
+
+Removing a worker from configuration leaves its identity and threads recorded,
+unavailable for new reservations. Reusing its key with another SSH destination
+or root is refused at startup, including after removal/re-add. A verified worker
+handshake will pin an installation identity; a different installation is refused
+as well. Restore the original binding to reconnect; this foundation has no
+command to discard or adopt old bindings. No directory is deleted by config
+removal. A configured worker is not thereby reachable, healthy or reconciled.
+
+Health records are machine-keyed; unknown resource values remain unknown.
+Login outages and usage snapshots are keyed by machine, agent and configuration
+directory, so identical path spellings on two machines stay distinct. The current
+`Limits` API retains its local-only view: the newest local snapshot per agent,
+without summing account allowances. Remote login relay is unavailable; a remote
+outage cannot start a login command on the main.
+
+Tested here: config validation, ordinary-start restrictions, confined local
+identity, binding removal/re-add/refusal, reopen and stale reservation replies,
+separate health/outage/usage keys, and migration of a copy produced by the
+previous store version. SSH transport, resident execution, machine choice,
+capacity enforcement and automatic reconsideration follow in #959–#965. Remote
+login, upgrades, dashboard machine views and full macOS worker conformance are
+later steps of #956. Configuring a worker installs or restarts no service.
+
 ### `scopes[]`
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
+| `machines` | array of strings | all configured machines | Allowed machines for ordinary new threads; `[]` allows none. Confined threads remain local. See [Machines](#machines). |
 | `key` | string | required | The scope's id. For Discord, the channel id. Each key may be listed once. |
 | `client` | string | required | The driver that owns the scope: `"discord"`. It must also be configured under `drivers`. |
 | `name` | string | empty | What the dashboard calls the scope. Without it, the dashboard shows the channel's name as the chat service shows it (for Discord, `#name`, looked up each time the driver connects), else the key. |
@@ -557,3 +644,81 @@ A thread can be shown in more than one chat conversation, on one chat service or
 - The channel must be the scope's own or listed in the scope's `show_in`. The person must be the owner or one of the scope's `people`, as for posting into the thread.
 - Attaching a thread where it is shown already changes nothing. A chat thread that shows one hataori thread is not linked to another.
 - A refused attach links nothing, opens nothing and writes one log line.
+
+
+## Worker resident configuration
+
+`hataori worker init|run` uses an explicit separate worker root and never loads
+this instance configuration or uses `HATAORI_ROOT`. Its private
+`config/worker.json` lists locally installed agent/configuration profiles;
+`settings`, optional `config_dir` and `no_project_settings` are local operator
+choices. Worker adapters ignore ambient `pass_env` for probes and launches.
+See [Worker resident](worker-resident.md) for the exact schema, explicit
+installation binding, user-service templates, recovery behavior and limits.
+Workspace registration is available through the worker workspace capability;
+main integration ships separately. macOS worker support remains unavailable pending #969.
+
+## Worker SSH transport configuration
+
+The worker SSH library maps existing `machines[].ssh`, `machines[].root` and
+pinned installation bindings to a shared private Unix forward; daemon routing
+ships separately in #962. No new JSON fields or transport CLI ship in #960.
+The library requires an explicit private connection run directory, system
+OpenSSH and context-aware receiver-owned inventory/recovery callbacks. It uses
+operator keys/configuration for authentication, with strict host-key checks,
+noninteractive bounded connection attempts, agent/X11 forwarding disabled and
+no credential/config writes. It never launches an agent or service through SSH.
+See [Worker SSH transport](worker-ssh.md) for the exact API mapping, timing bounds,
+readiness/failure categories, tested isolated Linux/macOS scenarios and limits.
+Worker workspace operations and placement remain separate; macOS worker support
+is still gated by #969.
+
+## Worker workspace and transfer configuration
+
+The optional worker-only `workspaces` object in `config/worker.json` contains
+`machine` and `main_machine` (canonical physical identities, independent of
+installation bindings), `repositories` (opaque IDs to worker-local addresses),
+`roots` (canonical
+machine/path catalog), `roots_complete`, exact `proof_destinations` declarations
+and `retention_seconds` (zero disables purge). It never belongs in the main
+instance configuration. Empty configuration refuses clone and independent
+removal proof; it does not discover or adopt directories.
+See [Worker workspaces and session files](worker-workspaces.md) for the schema,
+canonical identity/root trust boundary, independent-destination restrictions,
+crash/acknowledgment/retention behavior and tested file/journal limits. Transfers
+use session handles, 64 KiB chunks and an 8 MiB per-file maximum; retained receipt
+capacity can limit later uploads without blocking unrelated operations.
+Main routing/placement remains #962 and later work; macOS support remains #969.
+
+## Machine session I/O
+
+Worker protocol 1.2 adds resident reads, retained source handles, codec metadata,
+owner attachment and same-directory run rebinding. Public protocol 3.44 adds
+`AttachWorker` and the `machine` / `io_paused` summary fields. Local
+`Attachment.socket` and `Limits` semantics are unchanged: `Limits` remains the
+local agent summary, while worker windows stay separately sourced by machine,
+agent and login configuration in storage. They are never summed as quota.
+Remote login is optional and is not relayed by this implementation.
+
+Obtain the main's stable registration ID with
+`hataori worker main-id --root MAIN_ROOT` after initializing the main. This
+reads an existing database only. Initialize a separate worker root with that
+ID as described in [worker-resident.md](worker-resident.md), install compatible
+binaries manually, and enter the resulting worker ID in `machines[].installation`.
+The main uses the configured SSH alias and existing local OpenSSH authentication;
+no bot/forge/supervisor credential is copied to the resident.
+
+This is the runner boundary in #962, not the first-worker product gate. Placement
+and away queues follow in #963/#964, and the combined guide/gate is #965.
+Retained history currently has a 64 MiB per-run budget and at most 128 sources;
+exhaustion pauses the session rather than discarding codec reconstruction bytes.
+A read step drains up to 64 MiB per source before decoding later hooks; an
+oversized batch pauses without committing a prefix.
+An owner attachment uses its own connection and ends visibly on loss; it never
+replays raw keys. Its connection checks only its pinned run; other sessions
+can start without invalidating it. One encoded worker input action is limited
+to 64 KiB including adapter/paste framing. An oversized accepted input reports
+an immediate size error and one visible `not delivered` outcome. Its codec
+explicitly retires that input, including steering input during another turn;
+restart never retries it. Actual macOS user-session, login/Keychain and sleep/wake support
+remains gated by #969; isolated fixture tests are not that runtime evidence.
