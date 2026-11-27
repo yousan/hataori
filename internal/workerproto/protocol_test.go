@@ -239,6 +239,61 @@ func TestMalformedFramesRefuse(t *testing.T) {
 	code(t, err, "invalid_message")
 }
 
+func TestCaseAliasesRefuseBeforeDispatch(t *testing.T) {
+	c := connection(t)
+	remove := message(t, "request-remove.json")
+	for _, payload := range []string{
+		`{"workspace":"workspace-A","WORKSPACE":"workspace-B"}`,
+		`{"WORKSPACE":"workspace-B","workspace":"workspace-A"}`,
+		`{"WORKSPACE":"workspace-B"}`,
+		`{"WorkSpace":"workspace-B"}`,
+		`{"workspace":"workspace-A","\u0057ORKSPACE":"workspace-B"}`,
+		`{"workſpace":"workspace-B"}`, // Unicode simple-fold alias accepted by encoding/json.
+	} {
+		t.Run(payload, func(t *testing.T) {
+			m := remove
+			m.Body = json.RawMessage(payload)
+			effects := 0
+			_, err := c.Decode(encoded(t, m), &target)
+			if err == nil {
+				effects++
+			}
+			if effects != 0 {
+				t.Fatal("case-variant workspace reached dispatch")
+			}
+			code(t, err, "invalid_message")
+		})
+	}
+	for _, fixture := range []struct {
+		name, before, after string
+	}{
+		{"request-remove.json", `"op":"remove"`, `"op":"remove","OP":"inspect"`},
+		{"request-remove.json", `"main":"main-A"`, `"main":"main-A","MAIN":"main-B"`},
+		{"request-remove.json", `"run":"run-A"`, `"run":"run-A","RUN":"run-B"`},
+		{"reply-remove.json", `"state":"complete"`, `"state":"complete","STATE":"unknown"`},
+		{"stream-read-data.json", `"source":"events"`, `"source":"events","SOURCE":"other"`},
+	} {
+		t.Run(fixture.name+"-"+fixture.before, func(t *testing.T) {
+			data := encoded(t, message(t, fixture.name))
+			if !bytes.Contains(data, []byte(fixture.before)) {
+				t.Fatal("fixture does not contain the field being tested")
+			}
+			data = bytes.Replace(data, []byte(fixture.before), []byte(fixture.after), 1)
+			_, err := c.Decode(data, &target)
+			code(t, err, "invalid_message")
+		})
+	}
+	h := bytes.TrimSpace(encoded(t, hello()))
+	h = append(h[:len(h)-1], []byte(`,"VERSION":"2.0"}`)...)
+	_, err := DecodeHello(h)
+	code(t, err, "invalid_message")
+	// Lowercase extensions remain inert, including inside operation bodies.
+	remove.Body = json.RawMessage(`{"workspace":"workspace-A","future_optional":{"value":true}}`)
+	if _, err := c.Decode(encoded(t, remove), &target); err != nil {
+		t.Fatalf("canonical optional extension was refused: %v", err)
+	}
+}
+
 func TestReceiptCorrelatesOriginalRequest(t *testing.T) {
 	m := message(t, "request-input.json")
 	hash, err := RequestHash(m)

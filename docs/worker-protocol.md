@@ -63,6 +63,13 @@ are 1–128 ASCII letters, digits, `_` or `-`; they cannot be paths or addresses
 Requests and replies carry a nonempty request ID. Stream frames carry the ID
 of their opening request. No request ID conveys authority.
 
+Field names are nonempty ASCII lowercase letters, digits and underscores.
+The decoder enforces this recursively before decoding into structs, including
+unknown optional fields. Differently cased spellings and Unicode case aliases
+are refused even when only one spelling occurs; they cannot supply or overwrite
+a known field through a JSON implementation's case-insensitive matching.
+Unknown optional fields with canonical names remain inert.
+
 The hello exchanges `version`, `binding` and `capabilities`. Successful
 negotiation returns the negotiated minor and capabilities with the same
 binding. Refusals are bounded structured codes with a safe explanation; they

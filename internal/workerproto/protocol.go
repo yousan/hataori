@@ -336,8 +336,8 @@ func members(d *json.Decoder, depth int) error {
 	for d.More() {
 		tok, err := d.Token()
 		key, ok := tok.(string)
-		if err != nil || !ok || seen[key] || reserved[strings.ToLower(key)] {
-			return refuse("invalid_message", "duplicate or reserved JSON field")
+		if err != nil || !ok || !fieldName(key) || seen[key] || reserved[key] {
+			return refuse("invalid_message", "noncanonical, duplicate or reserved JSON field")
 		}
 		seen[key] = true
 		if err := value(d, depth+1); err != nil {
@@ -348,6 +348,22 @@ func members(d *json.Decoder, depth int) error {
 		return refuse("invalid_message", "invalid JSON object")
 	}
 	return nil
+}
+
+// encoding/json also matches struct fields using Unicode simple folding.
+// Enforce the protocol's canonical spelling before Unmarshal so a differently
+// cased or Unicode alias can neither supply nor overwrite a known field. This
+// applies recursively to envelopes, bodies and unknown optional extensions.
+func fieldName(key string) bool {
+	if key == "" {
+		return false
+	}
+	for _, c := range key {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func value(d *json.Decoder, depth int) error {
