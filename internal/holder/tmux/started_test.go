@@ -1522,6 +1522,8 @@ func TestStartInASessionWithAPersonsWindow(t *testing.T) {
 		t.Errorf("Alive: %+v", l)
 	}
 	split := s.run("split-window", "-d", "-t", r.Pane, "-P", "-F", "#{pane_id}", "exec sleep 1")
+	// Deliberately observe after the old one-second lifetime has elapsed.
+	time.Sleep(1200 * time.Millisecond)
 	if err := h.Record(t.Context(), w); err != nil {
 		t.Error(err)
 	}
