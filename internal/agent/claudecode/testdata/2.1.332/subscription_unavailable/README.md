@@ -1,12 +1,14 @@
 # Subscription rejection
 
-Source: the sanitized real CLI evidence supplied in issue #1086, Claude Code
-2.1.332. `result.json` preserves the issue's print-mode fields verbatim. No new
-provider call was made. The provider's suggested cause is not verified account
-billing information.
+Claude Code 2.1.332. `result.json` preserves the sanitized real print-mode
+fields supplied in issue #1086 verbatim.
 
-The issue also reports an interactive transcript with `error: oauth_org_not_allowed`,
-`isApiErrorMessage: true`, `apiErrorStatus: 403`, and
-`apiErrorCode: oauth_not_allowed_for_organization`. The original sanitized
-interactive record and StopFailure hook have been requested before adding a
-capture-based regression; those records must not be reconstructed from memory.
+`assistant.json` and `StopFailure.json` are the actual interactive assistant
+record and hook payload supplied by opu for #1086. They were extracted from
+already-saved failure records, with IDs, paths, conversation text and unrelated
+fields removed. The hook has no host envelope. No new provider call was made,
+and no record was reconstructed. Tests provide their own turn correlation.
+
+The provider's suggested cause is not verified account billing information.
+Its billing and API-key sentence is provider text, not authorization to change
+authentication, billing, or credentials.
