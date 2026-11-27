@@ -3,6 +3,8 @@ package chat
 import (
 	"context"
 	"fmt"
+
+	"github.com/yousan/hataori/internal/agent"
 	"testing"
 
 	"github.com/yousan/hataori/internal/control"
@@ -36,5 +38,34 @@ func TestARefusedStopButtonAnswersItsPresser(t *testing.T) {
 	}
 	if stopped, err := f.fe.stopped(context.Background(), id, turn); err != nil || stopped {
 		t.Fatalf("refused Stop recorded as accepted: %v, %v", stopped, err)
+	}
+}
+
+// A delayed handoff remains in a running turn, and replaying its durable
+// event after reconnect does not post the notice again.
+func TestAnOwedEnterIsShownInTheThreadOnce(t *testing.T) {
+	f := newFront(t, workspaces{})
+	id := f.runningThread(t)
+	f.showing(t)
+	in := session.Input{Kind: session.AgentEvent, Agent: agent.Event{Seq: 2, Kind: agent.InputWaiting, Input: "waiting", Reason: "Enter could not be handed to the agent's window"}}
+	for range 2 {
+		if err := f.core.Machine.Apply(context.Background(), 1, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	text := "The message is waiting: Enter could not be handed to the agent's window."
+	calls := f.postedUntil(t, id, text)
+	n := 0
+	for _, call := range calls {
+		if call.Message.Text == text {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d waiting notices, want one", n)
+	}
+	var state string
+	if err := f.fe.Outbox.Store.DB.QueryRow(`SELECT state FROM sessions WHERE id=1`).Scan(&state); err != nil || state != "running" {
+		t.Fatalf("waiting state %q, %v", state, err)
 	}
 }

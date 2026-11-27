@@ -1,0 +1,1 @@
+{"id":8,"error":{"code":"reopen_refused","message":"core: reopen 7: not reopened: thread 9, another supervisor thread of this scope, is open: only one is open at a time"}}
