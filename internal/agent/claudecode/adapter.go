@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -322,6 +323,7 @@ func (a *Adapter) Probe(ctx context.Context, spec agent.Spec) (agent.Health, err
 	var h agent.Health
 	out, err := a.run(ctx, spec, "--version")
 	if err != nil {
+		h.Unknown = !errors.Is(err, exec.ErrNotFound) && !errors.Is(err, os.ErrNotExist)
 		h.Detail = "not installed: " + err.Error()
 		return h, nil
 	}
@@ -330,6 +332,7 @@ func (a *Adapter) Probe(ctx context.Context, spec agent.Spec) (agent.Health, err
 	out, err = a.run(ctx, spec, "auth", "status")
 	loggedIn, jerr := ParseStatus(out)
 	if jerr != nil {
+		h.Unknown = true
 		if err == nil {
 			err = jerr
 		}
@@ -337,6 +340,7 @@ func (a *Adapter) Probe(ctx context.Context, spec agent.Spec) (agent.Health, err
 		return h, nil
 	}
 	h.LoggedIn = loggedIn
+	h.Unknown = ctx.Err() != nil
 	if !loggedIn {
 		h.Detail = "not logged in"
 	}
@@ -350,4 +354,11 @@ func (a *Adapter) run(ctx context.Context, spec agent.Spec, args ...string) ([]b
 	cmd.Env = a.loginEnv(spec)
 	cmd.Dir = os.TempDir()
 	return cmd.Output()
+}
+
+// ForWorker excludes ambient pass_env credentials from both probes and launches.
+func (a *Adapter) ForWorker() agent.Adapter {
+	copy := *a
+	copy.passEnv = nil
+	return &copy
 }

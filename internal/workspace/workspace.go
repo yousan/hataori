@@ -302,6 +302,10 @@ func (m Maker) Clone(ctx context.Context, thread control.ThreadID, repo string, 
 
 // cloneTo is Clone at target, which is not touched when it exists.
 func (m Maker) cloneTo(ctx context.Context, repo, target string, placed func(core.Placement) error) (string, error) {
+	return m.cloneStaged(ctx, repo, target, placed, nil)
+}
+
+func (m Maker) cloneStaged(ctx context.Context, repo, target string, placed func(core.Placement) error, staged func(string, core.Placement) error) (string, error) {
 	if err := CheckAddress(repo); err != nil {
 		return "", err
 	}
@@ -340,7 +344,8 @@ func (m Maker) cloneTo(ctx context.Context, repo, target string, placed func(cor
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		return "", fmt.Errorf("workspace: %w", err)
 	}
-	if placed != nil {
+	var stagedPlacement core.Placement
+	if placed != nil || staged != nil {
 		st, err := os.Lstat(tmp)
 		if err != nil {
 			return "", fmt.Errorf("workspace: %w", err)
@@ -350,17 +355,34 @@ func (m Maker) cloneTo(ctx context.Context, repo, target string, placed func(cor
 			return "", fmt.Errorf("workspace: %s has no device and inode", tmp)
 		}
 		// A rename keeps them: they identify the workspace at its place.
-		if err := placed(core.Placement{Dir: target, Dev: dev, Inode: ino}); err != nil {
-			return "", fmt.Errorf("workspace: %w (the clone is left at %s)", err, tmp)
+		p := core.Placement{Dir: target, Dev: dev, Inode: ino}
+		if staged != nil {
+			stagedPlacement = p
+			if err := staged(tmp, p); err != nil {
+				return "", err
+			}
+		}
+		if placed != nil {
+			if err := placed(p); err != nil {
+				return "", fmt.Errorf("workspace: %w (the clone is left at %s)", err, tmp)
+			}
 		}
 	}
 	// A rename that never replaces: a directory that appeared meanwhile,
 	// even an empty one, stays as it is.
+	if staged != nil && (!samePlacement(tmp, stagedPlacement) || ownedParent(filepath.Dir(tmp)) != nil || ownedParent(filepath.Dir(target)) != nil) {
+		return "", errors.New("workspace: registered clone identity changed")
+	}
 	if err := renameNoReplace(tmp, target); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return "", fmt.Errorf("%w: %s (the clone is left at %s)", ErrExists, target, tmp)
 		}
 		return "", fmt.Errorf("workspace: %w (the clone is left at %s)", err, tmp)
+	}
+	if staged != nil {
+		if err := syncParents(tmp, target); err != nil {
+			return "", err
+		}
 	}
 	return target, nil
 }

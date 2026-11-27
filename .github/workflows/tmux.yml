@@ -5,12 +5,14 @@ on:
     paths:
       - internal/holder/tmux/**
       - internal/hostterm/**
+      - internal/runner/closed_terminal_test.go
       - .github/workflows/tmux.yml
   push:
     branches: [main]
     paths:
       - internal/holder/tmux/**
       - internal/hostterm/**
+      - internal/runner/closed_terminal_test.go
       - .github/workflows/tmux.yml
   workflow_dispatch:
     inputs:
@@ -22,9 +24,17 @@ on:
         description: Test name regular expression
         default: '.'
         required: true
+      revision:
+        description: Revision under test (defaults to this workflow revision)
+        default: ''
+        required: false
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   tmux:
@@ -55,10 +65,13 @@ jobs:
       TEST_NAMES: ${{ matrix.tests || inputs.tests || '.' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - name: Build the tmux version under test
+        id: tmux-build
         run: |
           set -eu
           if ! pkg-config --exists libevent ncurses || ! command -v bison >/dev/null; then
@@ -75,5 +88,9 @@ jobs:
       - name: Test the holder
         run: |
           set -eu
+          git rev-parse HEAD
           tmux -V
           go test -timeout 150m -count="$TEST_COUNT" -run "$TEST_NAMES" ./internal/holder/tmux
+      - name: Test closed-terminal ownership through the runner
+        if: ${{ !cancelled() && steps.tmux-build.outcome == 'success' && !matrix.tests }}
+        run: go test -timeout 5m -count="$TEST_COUNT" -run '^TestClosedTerminal' ./internal/runner

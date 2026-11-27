@@ -1,0 +1,1 @@
+{"kind":"stream","id":"request-attach","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"attach","body":{"handle":"source-handle","source":"events","generation":"generation-A","order":1,"offset":0,"next":0,"state":"empty","data":null}}

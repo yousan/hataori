@@ -1,0 +1,1 @@
+{"kind":"reply","id":"request-inventory","binding":{"main":"main-A","worker":"worker-A"},"op":"inventory","body":{"boot":"boot-A","complete":true,"hosts":[{"target":{"thread":7,"session":"session-A","run":"run-A"},"state":"running","turn":"turn-A","hooks":["request-A"]}]}}

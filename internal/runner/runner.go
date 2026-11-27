@@ -1935,7 +1935,7 @@ const firstInputID = "first"
 // report and will not: it never did, or the input was stopped before it was
 // written.
 func unreported(e agent.Event) bool {
-	return e.Kind == agent.TurnEnded && (e.Reason == agent.NotDelivered || e.Reason == agent.NotTaken || e.Status == agent.Interrupted)
+	return e.Kind == agent.TurnEnded && !e.RetainInput && (e.Reason == agent.NotDelivered || e.Reason == agent.NotTaken || e.Status == agent.Interrupted)
 }
 
 // notDelivered reports whether a turn among evs ended so for the input id.
@@ -2628,6 +2628,9 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stop
 		lv.mu.Unlock()
 		if err != nil {
 			return fmt.Errorf("runner: session %d: %w: %w", id, control.ErrNotInterrupted, err)
+		}
+		if a.InterruptReason != "" {
+			return fmt.Errorf("runner: session %d: %s: %w", id, a.InterruptReason, control.ErrNotInterrupted)
 		}
 		return fmt.Errorf("runner: session %d: %w", id, control.ErrNotInterrupted)
 	}

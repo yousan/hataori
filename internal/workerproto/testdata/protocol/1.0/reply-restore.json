@@ -1,0 +1,1 @@
+{"kind":"reply","id":"request-restore","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"restore","key":"key-restore","body":{"operation":"restore","key":"key-restore","request_hash":"336d0ae390406af3432dc35aa7a677def3d4fd21beeab4b98005a201c7f92bb1","state":"complete","result":{"workspace":"workspace-A"}}}
