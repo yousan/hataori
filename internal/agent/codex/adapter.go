@@ -114,6 +114,9 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	if !filepath.IsAbs(spec.Dir) || !utf8.ValidString(spec.Dir) {
 		return agent.Launch{}, fmt.Errorf("%s: workspace %q must be an absolute UTF-8 path", Name, spec.Dir)
 	}
+	if spec.Confine != nil {
+		return a.confinedLaunch(spec)
+	}
 	return agent.Launch{Argv: []string{a.command, "app-server", "-c", "projects={" + tomlString(spec.Dir) + "={trust_level=\"trusted\"}}"}, Env: a.sessionEnv(spec)}, nil
 }
 
@@ -181,7 +184,11 @@ func (a *Adapter) run(ctx context.Context, spec agent.Spec, args ...string) ([]b
 
 // NewCodec returns a codec configured with the adapter's policies.
 func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
-	return NewCodec(spec, Options{Sandbox: a.sandbox, ApprovalPolicy: a.approvalPolicy})
+	opts := Options{Sandbox: a.sandbox, ApprovalPolicy: a.approvalPolicy}
+	if spec.Confine != nil {
+		opts.confinedInstructions = readConfinedInstructions(spec.StateDir)
+	}
+	return NewCodec(spec, opts)
 }
 
 // ForWorker excludes ambient pass_env credentials from both probes and launches.

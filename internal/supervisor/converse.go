@@ -62,7 +62,7 @@ func (s *Sessions) Converse(ctx context.Context, c Call) (control.ThreadID, erro
 	}
 	caller := control.Caller{From: c.From, Scopes: []string{c.Scope}, May: control.OpRead | control.OpStart}
 	dir := func(ctx context.Context) (string, error) { return s.Dir(ctx, c.Scope) }
-	return s.Core.StartConfined(ctx, caller, control.StartRequest{Key: c.Key, Scope: c.Scope, Thread: c.Thread,
+	return s.Core.StartConfined(ctx, caller, control.StartRequest{Key: c.Key, Scope: c.Scope, Thread: c.Thread, Agent: sv.Agent,
 		Input: control.Input{Text: c.Text}, Model: sv.Model, Effort: cmp.Or(sv.Effort, DefaultEffort)},
 		control.KindConversation, core.Dir(dir))
 }
