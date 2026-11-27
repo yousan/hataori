@@ -129,19 +129,21 @@ export function ShowChoice({ show, onShow, hidden, terminals = 0 }: ChoiceProps)
         </button>
       ))}
       {show === "active" && (
-        <span className="hidden-count" data-hidden={hidden} title={t("show.hidden", { n: hidden })}>
-          {t("show.hidden", { n: hidden })}
+        <span className="show-summary">
+          <span className="hidden-count" data-hidden={hidden} title={t("show.hidden", { n: hidden })}>
+            {t("show.hidden", { n: hidden })}
+          </span>
+          {terminals > 0 && (
+            <>
+              <span className="hidden-sep" aria-hidden="true">
+                {t("show.hiddenSeparator")}
+              </span>
+              <span className="hidden-terminals" data-hidden-terminals={terminals} title={t("show.hiddenTerminals", { n: terminals })}>
+                {t("show.hiddenTerminals", { n: terminals })}
+              </span>
+            </>
+          )}
         </span>
-      )}
-      {show === "active" && terminals > 0 && (
-        <>
-          <span className="hidden-sep" aria-hidden="true">
-            {t("show.hiddenSeparator")}
-          </span>
-          <span className="hidden-terminals" data-hidden-terminals={terminals} title={t("show.hiddenTerminals", { n: terminals })}>
-            {t("show.hiddenTerminals", { n: terminals })}
-          </span>
-        </>
       )}
     </div>
   );
