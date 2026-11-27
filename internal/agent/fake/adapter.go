@@ -230,3 +230,6 @@ func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
 	}
 	return c
 }
+
+// ForWorker has no ambient pass_env: Env is explicit fake configuration.
+func (a *Adapter) ForWorker() agent.Adapter { return a }

@@ -35,6 +35,10 @@ import (
 
 // Spec says what the host runs.
 type Spec struct {
+	// Identity is an opaque caller-reserved run identity. It is returned by
+	// Identity on the live socket, so a reconnect never adopts a replacement
+	// process just because a recorded PID or directory still exists.
+	Identity string   `json:"identity,omitempty"`
 	Argv     []string `json:"argv"`
 	Dir      string   `json:"dir"`
 	Env      []string `json:"env"` // exactly the command's environment; nothing is inherited
