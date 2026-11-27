@@ -622,6 +622,16 @@ body {
   margin-left: auto;
 }
 
+.trusts {
+  white-space: normal;
+}
+
+.trusts li > span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .passkeys-actions {
   display: flex;
   justify-content: flex-end;
