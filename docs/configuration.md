@@ -654,8 +654,8 @@ this instance configuration or uses `HATAORI_ROOT`. Its private
 choices. Worker adapters ignore ambient `pass_env` for probes and launches.
 See [Worker resident](worker-resident.md) for the exact schema, explicit
 installation binding, user-service templates, recovery behavior and limits.
-This is a resident foundation; workspace registration and main integration
-ship separately. macOS worker support remains unavailable pending #969.
+Workspace registration is available through the worker workspace capability;
+main integration ships separately. macOS worker support remains unavailable pending #969.
 
 ## Worker SSH transport configuration
 
@@ -671,3 +671,20 @@ See [Worker SSH transport](worker-ssh.md) for the exact API mapping, timing boun
 readiness/failure categories, tested isolated Linux/macOS scenarios and limits.
 Worker workspace operations and placement remain separate; macOS worker support
 is still gated by #969.
+
+## Worker workspace and transfer configuration
+
+The optional worker-only `workspaces` object in `config/worker.json` contains
+`machine` and `main_machine` (canonical physical identities, independent of
+installation bindings), `repositories` (opaque IDs to worker-local addresses),
+`roots` (canonical
+machine/path catalog), `roots_complete`, exact `proof_destinations` declarations
+and `retention_seconds` (zero disables purge). It never belongs in the main
+instance configuration. Empty configuration refuses clone and independent
+removal proof; it does not discover or adopt directories.
+See [Worker workspaces and session files](worker-workspaces.md) for the schema,
+canonical identity/root trust boundary, independent-destination restrictions,
+crash/acknowledgment/retention behavior and tested file/journal limits. Transfers
+use session handles, 64 KiB chunks and an 8 MiB per-file maximum; retained receipt
+capacity can limit later uploads without blocking unrelated operations.
+Main routing/placement remains #962 and later work; macOS support remains #969.

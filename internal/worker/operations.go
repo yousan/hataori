@@ -89,6 +89,22 @@ func (r *Resident) Dispatch(ctx context.Context, c *workerproto.Connection, data
 			return deny("not_found", "agent configuration is not registered")
 		}
 		return finish(r.probe(ctx, key))
+	case "inspect":
+		var b workerproto.Workspace
+		json.Unmarshal(m.Body, &b)
+		result, refusal := r.inspectWorkspace(ctx, *m.Target, b.Workspace)
+		if refusal != nil {
+			return deny(refusal.Code, refusal.Message)
+		}
+		return finish(result)
+	case "download":
+		var b workerproto.Download
+		json.Unmarshal(m.Body, &b)
+		result, refusal := r.download(*m.Target, b)
+		if refusal != nil {
+			return deny(refusal.Code, refusal.Message)
+		}
+		return finish(result)
 	case "receipt":
 		var q workerproto.ReceiptQuery
 		json.Unmarshal(m.Body, &q)
@@ -97,7 +113,7 @@ func (r *Resident) Dispatch(ctx context.Context, c *workerproto.Connection, data
 			return deny("not_found", "operation receipt is not retained")
 		}
 		return finish(rec.Receipt)
-	case "prepare", "start", "end_host", "input", "answer":
+	case "prepare", "start", "end_host", "input", "answer", "clone", "fetch", "remove", "restore", "acknowledge", "purge", "upload":
 		// All supported effects have a durable receipt, even when a reply is lost.
 	default:
 		return deny("unsupported_operation", "operation is not implemented by this resident")
@@ -118,6 +134,10 @@ func (r *Resident) Dispatch(ctx context.Context, c *workerproto.Connection, data
 	}
 	var refusal *workerproto.Refusal
 	switch m.Op {
+	case "clone", "fetch", "remove", "restore", "acknowledge", "purge":
+		refusal = r.workspaceOperation(ctx, m)
+	case "upload":
+		refusal = r.upload(m)
 	case "prepare":
 		refusal = r.prepare(m)
 	case "start":

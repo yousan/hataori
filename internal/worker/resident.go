@@ -29,7 +29,8 @@ type Configuration struct {
 }
 
 type Config struct {
-	Agents []Configuration `json:"agents"`
+	Agents     []Configuration `json:"agents"`
+	Workspaces WorkspaceConfig `json:"workspaces,omitempty"`
 }
 
 type Options struct {
@@ -42,7 +43,9 @@ type Options struct {
 	Telemetry   func() workerproto.Telemetry
 	// checkpoint is only a fault-injection point in isolated tests. Returning
 	// an error simulates loss at a crash boundary; recovery must reconcile it.
-	checkpoint func(string) error
+	checkpoint            func(string) error
+	repositoryEnvironment func() []string      // isolated fixture environment; nil uses worker-local environment
+	syncUploadedFile      func(*os.File) error // test-only fsync fault injection
 }
 
 type runRecord struct {
@@ -65,15 +68,19 @@ type ownerMarker struct {
 }
 
 type workspaceRecord struct {
-	Target workerproto.Target `json:"target"`
-	Handle string             `json:"handle"`
-	Device uint64             `json:"device"`
-	Inode  uint64             `json:"inode"`
+	Target     workerproto.Target `json:"target"`
+	Handle     string             `json:"handle"`
+	Device     uint64             `json:"device"`
+	Inode      uint64             `json:"inode"`
+	Repository string             `json:"repository,omitempty"`
+	State      string             `json:"state,omitempty"`
+	Staging    string             `json:"staging,omitempty"`
 }
 
 type receiptRecord struct {
 	Request workerproto.Message `json:"request"`
 	Receipt workerproto.Receipt `json:"receipt"`
+	Plan    *workspacePlan      `json:"plan,omitempty"`
 }
 
 type journal struct {
@@ -82,6 +89,8 @@ type journal struct {
 	Runs       map[string]*runRecord      `json:"runs"`
 	Receipts   map[string]*receiptRecord  `json:"receipts"`
 	Workspaces map[string]workspaceRecord `json:"workspaces"`
+	Trashes    map[string]*trashRecord    `json:"trashes,omitempty"`
+	Files      map[string]*fileRecord     `json:"files,omitempty"`
 }
 
 func emptyJournal(binding workerproto.Binding) journal {
@@ -91,22 +100,23 @@ func emptyJournal(binding workerproto.Binding) journal {
 // Resident owns one root. Closing it releases only the resident lock/socket;
 // detached hosts, their logs and waiting hooks are deliberately left alive.
 type Resident struct {
-	mu          sync.Mutex
-	root        *os.Root
-	dir         string
-	lock        *os.File
-	binding     workerproto.Binding
-	boot        string
-	state       journal
-	options     Options
-	configs     map[workerproto.AgentConfig]Configuration
-	adapters    map[workerproto.AgentConfig]agent.Adapter
-	ready       bool
-	closed      bool
-	listener    *net.UnixListener
-	socket      string
-	socketInfo  os.FileInfo
-	connections map[net.Conn]bool
+	mu              sync.Mutex
+	root            *os.Root
+	dir             string
+	lock            *os.File
+	binding         workerproto.Binding
+	boot            string
+	state           journal
+	options         Options
+	configs         map[workerproto.AgentConfig]Configuration
+	adapters        map[workerproto.AgentConfig]agent.Adapter
+	ready           bool
+	closed          bool
+	listener        *net.UnixListener
+	socket          string
+	socketInfo      os.FileInfo
+	connections     map[net.Conn]bool
+	workspaceConfig WorkspaceConfig
 }
 
 func Open(path string, expected workerproto.Binding, options Options) (_ *Resident, err error) {
@@ -173,6 +183,15 @@ func Open(path string, expected workerproto.Binding, options Options) (_ *Reside
 	if options.Config != nil {
 		cfg = *options.Config
 	} else if err = readPrivate(root, "config/worker.json", workerproto.MaxFrame, &cfg); err != nil {
+		return nil, err
+	}
+	if r.state.Trashes == nil {
+		r.state.Trashes = map[string]*trashRecord{}
+	}
+	if r.state.Files == nil {
+		r.state.Files = map[string]*fileRecord{}
+	}
+	if err = r.configureWorkspaces(cfg.Workspaces); err != nil {
 		return nil, err
 	}
 	if len(cfg.Agents) > 32 {
@@ -368,6 +387,9 @@ func (r *Resident) recover() error {
 			r.ready = false
 		}
 	}
+	if err := r.recoverWorkspaces(); err != nil {
+		return err
+	}
 	for _, rec := range r.state.Receipts {
 		if rec.Receipt.State != "pending" {
 			continue
@@ -399,6 +421,11 @@ func (r *Resident) recover() error {
 			} else {
 				rec.Receipt.State = "unknown"
 			} // never stop a later turn on recovery
+		case "clone", "fetch", "remove", "restore", "acknowledge", "purge", "upload":
+			if err := r.recoverFileOperation(rec); err != nil {
+				rec.Receipt.State = "unknown"
+				r.ready = false
+			}
 		default:
 			rec.Receipt.State = "unknown" // a write may have happened; never replay it
 		}
