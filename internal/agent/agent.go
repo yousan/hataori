@@ -77,12 +77,24 @@ type LoginStep struct {
 	Refused   string // the command rejected a code, with its text
 }
 
+// WorkerAdapters can build a worker-local adapter without ambient pass_env
+// additions. Probes and launches retain only the adapter's fixed user/login
+// environment. A resident refuses adapters without this contract.
+// Explicit adapter-owned configuration is still local operator authority.
+type WorkerAdapters interface {
+	ForWorker() Adapter
+}
+
 // Health is the result of Probe.
 type Health struct {
 	Installed bool
 	LoggedIn  bool
-	Version   string
-	Detail    string // why not, when either is false
+	// Unknown means the probe could not establish installation/login state.
+	// Installed may still be true when only the login check was inconclusive.
+	// It never means logged out, and cannot authorize new work.
+	Unknown bool
+	Version string
+	Detail  string // why not, when either is false
 }
 
 // Launch is everything the session host needs to start an agent.
@@ -186,6 +198,8 @@ type Actions struct {
 	// that the interrupt could stop yet, such as input whose last key was not
 	// handed over: what it holds stays, and the turn is not stopped.
 	NotInterrupted bool
+	// InterruptReason explains NotInterrupted to the person who asked.
+	InterruptReason string
 	// WatchScreen, from Open only, asks for the terminal's output (Source
 	// Screen) until the codec says StopScreen: for what no hook reports,
 	// such as a start-up dialog, or whether the agent reads keys yet.
@@ -360,6 +374,8 @@ const (
 	Limits
 	// InputTaken reports an input taken into an already running turn.
 	InputTaken
+	// InputWaiting reports a delayed terminal handoff without ending a turn.
+	InputWaiting
 )
 
 // Starter says who started a turn.
@@ -412,7 +428,12 @@ type Event struct {
 	Final bool   // Text: the turn's final answer
 
 	StartedBy Starter // TurnStarted
-	Input     string  // TurnStarted, InputTaken: the Input.ID of the input this turn reports; TurnEnded with NotDelivered or NotTaken: of the input never reported; TurnEnded with Interrupted: of the input that is not written any more; "" when none or not known
+	Input     string  // InputWaiting: the delayed input; TurnStarted, InputTaken: the Input.ID of the input this turn reports; TurnEnded with NotDelivered or NotTaken: of the input never reported; TurnEnded with Interrupted: of the input that is not written any more; "" when none or not known
+
+	// RetainInput, on TurnEnded, keeps Input pending for a later report even
+	// though the turn failed. Its text may still be in the terminal editor;
+	// reconnecting must preserve the codec's protection against appending to it.
+	RetainInput bool
 
 	Tool string // ToolStarted, ToolEnded: the tool's name or label; SubagentStarted, SubagentEnded: the subagent's name or type
 	ID   string // ToolStarted, ToolEnded, SubagentStarted, SubagentEnded: pairs start and end
@@ -429,7 +450,7 @@ type Event struct {
 	Caption string
 
 	Status     EndStatus // TurnEnded
-	Reason     Reason    // TurnEnded when failed; SessionEnded: why, as the agent says or CannotResume, WrongSession, BlockedAtStart
+	Reason     Reason    // InputWaiting: why it waits; TurnEnded when failed; SessionEnded: why, as the agent says or CannotResume, WrongSession, BlockedAtStart
 	Background int       // TurnEnded, Request: background tasks still running, whatever the Status: what the agent listed, or the last count corrected by what it reported since
 	// Subagents are, for TurnEnded and Request, the subagents among the Background tasks,
 	// by the ids of their SubagentStarted.

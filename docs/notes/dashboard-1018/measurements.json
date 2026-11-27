@@ -663,7 +663,7 @@
     "inputs": [],
     "filter": {
       "width": 364,
-      "height": 24.1875,
+      "height": 44,
       "scrollWidth": 364,
       "clientWidth": 364
     },
@@ -671,7 +671,7 @@
     "answer": null,
     "dialog": {
       "width": 358,
-      "height": 292.15625,
+      "height": 313.359375,
       "scrollWidth": 356,
       "clientWidth": 356
     },
@@ -692,79 +692,79 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "",
-        "height": 24.1875,
+        "height": 44,
         "width": 58.21875
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 33.125
+        "height": 44,
+        "width": 44
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -779,7 +779,7 @@
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -789,17 +789,17 @@
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 50.703125
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -812,7 +812,7 @@
     "inputs": [],
     "filter": {
       "width": 364,
-      "height": 24.1875,
+      "height": 44,
       "scrollWidth": 364,
       "clientWidth": 364
     },
@@ -820,7 +820,7 @@
     "answer": null,
     "dialog": {
       "width": 358,
-      "height": 208.171875,
+      "height": 229.375,
       "scrollWidth": 356,
       "clientWidth": 356
     },
@@ -841,79 +841,79 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "",
-        "height": 24.1875,
+        "height": 44,
         "width": 58.21875
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 33.125
+        "height": 44,
+        "width": 44
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -928,7 +928,7 @@
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -938,17 +938,17 @@
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 50.703125
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -961,7 +961,7 @@
     "inputs": [],
     "filter": {
       "width": 364,
-      "height": 24.1875,
+      "height": 44,
       "scrollWidth": 364,
       "clientWidth": 364
     },
@@ -969,7 +969,7 @@
     "answer": null,
     "dialog": {
       "width": 358,
-      "height": 292.15625,
+      "height": 313.359375,
       "scrollWidth": 356,
       "clientWidth": 356
     },
@@ -990,79 +990,79 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "",
-        "height": 24.1875,
+        "height": 44,
         "width": 58.21875
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 33.125
+        "height": 44,
+        "width": 44
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -1077,7 +1077,7 @@
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -1087,17 +1087,17 @@
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 50.703125
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -1110,7 +1110,7 @@
     "inputs": [],
     "filter": {
       "width": 364,
-      "height": 24.1875,
+      "height": 44,
       "scrollWidth": 364,
       "clientWidth": 364
     },
@@ -1118,7 +1118,7 @@
     "answer": null,
     "dialog": {
       "width": 358,
-      "height": 208.171875,
+      "height": 229.375,
       "scrollWidth": 356,
       "clientWidth": 356
     },
@@ -1139,79 +1139,79 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "",
-        "height": 24.1875,
+        "height": 44,
         "width": 58.21875
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 33.125
+        "height": 44,
+        "width": 44
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -1226,7 +1226,7 @@
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -1236,17 +1236,17 @@
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 50.703125
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]

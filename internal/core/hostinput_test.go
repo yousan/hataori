@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
@@ -241,14 +242,17 @@ func TestOperateHostEnds(t *testing.T) {
 			cancel()
 		}},
 		"idle": {want: control.HostIdle, idle: 150 * time.Millisecond, cause: func(t *testing.T, op control.HostOperation, _ func(), _ chan struct{}, _ *fakeInput) {
+			// Wait for the watcher to arm its timer. Inside synctest, these
+			// sleeps advance virtual time without a scheduling deadline.
+			synctest.Wait()
 			start := time.Now()
 			time.Sleep(100 * time.Millisecond)
 			if err := op.Send(context.Background(), []control.HostKey{{Key: "Up"}}); err != nil {
 				t.Fatal(err)
 			}
 			<-op.Done()
-			if d := time.Since(start); d < 250*time.Millisecond {
-				t.Errorf("a key did not start the idle period again: ended after %v", d)
+			if d := time.Since(start); d != 250*time.Millisecond {
+				t.Errorf("a key did not start the idle period again: ended after %v, want 250ms", d)
 			}
 		}},
 		"the pane goes, seen by the check": {want: control.HostGone, fast: true, cause: func(_ *testing.T, _ control.HostOperation, _ func(), _ chan struct{}, in *fakeInput) {
@@ -271,7 +275,7 @@ func TestOperateHostEnds(t *testing.T) {
 		}},
 	}
 	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+		run := func(t *testing.T) {
 			hostCheckEvery = time.Hour
 			if tc.fast {
 				hostCheckEvery = 20 * time.Millisecond
@@ -332,6 +336,13 @@ func TestOperateHostEnds(t *testing.T) {
 				}
 			} else if tc.want != control.HostGone && tc.want != control.HostOwn && err != nil {
 				t.Errorf("the pane is not free again: %v", err)
+			}
+		}
+		t.Run(name, func(t *testing.T) {
+			if tc.idle > 0 {
+				synctest.Test(t, run)
+			} else {
+				run(t)
 			}
 		})
 	}

@@ -29,8 +29,8 @@ Only sizing/spacing or overflow containment changes; no new layout structure or 
 
 ## Validation
 
-Pinned Node install/check (173 tests)/build, gofmt, go vet and focused page tests pass. Baseline modal content measured 1,966 px inside a 510 px desktop dialog and 1,863 px inside a 356 px phone dialog. The fixed dialog contains its text at both widths/themes. Normal and long-name captures are included. No local tmux tests.
+Pinned Node 24.22.1: npm ci --ignore-scripts, complete npm check (173 tests) with Node test-concurrency=1, npm run build; generated page rebuilt after main integration. gofmt, go vet (Go p=1) and focused TestThePage tests (-parallel=1) pass. Eight refreshed synthetic captures show ordinary and long trusted-file names at 1440/390 px in both themes; all containment checks pass. Baseline-failing evidence is preserved. No local tmux tests.
 
-Fresh independent Codex review: no findings after an independent follow-up reviewed the desktop nowrap inheritance correction; all eight after images and measurements were regenerated.
+Fresh independent Codex review: landing_review_1018: fresh independent Codex review after current-main integration found no findings; ten CSS insertions only, prior question and phone touch fixes preserved, no permission/input/action changes.
 
-Concurrency: Open PRs #1028, #1027, #1026, #1013 share styles.css/generated page files; each finding uses a separate source hunk and starts from current main. Old #990 shares CSS but is merged; remote branches were checked before the source edit.
+Concurrency: Resumed existing PR after rechecking open PRs and remote branches. Shared dashboard CSS/generated assets: #1054, #1050, #1047, #1042, #1039, #1035, #1013. Main e0ca177f is integrated; previous findings stay on main and only this finding remains in this PR’s diff.

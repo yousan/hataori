@@ -42,12 +42,15 @@ var (
 
 // Scope is what the core needs to know about one scope.
 type Scope struct {
-	Name    string // the config's name for it; wins over its channel's name
-	Enabled bool
-	Agent   string // the registered name of the agent of new threads; empty for Core.Agent
-	Owner   string // the name of the client that gives the scope its threads
-	Model   string // default model
-	Effort  string // default effort
+	// Machines restricts ordinary starts; nil permits all, empty permits
+	// none. Until worker placement ships, only local can accept a start.
+	Machines []string
+	Name     string // the config's name for it; wins over its channel's name
+	Enabled  bool
+	Agent    string // the registered name of the agent of new threads; empty for Core.Agent
+	Owner    string // the name of the client that gives the scope its threads
+	Model    string // default model
+	Effort   string // default effort
 	// ShowIn lists the "<client>:<channel>" besides the scope's own where
 	// its threads may be linked (design, section 5.2).
 	ShowIn []string
@@ -291,8 +294,11 @@ type AgentDefaults struct{ Model, Effort string }
 // Core is the core of one instance. It has no operations of its own: use
 // As to get an API bound to a caller.
 type Core struct {
-	Store   *store.Store
-	Machine *session.Machine
+	// LocalAgents is local's agent allowlist; nil permits configured agents.
+	// Confined threads are independent of ordinary machine restrictions.
+	LocalAgents []string
+	Store       *store.Store
+	Machine     *session.Machine
 	// ApprovedStart, when set, checks the Start that a person approved as
 	// a proposal (control.Caller.Propose) before it is made, as the
 	// proposer's connection checked it when it was proposed: the daemon
@@ -1456,6 +1462,14 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 		}
 		return id, a.c.sameKind(ctx, id, kind)
 	}
+	if !confined {
+		if sc.Machines != nil && !slices.Contains(sc.Machines, store.LocalMachine) {
+			return 0, fmt.Errorf("core: start in %q: local is not permitted by scopes[].machines; worker placement is not available: %w", r.Scope, session.ErrRefused)
+		}
+		if a.c.LocalAgents != nil && !slices.Contains(a.c.LocalAgents, chosen) {
+			return 0, fmt.Errorf("core: start in %q: agent %q is not permitted by local's machines[].agents: %w", r.Scope, chosen, session.ErrRefused)
+		}
+	}
 	if kind == control.KindSupervisor {
 		// A scope's supervisor has one own thread open at a time: none
 		// starts while another is open, or is being reopened (ReopenThread
@@ -1886,7 +1900,12 @@ func (a *api) Limits(ctx context.Context) ([]control.AgentLimits, error) {
 	if err := a.check(control.OpRead, "Limits", ""); err != nil {
 		return nil, err
 	}
-	rows, err := a.c.Store.DB.QueryContext(ctx, `SELECT agent, at, every, windows FROM agent_limits ORDER BY agent`)
+	// The current public API has no machine/directory dimension. Preserve its
+	// local view using the newest local report per agent, never a sum of
+	// allowances from different installations or configuration directories.
+	rows, err := a.c.Store.DB.QueryContext(ctx, `SELECT agent, at, every, windows FROM (
+		SELECT agent, at, every, windows, row_number() OVER (PARTITION BY agent ORDER BY at DESC, config_dir) AS rank
+		FROM agent_limits WHERE machine = 'local') WHERE rank = 1 ORDER BY agent`)
 	if err != nil {
 		return nil, fmt.Errorf("core: limits: %w", err)
 	}
