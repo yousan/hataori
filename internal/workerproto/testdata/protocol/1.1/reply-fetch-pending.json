@@ -1,0 +1,1 @@
+{"kind":"reply","id":"request-fetch","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"fetch","key":"key-fetch","body":{"operation":"fetch","key":"key-fetch","request_hash":"a6acb790666c0983cfb847d33965d891944c379072b79fedbdb997e70068e092","state":"pending"}}

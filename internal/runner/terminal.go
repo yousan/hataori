@@ -16,6 +16,11 @@ import (
 // session sleeps and wakes, the stream goes on with the new run. It only
 // reads; nothing goes to the terminal.
 func (r *Runner) Terminal(ctx context.Context, id int64, run string, after uint64) (<-chan control.TerminalChunk, error) {
+	if remote, err := r.isRemote(ctx, id); err != nil {
+		return nil, err
+	} else if remote {
+		return r.remoteTerminal(ctx, id, run, after)
+	}
 	dir := StateDir(r.Root, id)
 	if w, ok := heldOf(dir); ok {
 		return r.tmuxHolder().Screen(ctx, w, run, after)
@@ -36,6 +41,9 @@ func (r *Runner) Terminal(ctx context.Context, id int64, run string, after uint6
 // time, and for a host started by a daemon before protocol 1.12, which
 // does not report it.
 func (r *Runner) Device(ctx context.Context, id int64) string {
+	if remote, err := r.isRemote(ctx, id); err != nil || remote {
+		return ""
+	}
 	dir := StateDir(r.Root, id)
 	if w, ok := heldOf(dir); ok {
 		ctx, cancel := context.WithTimeout(ctx, deviceTimeout)
@@ -68,6 +76,16 @@ const deviceTimeout = time.Second
 // OnPipes reports whether session id's agent is known to run on pipes: the
 // spec its last host was given says so.
 func (r *Runner) OnPipes(id int64) bool {
+	if remote, err := r.isRemote(context.Background(), id); err != nil {
+		return false
+	} else if remote {
+		s, err := r.remoteSession(context.Background(), id)
+		if err != nil {
+			return false
+		}
+		m, err := s.Metadata(context.Background())
+		return err == nil && !m.Terminal
+	}
 	if _, ok := heldOf(StateDir(r.Root, id)); ok {
 		return false // a window of tmux's
 	}
@@ -79,6 +97,11 @@ func (r *Runner) OnPipes(id int64) bool {
 // for a person's terminal to attach to (host.Attach). It waits, until ctx
 // ends, for a host that is being started.
 func (r *Runner) AttachSocket(ctx context.Context, id int64) (string, error) {
+	if remote, err := r.isRemote(ctx, id); err != nil {
+		return "", err
+	} else if remote {
+		return "", fmt.Errorf("runner: a worker attachment has no local socket: %w", core.ErrNoTerminal)
+	}
 	dir := StateDir(r.Root, id)
 	for {
 		if _, ok := heldOf(dir); ok {
@@ -115,6 +138,11 @@ func (r *Runner) AttachSocket(ctx context.Context, id int64) (string, error) {
 // Missing launch data, an unreachable host, and unsupported older hosts
 // refuse the check. A held window, pipes or an ended host cannot attach.
 func (r *Runner) AttachedPIDs(ctx context.Context, id int64) ([]int, error) {
+	if remote, err := r.isRemote(ctx, id); err != nil {
+		return nil, err
+	} else if remote {
+		return nil, fmt.Errorf("runner: worker attachment process identities are machine-local")
+	}
 	dir := StateDir(r.Root, id)
 	if _, ok := heldOf(dir); ok {
 		return nil, nil

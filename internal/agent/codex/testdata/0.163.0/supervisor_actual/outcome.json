@@ -1,0 +1,7 @@
+{
+  "cli": "codex-cli 0.163.0",
+  "effort": "low",
+  "fixture": "actual adapter; fake surface and two fake workers; direct Sessions.Converse",
+  "model": "gpt-6-luna",
+  "test_passed": true
+}

@@ -224,3 +224,55 @@ func TestProbe(t *testing.T) {
 		t.Fatalf("probe of a missing CLI: %+v, %v", h, err)
 	}
 }
+
+func TestWorkerProbeAndLaunchExcludeAmbientCredentials(t *testing.T) {
+	dir := t.TempDir()
+	record := filepath.Join(dir, "environment")
+	script := filepath.Join(dir, "probe-fixture")
+	status, err := os.ReadFile("testdata/2.1.322/probe/auth-status-logged-in.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture := filepath.Join(dir, "status")
+	if err := os.WriteFile(capture, status, 0600); err != nil {
+		t.Fatal(err)
+	}
+	content := "#!/bin/sh\n/usr/bin/env >> '" + record + "'\nif [ \"$1\" = --version ]; then /bin/cat <<'VERSION'\n" + version(t) + "VERSION\nelse /bin/cat '" + capture + "'; fi\n"
+	if err := os.WriteFile(script, []byte(content), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := newAdapter(t, `{}`)
+	a.command = script
+	a.passEnv = []string{"GITHUB_TOKEN", "BOT_MARKER", "SUPERVISOR_MARKER", "SSH_AUTH_SOCK"}
+	a.environ = func() []string {
+		return []string{"HOME=" + dir, "GITHUB_TOKEN=secret", "BOT_MARKER=secret", "SUPERVISOR_MARKER=secret", "SSH_AUTH_SOCK=secret"}
+	}
+	local := a.ForWorker()
+	spec := agent.Spec{Dir: dir, StateDir: dir, ConfigDir: filepath.Join(dir, "login")}
+	h, err := local.Probe(context.Background(), spec)
+	if err != nil || !h.Installed || !h.LoggedIn || h.Unknown {
+		t.Fatalf("probe: %+v %v", h, err)
+	}
+	launch, err := local.Launch(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probeEnv, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range []string{string(probeEnv), strings.Join(launch.Env, "\n")} {
+		if strings.Contains(env, "secret") || !strings.Contains(env, "CLAUDE_CONFIG_DIR="+spec.ConfigDir) {
+			t.Fatalf("incorrect environment: %s", env)
+		}
+	}
+	if len(a.passEnv) != 4 {
+		t.Fatal("ForWorker mutated the main adapter")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h, err = local.Probe(ctx, spec)
+	if err != nil || h.Installed || !h.Unknown {
+		t.Fatalf("cancelled probe claimed missing installation: %+v %v", h, err)
+	}
+}

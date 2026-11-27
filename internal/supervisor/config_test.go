@@ -54,3 +54,23 @@ func TestConfigNamesWhatChanged(t *testing.T) {
 		t.Error("a scope that names no supervisor has a config")
 	}
 }
+
+func TestSelectedAgentOwnsSupervisorModelAndEffort(t *testing.T) {
+	var log bytes.Buffer
+	s, _ := layerSessions(t, &log)
+	s.Core.Agent = "workers"
+	s.Core.Agents = map[string]core.AgentDefaults{"selected": {Model: "selected-default"}, "workers": {Model: "worker-default"}}
+	sv := s.Scopes["c1"]
+	sv.Agent = "selected"
+	sv.Model = "selected-explicit"
+	sv.Effort = "max"
+	s.Scopes["c1"] = sv
+	selected, _ := s.Config("c1", "selected")
+	if selected.Model != "selected-explicit" || selected.Effort != "max" {
+		t.Fatal(selected)
+	}
+	old, _ := s.Config("c1", "workers")
+	if old.Model != "worker-default" || old.Effort == "max" {
+		t.Fatal("selected adapter's settings leaked into another agent", old)
+	}
+}
