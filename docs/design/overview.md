@@ -3113,7 +3113,7 @@ type Message struct {
 type Adapter interface {
 	// Probe reports whether the agent is installed and logged in.
 	// The Codex adapter runs `codex --version` and reads the exit status of `codex login status`.
-	Probe(ctx context.Context) (Health, error)
+	Probe(ctx context.Context, spec Spec) (Health, error)
 
 	// Launch returns how to start the agent for spec: a new session,
 	// or a resumed one when spec.ResumeID is set.
@@ -3126,6 +3126,19 @@ type Adapter interface {
 
 	// NewCodec returns the translator for one running session.
 	NewCodec(spec Spec) Codec
+}
+
+// WorkerAdapters is optional for local adapters, required by a worker resident.
+// It returns a local adapter excluding ambient pass_env from probes/launches.
+type WorkerAdapters interface {
+	ForWorker() Adapter
+}
+
+// Health is a probe observation; uncertainty never authorizes new work.
+type Health struct {
+	Installed, LoggedIn bool
+	Unknown bool // installation or login could not be established (#959)
+	Version, Detail string
 }
 
 // ErrNoCodeBack is returned by LoginCode, for every code, when the login

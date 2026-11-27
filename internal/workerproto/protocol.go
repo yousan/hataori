@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const Version = "1.0"
+const Version = "1.1"
 
 const (
 	MaxFrame = 1 << 20 // Includes the terminating newline.
@@ -101,6 +101,10 @@ func identifier(s string) bool {
 	}
 	return true
 }
+
+// ValidID checks the syntax of an opaque identifier only. It grants no access
+// to a handle, installation or session; those need their own binding checks.
+func ValidID(s string) bool { return identifier(s) }
 
 func validBinding(b Binding) bool { return identifier(b.Main) && identifier(b.Worker) }
 func validTarget(t Target) bool {
@@ -252,6 +256,10 @@ func (c *Connection) Decode(data []byte, expected *Target) (Message, error) {
 	op, ok := operations[m.Op]
 	if !ok {
 		return Message{}, refuse("unsupported_operation", "operation is not supported")
+	}
+	_, minor, _ := version(c.version)
+	if minor < op.Since {
+		return Message{}, refuse("unsupported_operation", "operation is unavailable at the negotiated minor")
 	}
 	if !c.caps[op.Capability] {
 		return Message{}, refuse("unsupported_capability", "operation capability was not negotiated")

@@ -1,10 +1,10 @@
 # Worker protocol
 
-Status: protocol foundation for #957, part of #956. This document specifies
-worker protocol **1.0**. It is independent of the control protocol described in
+Status: protocol foundation for #957 and resident #959, part of #956. This document specifies
+worker protocol **1.1**. It is independent of the control protocol described in
 `protocol.md`; a control socket and an unversioned host socket are never worker
-endpoints. The resident, SSH transport and runner integration ship in later
-issues. There is no remotely usable worker in this change.
+endpoints. The resident foundation is described in `worker-resident.md`; SSH transport and runner integration
+ship separately. There is no remotely usable worker yet.
 
 ## Compatibility and golden files
 
@@ -96,7 +96,7 @@ versions and an `error` object. Only fixed, safe explanations may be returned.
 
 The exported structs in `internal/workerproto/bodies.go` define the JSON field
 names and types. All bodies are objects, including `Empty` (`{}`). The table is
-exhaustive for 1.0; an unlisted operation refuses. **S** means a registered
+exhaustive for 1.1; an unlisted operation refuses. **S** means a registered
 session/run is required, **D** means durable acceptance and a receipt reply.
 
 | Operation | Capability | Scope | Request body | Reply body |
@@ -107,6 +107,7 @@ session/run is required, **D** means durable acceptance and a receipt reply.
 | `prepare` | host | S,D | Prepare | Receipt |
 | `start` | host | S,D | Start | Receipt |
 | `stop` | host | S,D | Stop | Receipt |
+| `end_host` (since 1.1) | lifecycle | S,D | Empty | Receipt |
 | `input` | host | S,D | Input | Receipt |
 | `answer` | host | S,D | Answer | Receipt |
 | `receipt` | receipts | S | ReceiptQuery | Receipt |
@@ -149,7 +150,11 @@ file, including adapter-owned files outside its root. Main never opens it.
 
 Health names the current boot, readiness, per-agent/configuration installation
 and login (`logged_in`, `logged_out`, `unknown`), and resource telemetry.
-`installed:false,login:unknown` means missing. Telemetry is bounded to a maximum
+1.1 adds optional `installation` (`installed`, `missing`, `unknown`) to distinguish
+an unavailable installation probe from a proven missing CLI. `installed` remains
+true when only login is unknown. A 1.0 `installed:false,login:unknown` alone cannot
+prove whether a CLI is missing or its probe failed. Telemetry adds optional
+`disk_free`; missing/zero disk never proves capacity. Telemetry is bounded to a maximum
 60-second validity period. Main checks sample age, boot and limits; stale,
 missing, future-dated or unknown observations never prove room for new work.
 Readiness is false until identity, owned hosts, pending receipts and waiting
@@ -268,3 +273,12 @@ before doing so, and implement the durable rules below before advertising a
 capability. Specification tests run on Linux and macOS without tmux, agent
 credentials, a service manager or an operator's SSH configuration. Runtime
 platform conformance, including macOS login-session access, remains #969.
+
+## Version 1.1 additions
+
+The immutable 1.0 corpus and checksum remain unchanged. 1.1 adds `lifecycle` and
+its durable `end_host` operation, requiring negotiated minor 1 or later and
+`receipts`. This ends only the exactly bound owned host; it does not reinterpret
+`stop`, whose named-turn interruption semantics remain unchanged. Optional
+`AgentHealth.installation` and `Telemetry.disk_free` refine health observations.
+No control-protocol version or golden file changes with this worker version.
