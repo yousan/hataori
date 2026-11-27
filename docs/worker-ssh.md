@@ -4,8 +4,9 @@ The `internal/workerssh` library (#960, part of #956) opens system OpenSSH to an
 already-running resident in the worker's user session. It uses the operator's
 keys, authentication agent and configuration for authentication. It never signs
 into a dashboard, writes SSH keys/configuration, or starts a resident/agent in an
-SSH command. Main daemon routing and placement are separate work (#962 onward).
-No transport CLI or new instance JSON fields ship here.
+SSH command. The main daemon configures routing and placement using the shipped
+machine fields; see [First Linux worker](first-worker.md). There is no separate
+transport CLI.
 
 ## Configuration and ownership
 
