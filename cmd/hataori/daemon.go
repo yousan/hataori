@@ -152,6 +152,13 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 		return err
 	}
 	defer st.Close()
+	bindings := make([]store.MachineBinding, 0, len(cfg.Machines))
+	for _, machine := range cfg.Machines {
+		bindings = append(bindings, store.MachineBinding{Key: machine.Key, SSH: machine.SSH, Root: machine.Root})
+	}
+	if err := st.SyncMachines(ctx, bindings); err != nil {
+		return err
+	}
 	lg := slog.New(slog.NewTextHandler(logOut, nil))
 	// Before anything reads a thread: existing threads get their first
 	// link, once (design, section 6.2).
@@ -213,7 +220,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	scopes := map[string]core.Scope{}
 	var keys []string
 	for _, s := range cfg.Scopes {
-		cs := core.Scope{Name: s.Name, Enabled: s.Enabled, Owner: s.Client, Agent: s.Agent, Model: s.Model, Effort: s.Effort, ShowIn: s.ShowIn}
+		cs := core.Scope{Name: s.Name, Enabled: s.Enabled, Owner: s.Client, Agent: s.Agent, Model: s.Model, Effort: s.Effort, ShowIn: s.ShowIn, Machines: s.Machines}
 		if s.Supervisor != nil {
 			cs.ConversationsAtOnce = s.Supervisor.ConversationsAtOnce
 		}
@@ -233,6 +240,11 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	c = &core.Core{Agents: agents, Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{}, People: cfg.People,
 		Workspaces: maker, Remover: remover, Restorer: remover,
 		Runner: r, Agent: agentName, Model: cfg.Model, Effort: cfg.Effort, Log: lg}
+	for _, machine := range cfg.Machines {
+		if machine.Key == instance.LocalMachine {
+			c.LocalAgents = machine.Agents
+		}
+	}
 	// Also for threads a supervisor started that the config no longer names.
 	c.SupervisorOf = supervisor.StartedBy
 	for _, s := range cfg.Scopes {
