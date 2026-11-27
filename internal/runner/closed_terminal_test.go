@@ -75,7 +75,14 @@ func TestClosedTerminalAgentSurvivesPollingAndCanBeStopped(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, tmux.PidFile), []byte(strconv.Itoa(pid)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { syscall.Kill(pid, syscall.SIGKILL) })
+	t.Cleanup(func() {
+		out, _ := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "ppid=").Output()
+		if strings.TrimSpace(string(out)) == strconv.Itoa(int(ref["server"].(float64))) {
+			if group, _ := syscall.Getpgid(pid); group == pid {
+				syscall.Kill(-pid, syscall.SIGKILL)
+			}
+		}
+	})
 	h := &tmux.Holder{Tmux: prog, Server: []string{"-S", socket, "-f", "/dev/null"}}
 	r := &Runner{Tmux: h, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	if err := os.WriteFile(gate, nil, 0o600); err != nil {

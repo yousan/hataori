@@ -5,12 +5,14 @@ on:
     paths:
       - internal/holder/tmux/**
       - internal/hostterm/**
+      - internal/runner/closed_terminal_test.go
       - .github/workflows/tmux.yml
   push:
     branches: [main]
     paths:
       - internal/holder/tmux/**
       - internal/hostterm/**
+      - internal/runner/closed_terminal_test.go
       - .github/workflows/tmux.yml
   workflow_dispatch:
     inputs:
@@ -62,3 +64,5 @@ jobs:
           set -eu
           tmux -V
           go test -timeout 150m -count="$TEST_COUNT" -run "$TEST_NAMES" ./internal/holder/tmux
+      - name: Test closed-terminal ownership through the runner
+        run: go test -timeout 5m -count="$TEST_COUNT" -run '^TestClosedTerminal' ./internal/runner
