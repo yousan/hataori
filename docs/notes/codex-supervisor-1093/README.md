@@ -30,6 +30,9 @@ snapshots, and no queued turn is allowed before the correlated empty-result
 acknowledgement. A second reply cannot repeat readiness or dispatch an input.
 Ordinary writes and worker calls remain excluded from replay. A subsequent
 reconnect can retry the same still-unconfirmed snapshot once again.
+Recovery remains subject to the runner's existing startup deadline and
+retained-log verification. It cannot open readiness after an expired startup
+deadline or compensate for unreadable/unverifiable retained history.
 
 ## Evidence
 
