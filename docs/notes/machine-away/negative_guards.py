@@ -28,9 +28,13 @@ cases = [
  ("accepted answer caller-turn binding", "internal/core/core.go", 'if req != "" {\n\t\tif err := tx.QueryRowContext(ctx, `SELECT coalesce(max(id),0) FROM turns', 'if false && req != "" {\n\t\tif err := tx.QueryRowContext(ctx, `SELECT coalesce(max(id),0) FROM turns', './internal/core', '^TestAwayAnswerAcceptanceBindsItsNewCallerTurn$'),
  ("rejected answer completes bound caller turn", "internal/runner/away.go", 'if turn != 0 {', 'if false && turn != 0 {', './internal/runner', '^TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn$'),
 
- ("immediate answer follower sequence", "internal/runner/machines.go", 'r.machineEffectFor(ctx, lv, remote, m, r.actionInputs(lv, nil)...)', 'r.machineEffect(ctx, lv.id, remote, m, r.actionInputs(lv, nil)...)', './internal/runner', '^TestAwayImmediateAnswerRefusalPreservesRealFollowerSequence$'),
+ ("immediate answer follower sequence", "internal/runner/machines.go", 'r.machineEffectFor(ctx, lv, remote, m, inputs...); err != nil {\n\t\t\treturn err', 'r.machineEffect(ctx, lv.id, remote, m, inputs...); err != nil {\n\t\t\treturn err', './internal/runner', '^TestAwayImmediateAnswerRefusalPreservesRealFollowerSequence$'),
 
  ("idle remaining active time", "internal/runner/away.go", 'func (r *Runner) activeAge(ctx context.Context, q store.RowQuerier, id int64, since time.Time) time.Duration {', 'func (r *Runner) activeAge(ctx context.Context, q store.RowQuerier, id int64, since time.Time) time.Duration { return time.Since(since)', './internal/runner', '^TestAwayIdleBudgetDoesNotExpireDuringDisconnection$'),
+
+ ("answer receipt nonreusable identity", "internal/runner/away.go", 'if matches == 0 {', 'if false && matches == 0 {', './internal/runner', '^TestAwayAnswerReceiptCannotRetireReusedPendingRow$'),
+ ("transient no-write answer retained", "internal/runner/away.go", 'else if len(retryUnavailable) > 0 && retryUnavailable[0] {', 'else if false && len(retryUnavailable) > 0 && retryUnavailable[0] {', './internal/runner', '^TestRemoteRunnerRefusedHookGetsNewAttemptAfterRestart$'),
+ ("resolved refusal consumed", "internal/runner/machines.go", "state='complete' AND EXISTS", "state IN ('complete','refused') AND EXISTS", './internal/runner', '^TestRemoteRunnerRefusedHookGetsNewAttemptAfterRestart$'),
 
 ]
 # The gone check appears twice; remove both to cover both warm and new reads.

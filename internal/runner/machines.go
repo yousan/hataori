@@ -465,7 +465,12 @@ func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) (result
 			failed(true)
 			return err
 		}
-		if err := r.machineEffectFor(ctx, lv, remote, m, r.actionInputs(lv, a.Inputs)...); err != nil {
+		inputs, err := r.actionInputs(lv, a.Inputs)
+		if err != nil {
+			failed(true)
+			return &holder.NotSent{Err: err}
+		}
+		if err := r.machineEffectFor(ctx, lv, remote, m, inputs...); err != nil {
 			var nothing *holder.NotSent
 			failed(errors.As(err, &nothing))
 			return err
@@ -492,7 +497,11 @@ func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) (result
 		if err != nil {
 			return err
 		}
-		if err := r.machineEffectFor(ctx, lv, remote, m, r.actionInputs(lv, nil)...); err != nil {
+		inputs, err := r.actionInputs(lv, nil)
+		if err != nil {
+			return &holder.NotSent{Err: err}
+		}
+		if err := r.machineEffectFor(ctx, lv, remote, m, inputs...); err != nil {
 			return err
 		}
 	}
@@ -528,7 +537,9 @@ func (r *Runner) machineEffectFor(ctx context.Context, lv *live, remote *machine
 		}
 	}
 	if state == "refused" && len(inputs) > 0 {
-		resolution := r.recordActionResolution(lv, action, string(inputJSON), state)
+		var refusal *workerproto.Refusal
+		retryAnswer := !errors.As(err, &refusal) || refusal.Code == "unavailable"
+		resolution := r.recordActionResolution(lv, action, string(inputJSON), state, retryAnswer)
 		if errors.Is(resolution, core.ErrMachineUnchecked) {
 			resolution = nil
 		}
@@ -546,7 +557,7 @@ func (r *Runner) reconcileMachineActions(lv *live) error {
 		return nil
 	}
 	ctx := context.Background()
-	rows, err := r.Store.DB.Query(`SELECT id,request,inputs FROM session_machine_actions WHERE session_id=? AND run=? AND (state IN ('pending','unknown') OR EXISTS(SELECT 1 FROM json_each(session_machine_actions.inputs) j JOIN pending_inputs p ON j.value='answer:'||p.id)) ORDER BY id`, lv.id, remote.Target.Run)
+	rows, err := r.Store.DB.Query(`SELECT id,request,inputs FROM session_machine_actions WHERE session_id=? AND run=? AND (state IN ('pending','unknown') OR (state='complete' AND EXISTS(SELECT 1 FROM json_each(session_machine_actions.inputs) j JOIN pending_inputs p ON p.session_id=session_machine_actions.session_id AND j.value='answer:'||p.id||':'||p.receipt_key))) ORDER BY id`, lv.id, remote.Target.Run)
 	if err != nil {
 		return err
 	}
@@ -599,7 +610,8 @@ func (r *Runner) reconcileMachineActions(lv *live) error {
 		if receipt.State != "complete" && receipt.State != "refused" {
 			return machineio.ErrUnknown
 		}
-		if err := r.recordActionResolution(lv, a.id, a.inputs, receipt.State); err != nil {
+		retryAnswer := receipt.Refusal != nil && receipt.Refusal.Code == "unavailable"
+		if err := r.recordActionResolution(lv, a.id, a.inputs, receipt.State, retryAnswer); err != nil {
 			return err
 		}
 	}

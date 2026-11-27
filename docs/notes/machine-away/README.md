@@ -58,6 +58,11 @@ runs are part of this work. #965 remains unclaimed until all gates pass.
   Trigger-abort fixtures prove immediate and recovered refused outcomes cannot
   partially commit their journal and written markers. The full immediate-answer
   refusal path proves the next follower event is still committed.
+- A proven transient no-write answer refusal survives restart and retries only
+  after reconstruction of the original hook and current-authority checks.
+  Missing receipts retain the written marker and block recovery. Receipt keys
+  survive schema upgrade/reopen; reusing a deleted SQLite pending row cannot
+  make a previous answer receipt retire or refuse a new answer.
 
 `negative_guards.py` applies one guard mutation at a time to these isolated
 fixtures, serially with `GOMAXPROCS=1`, and restores the original source in

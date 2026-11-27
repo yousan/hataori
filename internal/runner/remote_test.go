@@ -666,7 +666,7 @@ func (c *unwrittenUnknown) Read(b []byte) (int, error) {
 	return c.Conn.Read(b)
 }
 
-func TestRemoteRunnerUnknownUnreportedInputFailsVisibly(t *testing.T) {
+func TestRemoteRunnerUnknownUnreportedInputPreservesUncertainty(t *testing.T) {
 	f, _ := remoteFixture(t, false)
 	seedRemote(t, f, 1, "reply ready")
 	waitFor(t, "initial turn", 5*time.Second, f.has("turn_ended", 1))
@@ -693,6 +693,10 @@ func TestRemoteRunnerUnknownUnreportedInputFailsVisibly(t *testing.T) {
 		t.Fatalf("unknown delivery: %v", err)
 	}
 	waitFor(t, "ambiguous attempted write", 5*time.Second, func() bool { return writes.Load() == 1 })
+	var originalWritten int
+	if err := f.st.DB.QueryRow(`SELECT max(written) FROM pending_inputs WHERE session_id=1`).Scan(&originalWritten); err != nil {
+		t.Fatal(err)
+	}
 	f.run.Close()
 	next := &Runner{Store: f.st, Machine: f.core.Machine, Adapters: f.run.Adapters, Root: f.root, Host: f.run.Host, Log: f.run.Log, Poll: 30 * time.Millisecond, Remotes: f.run.Remotes}
 	f.run = next
@@ -700,7 +704,26 @@ func TestRemoteRunnerUnknownUnreportedInputFailsVisibly(t *testing.T) {
 	if err := next.Reconnect(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "visible not-delivered outcome", 8*time.Second, func() bool { return lastTurnReason(t, f.st) == "not delivered" })
+	lv, err = next.get(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A follower intentionally holds its handover lock during unresolved
+	// startup. Stop this main's follower before driving isolated recovery steps.
+	next.Close()
+	lv.mu.Lock()
+	for range 3 {
+		next.stepLocked(lv)
+	}
+	blocked := lv.warmPending && errors.Is(lv.readErr, machineio.ErrUnknown)
+	lv.mu.Unlock()
+	var written, pending int
+	if err := f.st.DB.QueryRow(`SELECT count(*),coalesce(max(written),0) FROM pending_inputs WHERE session_id=1`).Scan(&pending, &written); err != nil {
+		t.Fatal(err)
+	}
+	if !blocked || pending != 1 || originalWritten == 0 || written != originalWritten || counts(t, f.st)["turn_ended"] != 1 {
+		t.Fatalf("uncertain input released: blocked=%v pending=%d written=%d events=%v", blocked, pending, written, counts(t, f.st))
+	}
 	if writes.Load() != 1 {
 		t.Fatalf("unknown paste repeated %d times", writes.Load())
 	}
@@ -732,6 +755,7 @@ func TestRemoteRunnerOversizedInputFailsOnceWithoutRetry(t *testing.T) {
 
 func TestRemoteRunnerRefusedHookGetsNewAttemptAfterRestart(t *testing.T) {
 	f, _ := remoteFixture(t, true)
+	enableFixtureAway(t, f)
 	seedRemote(t, f, 1, "ask colour\nreply original")
 	waitFor(t, "held question", 8*time.Second, f.has("request", 1))
 	var request string
@@ -792,7 +816,7 @@ func TestRemoteRunnerRefusedHookGetsNewAttemptAfterRestart(t *testing.T) {
 	parkedNow = false
 	remote.Open = open
 	f.run.live = nil
-	next := &Runner{Store: f.st, Machine: f.core.Machine, Adapters: f.run.Adapters, Root: f.root, Host: f.run.Host, Log: f.run.Log, Poll: 30 * time.Millisecond, Remotes: f.run.Remotes}
+	next := &Runner{Store: f.st, Machine: f.core.Machine, Adapters: f.run.Adapters, Root: f.root, Host: f.run.Host, Log: f.run.Log, Poll: 30 * time.Millisecond, Remotes: f.run.Remotes, AwayEnabled: true, AwayGrace: 25 * time.Millisecond, RevalidatePending: f.core.RevalidatePending, RevalidateInitial: f.core.RevalidateInitial}
 	f.run = next
 	f.core.Runner = next
 	if err := next.Reconnect(context.Background()); err != nil {

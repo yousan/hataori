@@ -266,12 +266,19 @@ func (r *Runner) tickCodec(lv *live) agent.Actions {
 	return lv.codec.Tick(r.codecNow(lv))
 }
 
-func (r *Runner) actionInputs(lv *live, inputs []string) []string {
+func (r *Runner) actionInputs(lv *live, inputs []string) ([]string, error) {
 	out := append([]string{}, inputs...)
 	if lv.answerPending != 0 {
-		out = append(out, "answer:"+strconv.FormatInt(lv.answerPending, 10))
+		var key string
+		if err := r.Store.DB.QueryRow(`SELECT receipt_key FROM pending_inputs WHERE id=? AND session_id=?`, lv.answerPending, lv.id).Scan(&key); err != nil {
+			return nil, err
+		}
+		if key == "" {
+			return nil, errors.New("runner: pending answer has no receipt identity")
+		}
+		out = append(out, "answer:"+strconv.FormatInt(lv.answerPending, 10)+":"+key)
 	}
-	return out
+	return out, nil
 }
 
 // refusePendingAnswer records a terminal codec/receipt refusal before retiring
@@ -329,7 +336,7 @@ func (r *Runner) resolveActionInputs(lv *live, raw, state string) error {
 
 // The correlated receipt and all local delivery markers form one commit.
 // Missing, pending and unknown receipts never reach this path.
-func (r *Runner) recordActionResolution(lv *live, action int64, raw, state string) error {
+func (r *Runner) recordActionResolution(lv *live, action int64, raw, state string, retryUnavailable ...bool) error {
 	if state != "complete" && state != "refused" {
 		return machineio.ErrUnknown
 	}
@@ -337,6 +344,7 @@ func (r *Runner) recordActionResolution(lv *live, action int64, raw, state strin
 	if err := json.Unmarshal([]byte(raw), &inputs); err != nil {
 		return err
 	}
+	var retryAnswer int64
 	var unsent []string
 	ctx := context.Background()
 	err := r.Store.Update(ctx, func(tx *store.Tx) error {
@@ -347,14 +355,29 @@ func (r *Runner) recordActionResolution(lv *live, action int64, raw, state strin
 		}
 		for _, in := range inputs {
 			if value, ok := strings.CutPrefix(in, "answer:"); ok {
+				value, key, valid := strings.Cut(value, ":")
+				if !valid || key == "" {
+					return errors.New("runner: recorded answer has no receipt identity")
+				}
 				id, err := strconv.ParseInt(value, 10, 64)
 				if err != nil {
 					return err
+				}
+				var matches int
+				if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pending_inputs WHERE id=? AND session_id=? AND receipt_key=?`, id, lv.id, key).Scan(&matches); err != nil {
+					return err
+				}
+				if matches == 0 {
+					continue
 				}
 				if state == "complete" {
 					if _, err := tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE id=? AND session_id=?`, id, lv.id); err != nil {
 						return err
 					}
+				} else if len(retryUnavailable) > 0 && retryUnavailable[0] {
+					// A correlated transient no-write proof permits another
+					// attempt only after reconstruction, hook and authority checks.
+					retryAnswer = max(retryAnswer, id)
 				} else if err := r.refusePendingAnswerTx(ctx, tx, lv.id, id); err != nil {
 					return err
 				}
@@ -370,7 +393,11 @@ func (r *Runner) recordActionResolution(lv *live, action int64, raw, state strin
 	if err := r.Store.DB.QueryRow(`SELECT last_seq FROM sessions WHERE id=?`, lv.id).Scan(&lv.seq); err != nil {
 		return err
 	}
-	if len(unsent) > 0 {
+	if retryAnswer != 0 {
+		lv.pending = true
+		lv.upTo = max(lv.upTo, retryAnswer)
+	}
+	if len(unsent) > 0 || retryAnswer != 0 {
 		lv.warmPending = true
 		return core.ErrMachineUnchecked
 	}

@@ -2,9 +2,50 @@ package store
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestAwayExistingPendingInputsGainStableReceiptKeys(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(newRoot(t), File)
+	s, err := open(ctx, path, migrations[:len(migrations)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO threads(id,scope,key,started_by,state,created_at,updated_at) VALUES(1,'s','upgrade','owner','running',1,1)`,
+		`INSERT INTO sessions(id,thread_id,agent,state,created_at,updated_at) VALUES(1,1,'fake','running',1,1)`,
+		`INSERT INTO pending_inputs(id,session_id,request,data,written) VALUES(1,1,'question','{"text":"retained"}',2)`,
+	} {
+		if _, err := s.DB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = open(ctx, path, migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var key, data string
+	var written int
+	if err := s.DB.QueryRow(`SELECT receipt_key,data,written FROM pending_inputs WHERE id=1`).Scan(&key, &data, &written); err != nil || len(key) != 32 || data != `{"text":"retained"}` || written != 2 {
+		t.Fatalf("migration lost pending identity/data: %q %q %d %v", key, data, written, err)
+	}
+	s.Close()
+	s, err = open(ctx, path, migrations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var again string
+	if err := s.DB.QueryRow(`SELECT receipt_key FROM pending_inputs WHERE id=1`).Scan(&again); err != nil || again != key {
+		t.Fatalf("receipt key changed across reopen: %q %q %v", key, again, err)
+	}
+}
 
 func TestAwayGraceCatchupAndPersistentActiveAge(t *testing.T) {
 	ctx := context.Background()

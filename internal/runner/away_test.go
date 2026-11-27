@@ -411,7 +411,13 @@ func TestAwayAcceptedAnswerRefusalIsDurable(t *testing.T) {
 				if outcome == "refused receipt" {
 					state = "refused"
 				}
-				if err := f.run.resolveActionInputs(lv, `["answer:1"]`, state); err != nil {
+				lv.answerPending = 1
+				inputs, err := f.run.actionInputs(lv, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				encoded, _ := json.Marshal(inputs)
+				if err := f.run.resolveActionInputs(lv, string(encoded), state); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -428,6 +434,60 @@ func TestAwayAcceptedAnswerRefusalIsDurable(t *testing.T) {
 			}
 			if want == "refused" && counts(t, f.st)["machine_action"] != 1 {
 				t.Fatal("accepted answer refusal was invisible")
+			}
+		})
+	}
+}
+
+func TestAwayAnswerReceiptCannotRetireReusedPendingRow(t *testing.T) {
+	for _, target := range []int64{1, 2} {
+		t.Run(fmt.Sprint(target), func(t *testing.T) {
+			f := placementRecordFixture(t)
+			for _, q := range []string{
+				`INSERT INTO threads(id,scope,key,started_by,state,created_at,updated_at) VALUES(1,'s','receipt-one','owner','running',1,1),(2,'s','receipt-two','owner','running',1,1)`,
+				`INSERT INTO sessions(id,thread_id,agent,state,created_at,updated_at) VALUES(1,1,'fake','running',1,1),(2,2,'fake','running',1,1)`,
+				`INSERT INTO pending_inputs(id,session_id,request,data) VALUES(1,1,'first','{}')`,
+			} {
+				if _, err := f.st.DB.Exec(q); err != nil {
+					t.Fatal(err)
+				}
+			}
+			lv := &live{id: 1, answerPending: 1}
+			inputs, err := f.run.actionInputs(lv, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, _ := json.Marshal(inputs)
+			if err := f.run.resolveActionInputs(lv, string(raw), "complete"); err != nil {
+				t.Fatal(err)
+			}
+			// SQLite reuses the deleted numeric ID. This is a different input,
+			// even in the same session/run, and receives a fresh receipt key.
+			if _, err := f.st.DB.Exec(`INSERT INTO pending_inputs(session_id,request,data) VALUES(?,'second','{}')`, target); err != nil {
+				t.Fatal(err)
+			}
+			var id int64
+			if err := f.st.DB.QueryRow(`SELECT id FROM pending_inputs`).Scan(&id); err != nil || id != 1 {
+				t.Fatalf("fixture did not reuse row: %d %v", id, err)
+			}
+			if _, err := f.st.DB.Exec(`INSERT INTO session_machine_actions(session_id,run,operation,key,request,state,inputs) VALUES(1,'run','answer','old','{}','complete',?)`, string(raw)); err != nil {
+				t.Fatal(err)
+			}
+			lv.io = &machineio.Remote{Target: workerproto.Target{Run: "run"}, Open: func(context.Context) (net.Conn, *workerproto.Connection, error) {
+				t.Error("old completed receipt was queried for a different pending answer")
+				return nil, nil, errors.New("isolated unexpected old receipt query")
+			}}
+			if err := f.run.reconcileMachineActions(lv); err != nil {
+				t.Fatal(err)
+			}
+			for _, state := range []string{"complete", "refused"} {
+				if err := f.run.resolveActionInputs(lv, string(raw), state); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var count int
+			if err := f.st.DB.QueryRow(`SELECT count(*) FROM pending_inputs WHERE id=1 AND session_id=? AND request='second'`, target).Scan(&count); err != nil || count != 1 || counts(t, f.st)["machine_action"] != 0 {
+				t.Fatalf("old receipt retired or refused new answer: %d %v", count, err)
 			}
 		})
 	}
@@ -716,7 +776,7 @@ func TestAwayImmediateNoWriteRefusalIsAtomic(t *testing.T) {
 }
 
 func TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn(t *testing.T) {
-	for _, mode := range []string{"codec expired", "authority revoked", "different turn"} {
+	for _, mode := range []string{"codec expired", "authority revoked", "different turn", "transient then authority revoked", "transient then codec expired"} {
 		t.Run(mode, func(t *testing.T) {
 			f := placementRecordFixture(t)
 			for _, q := range []string{
@@ -734,11 +794,33 @@ func TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if mode == "authority revoked" {
+			if strings.HasPrefix(mode, "transient then ") {
+				original := &live{id: 1, seq: 5, answerPending: 1}
+				inputs, err := f.run.actionInputs(original, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw, _ := json.Marshal(inputs)
+				if err := f.run.recordActionResolution(original, 0, string(raw), "refused", true); !errors.Is(err, core.ErrMachineUnchecked) {
+					t.Fatalf("transient proof did not require reconstruction: %v", err)
+				}
+				var pending int
+				f.st.DB.QueryRow(`SELECT count(*) FROM pending_inputs`).Scan(&pending)
+				if pending != 1 || counts(t, f.st)["turn_ended"] != 0 {
+					t.Fatal("transient no-write refusal lost accepted answer")
+				}
+				// A fresh follower reconstructs only after the persisted proof.
+			}
+			if strings.Contains(mode, "authority revoked") {
 				f.run.RevalidatePending = func(context.Context, int64, int64) error { return core.ErrForbidden }
 			}
 			lv := &live{id: 1, seq: 5}
-			if err := f.run.handOver(lv, 1, true, func() (agent.Actions, error) { return agent.Actions{}, errors.New("expired request") }); err == nil {
+			if err := f.run.handOver(lv, 1, true, func() (agent.Actions, error) {
+				if strings.Contains(mode, "authority revoked") {
+					t.Error("revoked retry reached codec")
+				}
+				return agent.Actions{}, errors.New("expired request")
+			}); err == nil {
 				t.Fatal("answer refusal hidden")
 			}
 			var open int64
@@ -756,8 +838,8 @@ func TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn(t *testing.T) {
 	}
 }
 
-// The resident's metadata read succeeds, then the answer connection is refused
-// before any bytes are sent. This exercises handOver -> actRemote -> the effect
+// The resident verifies that the named hook is stale and proves no write.
+// This exercises handOver -> actRemote -> the effect
 // journal with the actual follower, followed by another committed agent event.
 func TestAwayImmediateAnswerRefusalPreservesRealFollowerSequence(t *testing.T) {
 	f, _ := remoteFixture(t, true)
@@ -793,21 +875,17 @@ func TestAwayImmediateAnswerRefusalPreservesRealFollowerSequence(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	remote := lv.io.(*machineio.Remote)
-	open := remote.Open
-	calls := 0
-	remote.Open = func(ctx context.Context) (net.Conn, *workerproto.Connection, error) {
-		calls++
-		if calls == 2 {
-			return nil, nil, errors.New("isolated answer connection refused before write")
-		}
-		return open(ctx)
-	}
 	f.run.RevalidatePending = nil // acceptance provenance is constructed explicitly above
 	before := lv.seq
-	err = f.run.handOver(lv, pending, true, func() (agent.Actions, error) { return lv.codec.Answer(agent.Answer{Request: request, Text: "red"}) })
-	if err == nil || calls != 2 || lv.seq != before+1 {
-		t.Fatalf("immediate answer refusal lost actual follower sequence: %v calls=%d seq=%d/%d", err, calls, lv.seq, before)
+	err = f.run.handOver(lv, pending, true, func() (agent.Actions, error) {
+		a, err := lv.codec.Answer(agent.Answer{Request: request, Text: "red"})
+		for i := range a.Reply {
+			a.Reply[i].Call = "expired-fixture-hook"
+		}
+		return a, err
+	})
+	if err == nil || lv.seq != before+1 {
+		t.Fatalf("immediate answer refusal lost actual follower sequence: %v seq=%d/%d", err, lv.seq, before)
 	}
 	countBefore := counts(t, f.st)["turn_started"]
 	if _, err := f.run.commit(lv, batch{events: []agent.Event{{Kind: agent.TurnStarted, StartedBy: agent.ByTerminal, Input: "autonomous"}}}); err != nil {

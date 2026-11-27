@@ -3556,10 +3556,14 @@ identity/version/inventory probing succeeds again. Public protocol 3.47 carries
 availability/action events and `action_held`; worker protocol remains independently
 1.3 because its existing inventory/receipt/waiting-hook contract is unchanged.
 Accepted answer receipts and their synthetic caller turn IDs are linked to
-pending inputs. A terminal refusal ends only that still-current caller turn.
+pending inputs by a durable random receipt key, not a reusable SQLite row number.
+A terminal refusal ends only that still-current caller turn.
 Immediate no-write refusals and recovered refusals commit journal state and
-written markers atomically; an absent receipt always remains uncertain. Terminal codec/worker
-refusals are durable and visible; complete receipts retire the original pending
+written markers atomically; an absent receipt always remains uncertain. A proven
+transient no-write refusal preserves the accepted answer for reconstruction,
+original-hook and current-authority checks before a fresh attempt. Resolved
+refused attempts remain audited without being reconciled repeatedly.
+Terminal codec/stale-worker refusals are durable and visible; complete receipts retire the original pending
 answer, while unresolved receipts block catch-up completion. Written provenance
 is restored before decoding buffered output, and acknowledgements retire input
 during catch-up without dispatching new work.
