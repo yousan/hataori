@@ -72,6 +72,8 @@ var EventKinds = map[EventKind][]Field{
 		opt("link", Object), text("before", String), text("after", String), opt("via", String)},
 	// input_failed: an accepted input never reached the agent, independently
 	// of any turn that happens to run. Since 3.42.
+	// input_waiting: a terminal handoff is delayed. Since 3.43.
+	"input_waiting": {req("session", Integer), req("input", String), req("reason", String)},
 	"input_failed": {req("session", Integer), req("input", String), req("reason", String), text("text", String),
 		opt("key", String), opt("principal", String), opt("from", String), opt("link", Object), opt("via", String)},
 	"answer": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),

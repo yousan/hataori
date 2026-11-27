@@ -48,8 +48,8 @@ Choose A: neutral outlined actions match the existing Type/Stop controls and do 
 
 ## Validation
 
-Pinned Node install/check (173 tests)/build, gofmt, go vet and focused page tests pass. Baseline buttons use 0 px browser-default corners and short choices are 24.19 px high. The fixed controls use 4 px corners with at least 28 px height; normal and long-label questions, approval and composer are captured in both widths/themes. Fresh Codex review found no issues. No local tmux tests.
+Pinned Node 24.22.1: npm ci --ignore-scripts, complete npm check (173 tests) with Node test-concurrency=1, npm run build; generated page rebuilt after main integration and CSS conflict resolution. gofmt, go vet (Go p=1) and focused TestThePage tests (-parallel=1) pass. Sixteen refreshed synthetic composer/question/approval/long-question captures at1440/390px in both themes verify button radius/minimum height and retained phone sizing. Main question containment remains. Baseline-failing evidence is retained. No local tmux tests.
 
-Fresh independent Codex review: no findings.
+Fresh independent Codex review: landing_review_1022: fresh independent Codex review after current-main CSS conflict resolution found no findings; shared theme/disabled/focus styles only, main answer containment retained, phone44px controls and16px fields preserved, no permission/input changes.
 
-Concurrency: Open PRs #1042, #1039, #1035, #1032, #1029, #1028, #1027, #1026, #1013 share styles.css/generated page files; each finding uses a separate source hunk and starts from current main. Old #990 shares CSS but is merged; remote branches were checked before the source edit.
+Concurrency: Resumed existing PR after rechecking open PRs and remote branches. Shared dashboard CSS/generated assets: #1054, #1050, #1013. Main 27ff3b0d is integrated; previous findings stay on main and only this finding remains in this PR’s diff.

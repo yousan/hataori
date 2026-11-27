@@ -24,14 +24,13 @@ What works today:
 - Discord commands to start, stop and inspect threads, attach chat to an existing thread, and open the dashboard; incoming attachments are handed to the agent.
 - Host commands to inspect threads and events, stop turns, attach to or watch a live terminal, and close or reopen threads, over the local control socket.
 - A web dashboard with threads, events and live terminals, including access over SSH with `hataori connect`.
-- An optional Claude Code supervisor for a channel: it watches turn results, keeps notes and reminders, reads repository issues and pull requests, and proposes or takes actions within configured access and budgets.
+- An optional supervisor for a channel, using Claude Code or the verified Linux Codex launch ([requirements](docs/notes/codex-supervisor-1088/README.md)): it watches turn results, keeps notes and reminders, reads repository issues and pull requests, and proposes or takes actions within configured access and budgets.
 - External-process plugins with manifests, scoped grants and hooks.
 - Workspace removal from the host, with checks that refuse when work could be lost or safety cannot be established; removed workspaces are kept temporarily for restoration. Optional cleanup applies the same checks to closed threads. Nothing in chat removes a workspace.
 
 Not built yet:
 
 - Slack (next) and Microsoft Teams (planned).
-- A Codex supervisor; only Claude Code can run the supervisor today.
 - An installer or release binaries; build from source, or use the macOS artifacts from CI.
 
 ## Getting started

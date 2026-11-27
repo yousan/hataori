@@ -1,0 +1,1 @@
+{"kind":"refusal","id":"request-health","binding":{"main":"main-A","worker":"worker-A"},"op":"health","body":{"code":"not_ready","message":"reconciliation is not complete"}}

@@ -135,14 +135,14 @@
     "filter": null,
     "question": {
       "width": 275,
-      "height": 173.3125,
-      "scrollWidth": 1191,
+      "height": 246.0625,
+      "scrollWidth": 273,
       "clientWidth": 273
     },
     "answer": {
       "width": 788,
-      "height": 18.1875,
-      "scrollWidth": 1183,
+      "height": 36.375,
+      "scrollWidth": 788,
       "clientWidth": 788
     },
     "dialog": null,
@@ -168,7 +168,7 @@
     "pane": {
       "width": 820,
       "height": 840.203125,
-      "scrollWidth": 1199,
+      "scrollWidth": 820,
       "clientWidth": 820
     },
     "status": {
@@ -703,14 +703,14 @@
     "filter": null,
     "question": {
       "width": 275,
-      "height": 173.3125,
-      "scrollWidth": 1191,
+      "height": 246.0625,
+      "scrollWidth": 273,
       "clientWidth": 273
     },
     "answer": {
       "width": 788,
-      "height": 18.1875,
-      "scrollWidth": 1183,
+      "height": 36.375,
+      "scrollWidth": 788,
       "clientWidth": 788
     },
     "dialog": null,
@@ -736,7 +736,7 @@
     "pane": {
       "width": 820,
       "height": 840.203125,
-      "scrollWidth": 1199,
+      "scrollWidth": 820,
       "clientWidth": 820
     },
     "status": {
@@ -1142,7 +1142,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -1166,34 +1166,34 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 16.796875,
+        "height": 44,
         "width": 370
       },
       {
         "class": "box-send",
-        "height": 46.375,
+        "height": 54.78125,
         "width": 54.75
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -1205,7 +1205,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -1217,8 +1217,8 @@
     },
     "answer": {
       "width": 370,
-      "height": 18.1875,
-      "scrollWidth": 1183,
+      "height": 72.75,
+      "scrollWidth": 370,
       "clientWidth": 370
     },
     "dialog": null,
@@ -1239,24 +1239,24 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 72.71875
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 100.34375
       },
       {
@@ -1266,27 +1266,27 @@
       },
       {
         "class": "",
-        "height": 28.1875,
+        "height": 44,
         "width": 134.984375
       },
       {
         "class": "",
-        "height": 28.1875,
+        "height": 44,
         "width": 126.828125
       },
       {
         "class": "box-send",
-        "height": 46.375,
+        "height": 54.78125,
         "width": 69.890625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -1298,7 +1298,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -1332,24 +1332,24 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 72.71875
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 100.34375
       },
       {
@@ -1359,27 +1359,27 @@
       },
       {
         "class": "",
-        "height": 28.1875,
+        "height": 44,
         "width": 134.984375
       },
       {
         "class": "",
-        "height": 28.1875,
+        "height": 44,
         "width": 126.828125
       },
       {
         "class": "box-send",
-        "height": 46.375,
+        "height": 54.78125,
         "width": 69.890625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -1391,7 +1391,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -1425,49 +1425,49 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 72.71875
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 100.34375
       },
       {
         "class": "",
-        "height": 28.1875,
+        "height": 44,
         "width": 56.703125
       },
       {
         "class": "",
-        "height": 28.1875,
+        "height": 44,
         "width": 55.953125
       },
       {
         "class": "box-send",
-        "height": 46.375,
+        "height": 54.78125,
         "width": 54.75
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -1479,7 +1479,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -1503,34 +1503,34 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 16.796875,
+        "height": 44,
         "width": 370
       },
       {
         "class": "box-send",
-        "height": 46.375,
+        "height": 54.78125,
         "width": 54.75
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -1542,7 +1542,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -1554,8 +1554,8 @@
     },
     "answer": {
       "width": 370,
-      "height": 18.1875,
-      "scrollWidth": 1183,
+      "height": 72.75,
+      "scrollWidth": 370,
       "clientWidth": 370
     },
     "dialog": null,
@@ -1576,24 +1576,24 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 72.71875
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 100.34375
       },
       {
@@ -1603,27 +1603,27 @@
       },
       {
         "class": "",
-        "height": 28.1875,
+        "height": 44,
         "width": 134.984375
       },
       {
         "class": "",
-        "height": 28.1875,
+        "height": 44,
         "width": 126.828125
       },
       {
         "class": "box-send",
-        "height": 46.375,
+        "height": 54.78125,
         "width": 69.890625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -1635,7 +1635,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -1669,24 +1669,24 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 72.71875
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 100.34375
       },
       {
@@ -1696,27 +1696,27 @@
       },
       {
         "class": "",
-        "height": 28.1875,
+        "height": 44,
         "width": 134.984375
       },
       {
         "class": "",
-        "height": 28.1875,
+        "height": 44,
         "width": 126.828125
       },
       {
         "class": "box-send",
-        "height": 46.375,
+        "height": 54.78125,
         "width": 69.890625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -1728,7 +1728,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -1762,49 +1762,49 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 72.71875
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 100.34375
       },
       {
         "class": "",
-        "height": 28.1875,
+        "height": 44,
         "width": 56.703125
       },
       {
         "class": "",
-        "height": 28.1875,
+        "height": 44,
         "width": 55.953125
       },
       {
         "class": "box-send",
-        "height": 46.375,
+        "height": 54.78125,
         "width": 54.75
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
