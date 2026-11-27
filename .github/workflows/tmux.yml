@@ -28,6 +28,11 @@ on:
         description: Revision under test (defaults to this workflow revision)
         default: ''
         required: false
+      full_holder_3_3a:
+        description: Run all holder tests on tmux 3.3a
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -58,7 +63,7 @@ jobs:
     env:
       TMUX_VERSION: ${{ matrix.version }}
       TEST_COUNT: ${{ inputs.count || '1' }}
-      TEST_NAMES: ${{ matrix.tests || inputs.tests || '.' }}
+      TEST_NAMES: ${{ matrix.version == '3.3a' && inputs.full_holder_3_3a && '.' || matrix.tests || inputs.tests || '.' }}
     steps:
       - uses: actions/checkout@v4
         with:
