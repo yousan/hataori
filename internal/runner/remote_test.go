@@ -296,6 +296,14 @@ func TestRemoteRunnerLostInputReplyNeverRepeatsWrite(t *testing.T) {
 			f.run.Remotes["build"] = cfg
 			seedRemote(t, f, 1, "tool wait 600ms\nreply acknowledgment lost")
 			waitFor(t, "lost acknowledgment after worker wrote", 8*time.Second, lost.Load)
+			var delivery string
+			waitFor(t, "recorded uncertain outcome", 5*time.Second, func() bool {
+				err := f.st.DB.QueryRow(`SELECT state FROM session_machine_actions WHERE operation='input' ORDER BY id DESC LIMIT 1`).Scan(&delivery)
+				return err == nil && delivery != "pending"
+			})
+			if delivery != "unknown" {
+				t.Fatalf("post-effect lost reply became no-write proof: %s", delivery)
+			}
 			f.run.Close()
 			next := &Runner{Store: f.st, Machine: f.core.Machine, Adapters: f.run.Adapters, Root: f.root, Host: f.run.Host, Log: f.run.Log, Poll: 30 * time.Millisecond, Remotes: f.run.Remotes}
 			f.run = next
