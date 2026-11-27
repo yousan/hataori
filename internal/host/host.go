@@ -501,21 +501,22 @@ type request struct {
 }
 
 type response struct {
-	OK      bool          `json:"ok"`
-	Error   string        `json:"error,omitempty"`
-	PID     int           `json:"pid,omitempty"`
-	Already bool          `json:"already,omitempty"` // stop: nothing was running
-	ID      string        `json:"id,omitempty"`      // call: the call's id
-	Data    []byte        `json:"data,omitempty"`    // call: the answer
-	Calls   []WaitingCall `json:"calls,omitempty"`   // waiting: the calls that wait
-	Signals string        `json:"signals,omitempty"` // stop: the signals sent, in order
-	Run     string        `json:"run,omitempty"`     // follow, screen: the host's run
-	Pos     uint64        `json:"pos,omitempty"`     // follow, screen: the position after Data
-	Reset   bool          `json:"reset,omitempty"`   // follow: Data is the end of the log, not a continuation; screen: part of what followed After was dropped
-	Cols    int           `json:"cols,omitempty"`    // follow: the terminal's size, in the first answer and from a resize on
-	Rows    int           `json:"rows,omitempty"`
-	End     bool          `json:"end,omitempty"`    // follow: the terminal is closed and everything was sent
-	Device  string        `json:"device,omitempty"` // status: the terminal the command runs in; empty on pipes
+	Identity string        `json:"identity,omitempty"` // identity: the caller-reserved run, not a PID
+	OK       bool          `json:"ok"`
+	Error    string        `json:"error,omitempty"`
+	PID      int           `json:"pid,omitempty"`
+	Already  bool          `json:"already,omitempty"` // stop: nothing was running
+	ID       string        `json:"id,omitempty"`      // call: the call's id
+	Data     []byte        `json:"data,omitempty"`    // call: the answer
+	Calls    []WaitingCall `json:"calls,omitempty"`   // waiting: the calls that wait
+	Signals  string        `json:"signals,omitempty"` // stop: the signals sent, in order
+	Run      string        `json:"run,omitempty"`     // follow, screen: the host's run
+	Pos      uint64        `json:"pos,omitempty"`     // follow, screen: the position after Data
+	Reset    bool          `json:"reset,omitempty"`   // follow: Data is the end of the log, not a continuation; screen: part of what followed After was dropped
+	Cols     int           `json:"cols,omitempty"`    // follow: the terminal's size, in the first answer and from a resize on
+	Rows     int           `json:"rows,omitempty"`
+	End      bool          `json:"end,omitempty"`    // follow: the terminal is closed and everything was sent
+	Device   string        `json:"device,omitempty"` // status: the terminal the command runs in; empty on pipes
 	// Attached, for status, is how many terminals of people are attached;
 	// Detached is when the last one went, in Unix milliseconds, 0 for never.
 	Attached        int   `json:"attached,omitempty"`
@@ -601,6 +602,8 @@ func (h *host) reply(c net.Conn, enc *json.Encoder, req request) error {
 
 func (h *host) handle(req request) response {
 	switch req.Op {
+	case "identity":
+		return response{OK: true, Identity: h.spec.Identity}
 	case "input":
 		if h.spec.Relay {
 			return response{Error: errNoTerminal}

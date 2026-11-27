@@ -175,7 +175,8 @@ func (l *Lister) paste(ctx context.Context, pane, buffer string, k control.HostK
 		cctx, cancel := whole(ctx)
 		if raw {
 			_, err = l.exec(cctx, pasteBufferCmd, append(args, "-S")...)
-			if err != nil && strings.Contains(err.Error(), "unknown flag -S") {
+			if err != nil && (strings.Contains(err.Error(), "unknown flag -S") ||
+				strings.Contains(err.Error(), "usage: paste-buffer [-dpr] ")) {
 				l.noRawPaste.Store(true)
 				_, err = l.exec(cctx, pasteBufferCmd, args...)
 			}

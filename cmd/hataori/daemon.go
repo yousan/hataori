@@ -94,15 +94,17 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	}
 	agentName := cfg.Agent
 	// The scopes that name a supervisor (design, section 7.1). It runs on the
-	// default adapter.
+	// explicitly selected adapter, or the instance default.
 	supervisors := map[string]supervisor.Scope{}
 	for i, s := range cfg.Scopes {
 		sv := s.Supervisor
 		if sv == nil {
 			continue
 		}
-		if sv.Agent != "" && sv.Agent != agentName {
-			return fmt.Errorf("config: key %q: %q is not the default agent adapter %q", fmt.Sprintf("scopes[%d].supervisor.agent", i), sv.Agent, agentName)
+		if sv.Agent != "" {
+			if _, ok := adapters[sv.Agent]; !ok {
+				return fmt.Errorf("config: key %q: no configured agent adapter %q", fmt.Sprintf("scopes[%d].supervisor.agent", i), sv.Agent)
+			}
 		}
 		// Each entry must be an address a thread's workspace can be cloned
 		// from, as an order's repo: must.
@@ -113,7 +115,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 			}
 			repos = append(repos, supervisor.Repo{Address: r.Address, Forge: r.Forge})
 		}
-		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos,
+		supervisors[s.Key] = supervisor.Scope{Agent: sv.Agent, Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos,
 			Autonomy: sv.Autonomy, Trusted: sv.TrustedAuthors,
 			Limits:       supervisor.Limits{Turns: sv.TurnsPerHour, Sends: sv.SendsPerHour, Tokens: sv.TokensPerDay},
 			RemindersMax: sv.RemindersMax, Report: sv.Report, ReportEvery: sv.ReportEvery, Mention: sv.Mention, QuietHours: sv.QuietHours,
@@ -152,6 +154,13 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 		return err
 	}
 	defer st.Close()
+	bindings := make([]store.MachineBinding, 0, len(cfg.Machines))
+	for _, machine := range cfg.Machines {
+		bindings = append(bindings, store.MachineBinding{Key: machine.Key, SSH: machine.SSH, Root: machine.Root})
+	}
+	if err := st.SyncMachines(ctx, bindings); err != nil {
+		return err
+	}
 	lg := slog.New(slog.NewTextHandler(logOut, nil))
 	// Before anything reads a thread: existing threads get their first
 	// link, once (design, section 6.2).
@@ -176,6 +185,13 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 		Host: host.Command{Path: exe, Args: []string{"host"}}, Root: abs, Log: lg, IdlePeriod: cfg.Idle,
 		ContextBytes: cfg.ContextBytes, Cols: uint16(cfg.TerminalCols), Rows: uint16(cfg.TerminalRows)}
 	defer r.Close()
+	connections, err := startMachineConnections(ctx, abs, cfg, st, r)
+	if err != nil {
+		return err
+	}
+	if connections != nil {
+		defer connections.Close()
+	}
 	// The tmux windows hataori starts, with the "holder" key, are in tmux
 	// sessions named after the instance, so that two never meet; and those
 	// of windows people started are held with the same program.
@@ -213,7 +229,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	scopes := map[string]core.Scope{}
 	var keys []string
 	for _, s := range cfg.Scopes {
-		cs := core.Scope{Name: s.Name, Enabled: s.Enabled, Owner: s.Client, Agent: s.Agent, Model: s.Model, Effort: s.Effort, ShowIn: s.ShowIn}
+		cs := core.Scope{Name: s.Name, Enabled: s.Enabled, Owner: s.Client, Agent: s.Agent, Model: s.Model, Effort: s.Effort, ShowIn: s.ShowIn, Machines: s.Machines}
 		if s.Supervisor != nil {
 			cs.ConversationsAtOnce = s.Supervisor.ConversationsAtOnce
 		}
@@ -233,6 +249,11 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	c = &core.Core{Agents: agents, Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{}, People: cfg.People,
 		Workspaces: maker, Remover: remover, Restorer: remover,
 		Runner: r, Agent: agentName, Model: cfg.Model, Effort: cfg.Effort, Log: lg}
+	for _, machine := range cfg.Machines {
+		if machine.Key == instance.LocalMachine {
+			c.LocalAgents = machine.Agents
+		}
+	}
 	// Also for threads a supervisor started that the config no longer names.
 	c.SupervisorOf = supervisor.StartedBy
 	for _, s := range cfg.Scopes {

@@ -1,0 +1,1 @@
+{"kind":"request","id":"request-attach","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"attach","body":{"handle":"attachment-A","cols":80,"rows":24}}

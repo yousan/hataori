@@ -59,7 +59,7 @@ var EventKinds = map[EventKind][]Field{
 	// turn_ended: subagents are the ids of those of its background tasks that
 	// are subagents. Since 3.37.
 	"turn_ended": {req("session", Integer), req("turn", Integer), req("by", String), opt("principal", String), opt("from", String),
-		req("outcome", String), opt("reason", String), req("background", Integer), opt("subagents", Array)},
+		req("outcome", String), opt("reason", String), text("detail", String), req("background", Integer), opt("subagents", Array)},
 	// The chat front end's (#352): a row of its outbox was posted, or a
 	// plugin's message_sending handler cancelled it.
 	"post_sent": {req("link", Object), req("event", Integer), req("part", Integer), req("message", String), text("text", String)},
@@ -72,6 +72,8 @@ var EventKinds = map[EventKind][]Field{
 		opt("link", Object), text("before", String), text("after", String), opt("via", String)},
 	// input_failed: an accepted input never reached the agent, independently
 	// of any turn that happens to run. Since 3.42.
+	// input_waiting: a terminal handoff is delayed. Since 3.43.
+	"input_waiting": {req("session", Integer), req("input", String), req("reason", String)},
 	"input_failed": {req("session", Integer), req("input", String), req("reason", String), text("text", String),
 		opt("key", String), opt("principal", String), opt("from", String), opt("link", Object), opt("via", String)},
 	"answer": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),

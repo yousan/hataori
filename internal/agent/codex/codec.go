@@ -36,6 +36,8 @@ const DefaultInputTimeout = 30 * time.Second
 
 // Options configures a Codex codec.
 type Options struct {
+	// Loaded by Adapter.NewCodec; the codec itself performs no I/O.
+	confinedInstructions string
 	// Sandbox is the app-server sandbox policy; empty leaves its default.
 	Sandbox string
 	// ApprovalPolicy is the app-server approval policy; empty leaves its default.
@@ -60,6 +62,7 @@ type codec struct {
 	next         int             // next request id
 	requests     map[int]string  // outstanding request methods by id
 	session      string          // current thread id
+	pendingReady *agent.Event    // waits for current confined instructions to be injected
 	ready        bool            // the thread has been reported
 	closed       bool            // the session has ended
 	running      bool            // a turn is running or requested
@@ -79,7 +82,18 @@ func NewCodec(spec agent.Spec, opts Options) agent.Codec {
 	if opts.InputTimeout == 0 {
 		opts.InputTimeout = DefaultInputTimeout
 	}
-	return &codec{spec: spec, opts: opts, next: 1, requests: make(map[int]string)}
+	c := &codec{spec: spec, opts: opts, next: 1, requests: make(map[int]string)}
+	if spec.Confine != nil {
+		// A daemon reconnect replays stdout without calling Open. Reserve the
+		// same handshake ids so rate-limit response ordering cannot satisfy
+		// the current-instructions gate by accident.
+		c.next = 4
+		c.requests[1], c.requests[2], c.requests[3] = "initialize", "thread/start", RateLimitsRead
+		if spec.ResumeID != "" {
+			c.requests[2] = "thread/resume"
+		}
+	}
+	return c
 }
 
 // emit numbers and appends an event.
@@ -109,6 +123,14 @@ func (c *codec) Open() agent.Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var a agent.Actions
+	if c.spec.Confine != nil && c.opts.confinedInstructions == "" {
+		c.closed = true
+		c.emit(&a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
+		return a
+	}
+	if c.spec.Confine != nil {
+		c.next = 1 // Open emits the handshake reserved by NewCodec for replay.
+	}
 	c.write(&a, "initialize", map[string]any{"clientInfo": map[string]any{"name": "hataori", "version": "0"}, "capabilities": map[string]any{"experimentalApi": true}}, true)
 	c.write(&a, "initialized", map[string]any{}, false)
 	p := map[string]any{}
@@ -127,12 +149,27 @@ func (c *codec) Open() agent.Actions {
 	if c.opts.ApprovalPolicy != "" {
 		p["approvalPolicy"] = c.opts.ApprovalPolicy
 	}
+	if c.spec.Confine != nil {
+		// Keep the complete launch composition for initial context and rebuilds.
+		// Resume also needs the acknowledged injection below to refresh history.
+		p["developerInstructions"] = c.opts.confinedInstructions
+		p["sandbox"] = "read-only"
+		p["approvalPolicy"] = "never"
+		p["config"] = map[string]any{"features.stable_environment_tools": false}
+	}
 	method := "thread/start"
 	if c.spec.ResumeID != "" {
 		method = "thread/resume"
 		p["threadId"] = c.spec.ResumeID
 	} else if c.spec.Effort != "" {
-		p["config"] = map[string]any{"model_reasoning_effort": c.spec.Effort}
+		if config, ok := p["config"].(map[string]any); ok {
+			config["model_reasoning_effort"] = c.spec.Effort
+		} else {
+			p["config"] = map[string]any{"model_reasoning_effort": c.spec.Effort}
+		}
+	}
+	if c.spec.Confine != nil && method == "thread/start" {
+		p["environments"] = []any{}
 	}
 	c.write(&a, method, p, true)
 	c.readLimits(&a)
@@ -149,9 +186,12 @@ func (c *codec) flush(a *agent.Actions) {
 	}
 	in := c.queue[0]
 	c.queue = c.queue[1:]
-	p := map[string]any{"threadId": c.session, "input": []any{map[string]any{"type": "text", "text": in.Text}}}
+	p := map[string]any{"threadId": c.session, "input": []any{c.textInput(in.Text)}}
 	if c.spec.Effort != "" {
 		p["effort"] = c.spec.Effort
+	}
+	if c.spec.Confine != nil {
+		p["environments"] = []any{}
 	}
 	id := c.write(a, "turn/start", p, true)
 	a.Inputs = append(a.Inputs, in.ID)
@@ -230,6 +270,11 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 	defer c.mu.Unlock()
 	var a agent.Actions
 	if src != agent.Output {
+		return a
+	}
+	if c.spec.Confine != nil && c.opts.confinedInstructions == "" && !c.closed {
+		c.closed = true
+		c.emit(&a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
 		return a
 	}
 	var m message
@@ -334,6 +379,9 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 			}
 			c.closed = true
 			c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: reason})
+		case method == "thread/inject_items":
+			c.closed = true
+			c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
 		case method == "initialize" || method == "thread/start":
 			c.closed = true
 			c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: agent.Reason(msg)})
@@ -356,6 +404,19 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 		}
 		return
 	}
+	if method == "thread/inject_items" && c.pendingReady != nil && !c.closed {
+		var ack map[string]json.RawMessage
+		if json.Unmarshal(m.Result, &ack) != nil || ack == nil || len(ack) != 0 {
+			c.closed = true
+			c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
+			return
+		}
+		c.ready = true
+		c.emit(a, *c.pendingReady)
+		c.pendingReady = nil
+		c.flush(a)
+		return
+	}
 	delete(c.steers, id)
 	if method == "turn/steer" {
 		c.inputSteerAccepted(a, id)
@@ -376,9 +437,18 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 		}
 		c.model = r.Model
 		c.session = r.Thread.ID
-		c.ready = true
-		c.emit(a, agent.Event{Kind: agent.SessionReady, SessionID: c.session, Model: r.Model, Effort: r.Effort})
-		c.flush(a)
+		ready := agent.Event{Kind: agent.SessionReady, SessionID: c.session, Model: r.Model, Effort: r.Effort}
+		if c.spec.Confine != nil {
+			c.pendingReady = &ready
+			// Resume restores static instructions from history. Inject the current
+			// trusted composition into model-visible history before any turn.
+			text := "Current supervisor launch instructions replace earlier supervisor instruction snapshots. Preserve the layer precedence within this snapshot.\n\n" + c.opts.confinedInstructions
+			c.write(a, "thread/inject_items", map[string]any{"threadId": c.session, "items": []any{map[string]any{"type": "message", "role": "developer", "content": []any{map[string]any{"type": "input_text", "text": text}}}}}, true)
+		} else {
+			c.ready = true
+			c.emit(a, ready)
+			c.flush(a)
+		}
 	}
 	if r.Turn != nil {
 		for _, s := range c.sent {
@@ -444,7 +514,7 @@ func (c *codec) item(a *agent.Actions, p params, method string, line []byte) {
 			}
 			text := normalize(strings.Join(parts, ""))
 			for i, s := range c.sent {
-				if normalize(s.input.Text) == text {
+				if normalize(c.inputText(s.input.Text)) == text {
 					c.reportStart(a, agent.ByCaller, i)
 					return
 				}

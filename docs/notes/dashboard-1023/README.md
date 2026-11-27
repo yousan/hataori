@@ -70,8 +70,8 @@ Choose A: an accent edge acknowledges hover without repainting selected or typin
 
 ## Validation
 
-Pinned Node install/check (173 tests)/build, gofmt, go vet and focused page tests pass. Real synthetic mouse hover and keyboard focus checks fail on the baseline for density/view/filter/footer actions. They pass after the fix in both widths/themes, including disabled Send and modal controls; selected colors remain unchanged. Hover and keyboard-focus captures are included. Fresh Codex review is recorded separately. No local tmux tests.
+Pinned Node24.22.1: npm ci --ignore-scripts, complete npm check (173 tests) with Node test-concurrency=1, npm run build; generated page rebuilt after main integration. gofmt, go vet (Go p=1) and focused TestThePage tests (-parallel=1) pass. Thirty-eight refreshed synthetic captures cover24HTTP hover,4keyboard focus and10HTTPS Type/Operate/host cases at1440/390px in both themes. Actual pointer/keyboard checks verify hover, focus, disabled exclusion and preserved state colors; disposable synthetic certificates only. Baseline-failing evidence and prior concepts retained. No local tmux tests.
 
-Fresh independent Codex review: no findings; HTTPS Type/Operate and the floating Type prompt receive additional real pointer coverage.
+Fresh independent Codex review: landing_review_1023: fresh independent Codex source review after current-main integration found no actionable findings; ten CSS lines only, enabled hover and focus specificity preserve selected/danger/Type/Operate colors and disabled behavior, prior fixes and all input/permission semantics unchanged.
 
-Concurrency: Open PRs #1047, #1042, #1039, #1035, #1032, #1029, #1028, #1027, #1026, #1013 share styles.css/generated page files; each finding uses a separate source hunk and starts from current main. Old #990 shares CSS but is merged; remote branches were checked before the source edit.
+Concurrency: Resumed existing PR after rechecking open PRs and remote branches. Shared dashboard CSS/generated assets: #1054, #1013. Main 8d3aa556 is integrated; previous findings stay on main and only this finding remains in this PR’s diff.

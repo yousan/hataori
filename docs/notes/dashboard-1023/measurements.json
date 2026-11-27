@@ -108,7 +108,7 @@
       {
         "class": "box-send",
         "height": 46.375,
-        "width": 48.75
+        "width": 54.75
       },
       {
         "class": "passkeys-open",
@@ -399,23 +399,23 @@
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 509.453125
+        "height": 28.1875,
+        "width": 515.453125
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 128.984375
+        "height": 28.1875,
+        "width": 134.984375
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 120.828125
+        "height": 28.1875,
+        "width": 126.828125
       },
       {
         "class": "box-send",
         "height": 46.375,
-        "width": 63.890625
+        "width": 69.890625
       },
       {
         "class": "passkeys-open",
@@ -554,8 +554,8 @@
     "answer": null,
     "dialog": {
       "width": 512,
-      "height": 155.78125,
-      "scrollWidth": 676,
+      "height": 172.578125,
+      "scrollWidth": 510,
       "clientWidth": 510
     },
     "tableTitle": {
@@ -950,7 +950,7 @@
       {
         "class": "box-send",
         "height": 46.375,
-        "width": 48.75
+        "width": 54.75
       },
       {
         "class": "passkeys-open",
@@ -1241,23 +1241,23 @@
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 509.453125
+        "height": 28.1875,
+        "width": 515.453125
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 128.984375
+        "height": 28.1875,
+        "width": 134.984375
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 120.828125
+        "height": 28.1875,
+        "width": 126.828125
       },
       {
         "class": "box-send",
         "height": 46.375,
-        "width": 63.890625
+        "width": 69.890625
       },
       {
         "class": "passkeys-open",
@@ -1396,8 +1396,8 @@
     "answer": null,
     "dialog": {
       "width": 512,
-      "height": 155.78125,
-      "scrollWidth": 676,
+      "height": 172.578125,
+      "scrollWidth": 510,
       "clientWidth": 510
     },
     "tableTitle": {
@@ -1690,7 +1690,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -1714,34 +1714,34 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 16.796875,
+        "height": 44,
         "width": 370
       },
       {
         "class": "box-send",
-        "height": 46.375,
-        "width": 48.75
+        "height": 54.78125,
+        "width": 54.75
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -1754,7 +1754,7 @@
     "inputs": [],
     "filter": {
       "width": 364,
-      "height": 24.1875,
+      "height": 44,
       "scrollWidth": 364,
       "clientWidth": 364
     },
@@ -1778,79 +1778,79 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "",
-        "height": 24.1875,
+        "height": 44,
         "width": 58.21875
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 33.125
+        "height": 44,
+        "width": 44
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -1865,7 +1865,7 @@
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -1875,12 +1875,12 @@
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -1892,7 +1892,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -1926,54 +1926,54 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 72.71875
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 100.34375
       },
       {
         "class": "",
-        "height": 42.375,
+        "height": 46.375,
         "width": 370
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 128.984375
+        "height": 44,
+        "width": 134.984375
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 120.828125
+        "height": 44,
+        "width": 126.828125
       },
       {
         "class": "box-send",
-        "height": 46.375,
-        "width": 63.890625
+        "height": 54.78125,
+        "width": 69.890625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -2005,24 +2005,24 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -2035,7 +2035,7 @@
     "inputs": [],
     "filter": {
       "width": 364,
-      "height": 24.1875,
+      "height": 44,
       "scrollWidth": 364,
       "clientWidth": 364
     },
@@ -2043,7 +2043,7 @@
     "answer": null,
     "dialog": {
       "width": 358,
-      "height": 214.171875,
+      "height": 256.578125,
       "scrollWidth": 356,
       "clientWidth": 356
     },
@@ -2064,79 +2064,79 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "",
-        "height": 24.1875,
+        "height": 44,
         "width": 58.21875
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 33.125
+        "height": 44,
+        "width": 44
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -2151,7 +2151,7 @@
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -2161,22 +2161,22 @@
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 66.703125
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 50.703125
       }
     ]
@@ -2188,7 +2188,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -2212,49 +2212,49 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 72.71875
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 100.34375
       },
       {
         "class": "",
-        "height": 22.1875,
+        "height": 44,
         "width": 99.859375
       },
       {
         "class": "",
-        "height": 24.1875,
+        "height": 44,
         "width": 60.046875
       },
       {
         "class": "box-send",
-        "height": 46.375,
-        "width": 48.75
+        "height": 54.78125,
+        "width": 54.75
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -2266,7 +2266,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -2290,34 +2290,34 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 16.796875,
+        "height": 44,
         "width": 370
       },
       {
         "class": "box-send",
-        "height": 46.375,
-        "width": 48.75
+        "height": 54.78125,
+        "width": 54.75
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -2330,7 +2330,7 @@
     "inputs": [],
     "filter": {
       "width": 364,
-      "height": 24.1875,
+      "height": 44,
       "scrollWidth": 364,
       "clientWidth": 364
     },
@@ -2354,79 +2354,79 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "",
-        "height": 24.1875,
+        "height": 44,
         "width": 58.21875
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 33.125
+        "height": 44,
+        "width": 44
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -2441,7 +2441,7 @@
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -2451,12 +2451,12 @@
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -2468,7 +2468,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -2502,54 +2502,54 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 72.71875
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 100.34375
       },
       {
         "class": "",
-        "height": 42.375,
+        "height": 46.375,
         "width": 370
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 128.984375
+        "height": 44,
+        "width": 134.984375
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 120.828125
+        "height": 44,
+        "width": 126.828125
       },
       {
         "class": "box-send",
-        "height": 46.375,
-        "width": 63.890625
+        "height": 54.78125,
+        "width": 69.890625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -2581,24 +2581,24 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -2611,7 +2611,7 @@
     "inputs": [],
     "filter": {
       "width": 364,
-      "height": 24.1875,
+      "height": 44,
       "scrollWidth": 364,
       "clientWidth": 364
     },
@@ -2619,7 +2619,7 @@
     "answer": null,
     "dialog": {
       "width": 358,
-      "height": 214.171875,
+      "height": 256.578125,
       "scrollWidth": 356,
       "clientWidth": 356
     },
@@ -2640,79 +2640,79 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "",
-        "height": 24.1875,
+        "height": 44,
         "width": 58.21875
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 33.125
+        "height": 44,
+        "width": 44
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 40.984375,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "row",
-        "height": 24.1875,
+        "height": 44,
         "width": 390
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -2727,7 +2727,7 @@
       },
       {
         "class": "",
-        "height": 32.796875,
+        "height": 44,
         "width": 390
       },
       {
@@ -2737,22 +2737,22 @@
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 66.703125
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 50.703125
       }
     ]
@@ -2764,7 +2764,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -2788,15 +2788,163 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 99.859375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 60.046875
+      },
+      {
+        "class": "box-send",
+        "height": 54.78125,
+        "width": 54.75
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "question",
+    "width": 1440,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "13px"
+      }
+    ],
+    "filter": null,
+    "question": {
+      "width": 275,
+      "height": 191.5,
+      "scrollWidth": 273,
+      "clientWidth": 273
+    },
+    "answer": {
+      "width": 788,
+      "height": 18.1875,
+      "scrollWidth": 788,
+      "clientWidth": 788
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 840.203125,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
       },
       {
         "class": "",
@@ -2810,18 +2958,23 @@
       },
       {
         "class": "",
-        "height": 22.1875,
-        "width": 99.859375
+        "height": 28.1875,
+        "width": 515.453125
       },
       {
         "class": "",
-        "height": 24.1875,
-        "width": 60.046875
+        "height": 28.1875,
+        "width": 134.984375
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 126.828125
       },
       {
         "class": "box-send",
         "height": 46.375,
-        "width": 48.75
+        "width": 69.890625
       },
       {
         "class": "passkeys-open",
@@ -2831,6 +2984,345 @@
       {
         "class": "passkeys-open",
         "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "question",
+    "width": 1440,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "13px"
+      }
+    ],
+    "filter": null,
+    "question": {
+      "width": 275,
+      "height": 191.5,
+      "scrollWidth": 273,
+      "clientWidth": 273
+    },
+    "answer": {
+      "width": 788,
+      "height": 18.1875,
+      "scrollWidth": 788,
+      "clientWidth": 788
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 840.203125,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 515.453125
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 134.984375
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 126.828125
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 69.890625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "question",
+    "width": 390,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "16px"
+      }
+    ],
+    "filter": null,
+    "question": {
+      "width": 370,
+      "height": 213.375,
+      "scrollWidth": 368,
+      "clientWidth": 368
+    },
+    "answer": {
+      "width": 370,
+      "height": 18.1875,
+      "scrollWidth": 370,
+      "clientWidth": 370
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 106.59375,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 44,
+        "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 46.375,
+        "width": 370
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 134.984375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 126.828125
+      },
+      {
+        "class": "box-send",
+        "height": 54.78125,
+        "width": 69.890625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "question",
+    "width": 390,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "16px"
+      }
+    ],
+    "filter": null,
+    "question": {
+      "width": 370,
+      "height": 213.375,
+      "scrollWidth": 368,
+      "clientWidth": 368
+    },
+    "answer": {
+      "width": 370,
+      "height": 18.1875,
+      "scrollWidth": 370,
+      "clientWidth": 370
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 106.59375,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 44,
+        "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 46.375,
+        "width": 370
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 134.984375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 126.828125
+      },
+      {
+        "class": "box-send",
+        "height": 54.78125,
+        "width": 69.890625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -2967,8 +3459,7 @@
         "height": 18.796875,
         "width": 67.8125
       }
-    ],
-    "transport": "https"
+    ]
   },
   {
     "name": "running",
@@ -3097,8 +3588,7 @@
         "height": 18.796875,
         "width": 67.8125
       }
-    ],
-    "transport": "https"
+    ]
   },
   {
     "name": "host",
@@ -3212,8 +3702,7 @@
         "height": 18.796875,
         "width": 67.8125
       }
-    ],
-    "transport": "https"
+    ]
   },
   {
     "name": "typeprompt",
@@ -3347,8 +3836,7 @@
         "height": 18.796875,
         "width": 67.8125
       }
-    ],
-    "transport": "https"
+    ]
   },
   {
     "name": "running",
@@ -3477,8 +3965,7 @@
         "height": 18.796875,
         "width": 67.8125
       }
-    ],
-    "transport": "https"
+    ]
   },
   {
     "name": "host",
@@ -3592,8 +4079,7 @@
         "height": 18.796875,
         "width": 67.8125
       }
-    ],
-    "transport": "https"
+    ]
   },
   {
     "name": "running",
@@ -3602,7 +4088,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -3626,48 +4112,47 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 72.71875
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 100.34375
       },
       {
         "class": "stop-button",
-        "height": 22.1875,
+        "height": 44,
         "width": 110.234375
       },
       {
         "class": "box-send",
-        "height": 46.375,
-        "width": 48.75
+        "height": 54.78125,
+        "width": 54.75
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
-    ],
-    "transport": "https"
+    ]
   },
   {
     "name": "host",
@@ -3696,28 +4181,27 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
-    ],
-    "transport": "https"
+    ]
   },
   {
     "name": "running",
@@ -3726,7 +4210,7 @@
     "lang": "en",
     "inputs": [
       {
-        "font": "13px"
+        "font": "16px"
       }
     ],
     "filter": null,
@@ -3750,48 +4234,47 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 72.71875
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 100.34375
       },
       {
         "class": "stop-button",
-        "height": 22.1875,
+        "height": 44,
         "width": 110.234375
       },
       {
         "class": "box-send",
-        "height": 46.375,
-        "width": 48.75
+        "height": 54.78125,
+        "width": 54.75
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
-    ],
-    "transport": "https"
+    ]
   },
   {
     "name": "host",
@@ -3820,27 +4303,26 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
-    ],
-    "transport": "https"
+    ]
   }
 ]

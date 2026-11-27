@@ -114,35 +114,55 @@ func (a *Adapter) Launch(spec agent.Spec) (agent.Launch, error) {
 	if !filepath.IsAbs(spec.Dir) || !utf8.ValidString(spec.Dir) {
 		return agent.Launch{}, fmt.Errorf("%s: workspace %q must be an absolute UTF-8 path", Name, spec.Dir)
 	}
-	return agent.Launch{Argv: []string{a.command, "app-server", "-c", "projects={" + tomlString(spec.Dir) + "={trust_level=\"trusted\"}}"}, Env: a.env()}, nil
+	if spec.Confine != nil {
+		return a.confinedLaunch(spec)
+	}
+	return agent.Launch{Argv: []string{a.command, "app-server", "-c", "projects={" + tomlString(spec.Dir) + "={trust_level=\"trusted\"}}"}, Env: a.sessionEnv(spec)}, nil
 }
 
 var _ agent.LoginDirs = (*Adapter)(nil)
 
-// LoginDir is always "": every session runs with the daemon's CODEX_HOME.
-func (a *Adapter) LoginDir(agent.Spec) string { return "" }
+// LoginDir identifies an explicit configuration separate from the default.
+func (a *Adapter) LoginDir(spec agent.Spec) string { return spec.ConfigDir }
+
+func (a *Adapter) sessionEnv(spec agent.Spec) []string {
+	env := a.env()
+	if spec.ConfigDir == "" {
+		return env
+	}
+	out := make([]string, 0, len(env)+1)
+	for _, value := range env {
+		if !strings.HasPrefix(value, "CODEX_HOME=") {
+			out = append(out, value)
+		}
+	}
+	return append(out, "CODEX_HOME="+spec.ConfigDir)
+}
 
 // Probe runs only --version and login status, which read and change nothing.
-func (a *Adapter) Probe(ctx context.Context, _ agent.Spec) (agent.Health, error) {
+func (a *Adapter) Probe(ctx context.Context, spec agent.Spec) (agent.Health, error) {
 	var h agent.Health
-	out, _, err := a.run(ctx, "--version")
+	out, _, err := a.run(ctx, spec, "--version")
 	if err != nil {
+		h.Unknown = !errors.Is(err, exec.ErrNotFound) && !errors.Is(err, os.ErrNotExist)
 		h.Detail = "not installed: " + err.Error()
 		return h, nil
 	}
 	h.Installed = true
 	h.Version = strings.TrimPrefix(strings.TrimSpace(string(out)), "codex-cli ")
-	_, stderr, err := a.run(ctx, "login", "status")
+	_, stderr, err := a.run(ctx, spec, "login", "status")
 	if err == nil {
 		h.LoggedIn = true
 	} else {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
+			h.Unknown = ctx.Err() != nil || exit.ExitCode() != 1
 			h.Detail = strings.TrimSpace(string(stderr))
 			if h.Detail == "" {
 				h.Detail = "not logged in"
 			}
 		} else {
+			h.Unknown = true
 			h.Detail = err.Error()
 		}
 	}
@@ -150,11 +170,11 @@ func (a *Adapter) Probe(ctx context.Context, _ agent.Spec) (agent.Health, error)
 }
 
 // run executes a probe with the session environment in the temporary directory.
-func (a *Adapter) run(ctx context.Context, args ...string) ([]byte, []byte, error) {
+func (a *Adapter) run(ctx context.Context, spec agent.Spec, args ...string) ([]byte, []byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, a.command, args...)
-	cmd.Env = a.env()
+	cmd.Env = a.sessionEnv(spec)
 	cmd.Dir = os.TempDir()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -164,5 +184,16 @@ func (a *Adapter) run(ctx context.Context, args ...string) ([]byte, []byte, erro
 
 // NewCodec returns a codec configured with the adapter's policies.
 func (a *Adapter) NewCodec(spec agent.Spec) agent.Codec {
-	return NewCodec(spec, Options{Sandbox: a.sandbox, ApprovalPolicy: a.approvalPolicy})
+	opts := Options{Sandbox: a.sandbox, ApprovalPolicy: a.approvalPolicy}
+	if spec.Confine != nil {
+		opts.confinedInstructions = readConfinedInstructions(spec.StateDir)
+	}
+	return NewCodec(spec, opts)
+}
+
+// ForWorker excludes ambient pass_env credentials from both probes and launches.
+func (a *Adapter) ForWorker() agent.Adapter {
+	copy := *a
+	copy.passEnv = nil
+	return &copy
 }

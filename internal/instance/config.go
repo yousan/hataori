@@ -47,6 +47,9 @@ type Config struct {
 	// agent no longer has (section 4.5). "context_bytes"; 8192 when absent.
 	ContextBytes int
 	Scopes       []Scope
+	// Machines includes the implicit local machine. These are configuration
+	// and identity records; worker execution and placement are separate.
+	Machines []Machine
 	// LoginRelay is whether a login outage starts the agent's login
 	// command for the owner (section 4.7); "login_relay": false switches it
 	// off, and the alert stays.
@@ -114,6 +117,9 @@ type Scope struct {
 	Model   string   // default model; empty for the agent's own default
 	Effort  string   // default effort; empty for the agent's own default
 	People  []string // names of the people who may act here besides the owner
+	// Machines restricts ordinary starts. Nil permits all configured machines;
+	// a non-nil empty list permits none. Confined threads stay local.
+	Machines []string
 	// ShowIn lists the channels, besides the scope's own, where its threads
 	// may be shown, each as "<client>:<channel>" (design, section 5.2).
 	ShowIn []string
@@ -134,7 +140,7 @@ type Scope struct {
 // Supervisor is the "supervisor" section of a scope.
 type Supervisor struct {
 	Agent        string // "agent": the adapter that runs it; the instance's when empty
-	Model        string // "model": what the default agent's model order gives a thread of the scope when empty
+	Model        string // "model": the selected agent's model order when empty
 	Effort       string // "effort": supervisor.DefaultEffort when empty
 	Instructions string // "instructions": the config's instructions, last in the config's layer of the supervisor's (#656)
 	// Quiet is how long the supervisor's waker waits after the first event
@@ -416,6 +422,7 @@ type fileConfig struct {
 	Holder     string                     `json:"holder"`
 	TermSize   *fileTerminalSize          `json:"terminal_size"`
 	Scopes     []fileScope                `json:"scopes"`
+	Machines   []fileMachine              `json:"machines"`
 	Dashboard  *fileDashboard             `json:"dashboard"`
 	Cleanup    *fileCleanup               `json:"cleanup"`
 	Forges     map[string]json.RawMessage `json:"forges"`
@@ -449,6 +456,7 @@ type fileScope struct {
 	Supervisor *fileSupervisor `json:"supervisor"`
 	ShowIn     []string        `json:"show_in"`
 	TrustFiles []string        `json:"trust_files"`
+	Machines   []string        `json:"machines"`
 	// ArchiveWhenAsleep is "archive_when_asleep".
 	ArchiveWhenAsleep bool `json:"archive_when_asleep"`
 }
@@ -600,6 +608,9 @@ func ParseConfig(data []byte) (*Config, error) {
 	if c.Cleanup, err = cleanup(f.Cleanup); err != nil {
 		return nil, err
 	}
+	if c.Machines, err = machineConfig(f.Machines, c.Adapters); err != nil {
+		return nil, err
+	}
 
 	seen := map[string]bool{}
 	for i, s := range f.Scopes {
@@ -614,6 +625,9 @@ func ParseConfig(data []byte) (*Config, error) {
 			ArchiveWhenAsleep: s.ArchiveWhenAsleep,
 			Model:             strings.TrimSpace(s.Model),
 			Effort:            strings.TrimSpace(s.Effort),
+		}
+		if sc.Machines, err = machineReferences(s.Machines, c.Machines, key+".machines"); err != nil {
+			return nil, err
 		}
 		if sc.Agent != "" {
 			if _, ok := c.Adapters[sc.Agent]; !ok {

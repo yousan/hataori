@@ -1,0 +1,1 @@
+{"kind":"refusal","id":"request-health","binding":{"main":"main-A","worker":"worker-A"},"op":"future","body":{"code":"unsupported_operation","message":"operation is not supported"}}
