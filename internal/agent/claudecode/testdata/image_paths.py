@@ -205,7 +205,14 @@ SCENARIOS = {
 def main():
     out = os.path.abspath(sys.argv[1])
     os.makedirs(out, exist_ok=True)
-    version = subprocess.run(["claude", "--version"], capture_output=True, text=True, check=True).stdout.strip()
+    # The version probe must use no user configuration either.
+    with tempfile.TemporaryDirectory(prefix="capture-config-") as config:
+        env = {k: os.environ[k] for k in ("PATH", "USER", "LOGNAME", "LANG", "LC_ALL", "SHELL", "TMPDIR") if k in os.environ}
+        env.update({"HOME": config, "CLAUDE_CONFIG_DIR": config, "BROWSER": "true",
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
+                    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "false"})
+        version = subprocess.run(["claude", "--version"], env=env, cwd=config,
+                                 capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(out, "VERSION"), "w") as f:
         f.write("%s\n%s\n" % (version, time.strftime("%Y-%m-%d")))
     for name, how in SCENARIOS.items():
