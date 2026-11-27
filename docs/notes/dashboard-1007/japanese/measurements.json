@@ -1,0 +1,1528 @@
+[
+  {
+    "name": "filter",
+    "width": 1440,
+    "theme": "light",
+    "lang": "ja",
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 1120,
+      "height": 34,
+      "scrollWidth": 1120,
+      "clientWidth": 1120
+    },
+    "pane": {
+      "width": 1120,
+      "height": 840.203125,
+      "scrollWidth": 1120,
+      "clientWidth": 1120
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 79
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 39
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 118
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 25.328125
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 110
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 62
+      }
+    ]
+  },
+  {
+    "name": "question",
+    "width": 1440,
+    "theme": "light",
+    "lang": "ja",
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 840.203125,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 79
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 39
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 118
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 82
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 45
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 509.453125
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 128.984375
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 120.828125
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 42
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 110
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 62
+      }
+    ]
+  },
+  {
+    "name": "passkeys",
+    "width": 1440,
+    "theme": "light",
+    "lang": "ja",
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 1120,
+      "height": 34,
+      "scrollWidth": 1120,
+      "clientWidth": 1120
+    },
+    "pane": {
+      "width": 1120,
+      "height": 840.203125,
+      "scrollWidth": 1120,
+      "clientWidth": 1120
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 79
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 39
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 118
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 25.328125
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 110
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 62
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 42
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 54
+      }
+    ]
+  },
+  {
+    "name": "filter",
+    "width": 1440,
+    "theme": "dark",
+    "lang": "ja",
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 1120,
+      "height": 34,
+      "scrollWidth": 1120,
+      "clientWidth": 1120
+    },
+    "pane": {
+      "width": 1120,
+      "height": 840.203125,
+      "scrollWidth": 1120,
+      "clientWidth": 1120
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 79
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 39
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 118
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 25.328125
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 110
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 62
+      }
+    ]
+  },
+  {
+    "name": "question",
+    "width": 1440,
+    "theme": "dark",
+    "lang": "ja",
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 840.203125,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 79
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 39
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 118
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 82
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 45
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 509.453125
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 128.984375
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 120.828125
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 42
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 110
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 62
+      }
+    ]
+  },
+  {
+    "name": "passkeys",
+    "width": 1440,
+    "theme": "dark",
+    "lang": "ja",
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 1120,
+      "height": 34,
+      "scrollWidth": 1120,
+      "clientWidth": 1120
+    },
+    "pane": {
+      "width": 1120,
+      "height": 840.203125,
+      "scrollWidth": 1120,
+      "clientWidth": 1120
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 79
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 39
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 118
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 17.703125
+      },
+      {
+        "class": "row-open",
+        "height": 16.796875,
+        "width": 25.328125
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 110
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 62
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 42
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 54
+      }
+    ]
+  },
+  {
+    "name": "filter",
+    "width": 390,
+    "theme": "light",
+    "lang": "ja",
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 110.1875,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 96.9375,
+        "width": 37.28125
+      },
+      {
+        "class": "",
+        "height": 60.5625,
+        "width": 30
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "",
+        "height": 32.796875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "",
+        "height": 32.796875,
+        "width": 390
+      },
+      {
+        "class": "row host-row",
+        "height": 46.984375,
+        "width": 390
+      },
+      {
+        "class": "",
+        "height": 32.796875,
+        "width": 390
+      },
+      {
+        "class": "row host-row",
+        "height": 46.984375,
+        "width": 390
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 110
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 62
+      }
+    ]
+  },
+  {
+    "name": "question",
+    "width": 390,
+    "theme": "light",
+    "lang": "ja",
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 110.1875,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 28.1875,
+        "width": 87
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 82
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 45
+      },
+      {
+        "class": "",
+        "height": 42.375,
+        "width": 370
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 128.984375
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 120.828125
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 42
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 110
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 62
+      }
+    ]
+  },
+  {
+    "name": "passkeys",
+    "width": 390,
+    "theme": "light",
+    "lang": "ja",
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 110.1875,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 83
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 56
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "",
+        "height": 32.796875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "",
+        "height": 32.796875,
+        "width": 390
+      },
+      {
+        "class": "row host-row",
+        "height": 46.984375,
+        "width": 390
+      },
+      {
+        "class": "row host-row",
+        "height": 46.984375,
+        "width": 390
+      },
+      {
+        "class": "",
+        "height": 32.796875,
+        "width": 390
+      },
+      {
+        "class": "row host-row",
+        "height": 46.984375,
+        "width": 390
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 110
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 62
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 42
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 54
+      }
+    ]
+  },
+  {
+    "name": "filter",
+    "width": 390,
+    "theme": "dark",
+    "lang": "ja",
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 110.1875,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 96.9375,
+        "width": 37.28125
+      },
+      {
+        "class": "",
+        "height": 60.5625,
+        "width": 30
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "",
+        "height": 32.796875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "",
+        "height": 32.796875,
+        "width": 390
+      },
+      {
+        "class": "row host-row",
+        "height": 46.984375,
+        "width": 390
+      },
+      {
+        "class": "",
+        "height": 32.796875,
+        "width": 390
+      },
+      {
+        "class": "row host-row",
+        "height": 46.984375,
+        "width": 390
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 110
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 62
+      }
+    ]
+  },
+  {
+    "name": "question",
+    "width": 390,
+    "theme": "dark",
+    "lang": "ja",
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 110.1875,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 28.1875,
+        "width": 87
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 82
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 45
+      },
+      {
+        "class": "",
+        "height": 42.375,
+        "width": 370
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 128.984375
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 120.828125
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 42
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 110
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 62
+      }
+    ]
+  },
+  {
+    "name": "passkeys",
+    "width": 390,
+    "theme": "dark",
+    "lang": "ja",
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 110.1875,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 83
+      },
+      {
+        "class": "",
+        "height": 24.1875,
+        "width": 56
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 40.984375,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "",
+        "height": 32.796875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "row",
+        "height": 24.1875,
+        "width": 390
+      },
+      {
+        "class": "",
+        "height": 32.796875,
+        "width": 390
+      },
+      {
+        "class": "row host-row",
+        "height": 46.984375,
+        "width": 390
+      },
+      {
+        "class": "row host-row",
+        "height": 46.984375,
+        "width": 390
+      },
+      {
+        "class": "",
+        "height": 32.796875,
+        "width": 390
+      },
+      {
+        "class": "row host-row",
+        "height": 46.984375,
+        "width": 390
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 110
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 62
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 42
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 54
+      }
+    ]
+  }
+]
