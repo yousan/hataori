@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -495,5 +496,179 @@ func TestAwayHeldAnswerSurvivesClosedMainDatabase(t *testing.T) {
 	f.st.DB.QueryRow(`SELECT count(*) FROM session_machine_actions WHERE operation='answer' AND state='complete'`).Scan(&replies)
 	if held != 1 || notices != 1 || replies != 1 {
 		t.Fatalf("answer/notice duplicated across DB restart: %d %d %d", held, notices, replies)
+	}
+}
+
+func TestAwayRefusedReceiptAndWrittenMarkerCommitAtomically(t *testing.T) {
+	f := placementRecordFixture(t)
+	for _, q := range []string{
+		`INSERT INTO threads(id,scope,key,started_by,state,created_at,updated_at,machine) VALUES(1,'s','atomic-receipt','owner','running',1,1,'local')`,
+		`INSERT INTO sessions(id,thread_id,agent,state,created_at,updated_at) VALUES(1,1,'fake','running',1,1)`,
+		`INSERT INTO pending_inputs(id,session_id,request,data,context,written) VALUES(1,1,'','{}','',2)`,
+		`INSERT INTO session_machine_actions(id,session_id,run,operation,key,request,state,inputs) VALUES(1,1,'run','input','effect','{}','unknown','["1"]')`,
+		`CREATE TRIGGER reject_unmark BEFORE UPDATE OF written ON pending_inputs WHEN NEW.written=0 BEGIN SELECT RAISE(ABORT,'isolated commit boundary'); END`,
+	} {
+		if _, err := f.st.DB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lv := &live{id: 1}
+	if err := f.run.recordActionResolution(lv, 1, `["1"]`, "refused"); err == nil {
+		t.Fatal("fixture boundary did not abort resolution")
+	}
+	var state string
+	var written int
+	f.st.DB.QueryRow(`SELECT state FROM session_machine_actions WHERE id=1`).Scan(&state)
+	f.st.DB.QueryRow(`SELECT written FROM pending_inputs WHERE id=1`).Scan(&written)
+	if state != "unknown" || written != 2 {
+		t.Fatalf("partial resolution committed: %s %d", state, written)
+	}
+	if _, err := f.st.DB.Exec(`DROP TRIGGER reject_unmark`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.recordActionResolution(lv, 1, `["1"]`, "refused"); !errors.Is(err, core.ErrMachineUnchecked) {
+		t.Fatalf("codec reconstruction was not required: %v", err)
+	}
+	f.st.DB.QueryRow(`SELECT state FROM session_machine_actions WHERE id=1`).Scan(&state)
+	f.st.DB.QueryRow(`SELECT written FROM pending_inputs WHERE id=1`).Scan(&written)
+	if state != "refused" || written != 0 || !lv.warmPending {
+		t.Fatalf("correlated no-effect resolution incomplete: %s %d %v", state, written, lv.warmPending)
+	}
+}
+
+type awayHiddenReceipt struct {
+	net.Conn
+	reader    *bufio.Reader
+	hide      *atomic.Bool
+	observed  *atomic.Bool
+	receipt   bool
+	remaining []byte
+}
+
+func (c *awayHiddenReceipt) Write(b []byte) (int, error) {
+	var m workerproto.Message
+	if json.Unmarshal(b, &m) == nil && m.Op == "receipt" {
+		c.receipt = true
+	}
+	return c.Conn.Write(b)
+}
+func (c *awayHiddenReceipt) Read(b []byte) (int, error) {
+	if len(c.remaining) == 0 {
+		if c.reader == nil {
+			c.reader = bufio.NewReader(c.Conn)
+		}
+		data, err := c.reader.ReadBytes('\n')
+		if err != nil {
+			return 0, err
+		}
+		if c.receipt && c.hide.Load() {
+			var m workerproto.Message
+			if err := json.Unmarshal(data, &m); err != nil {
+				return 0, err
+			}
+			m.Kind = "refusal"
+			m.Body = json.RawMessage(`{"code":"not_found","message":"isolated missing receipt after effect"}`)
+			data, err = workerproto.Encode(m)
+			if err != nil {
+				return 0, err
+			}
+			c.observed.Store(true)
+		}
+		c.remaining = data
+	}
+	n := copy(b, c.remaining)
+	c.remaining = c.remaining[n:]
+	return n, nil
+}
+
+func TestAwayMissingReceiptAfterAppliedWriteNeverAllowsRetry(t *testing.T) {
+	f, _ := remoteFixture(t, false)
+	enableFixtureAway(t, f)
+	cfg := f.run.Remotes["build"]
+	open := cfg.Open
+	var lost, hidden, hide atomic.Bool
+	hide.Store(true)
+	cfg.Open = func(ctx context.Context) (net.Conn, *workerproto.Connection, error) {
+		c, p, err := open(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &awayHiddenReceipt{Conn: &lostWorkerReply{Conn: c, lost: &lost}, hide: &hide, observed: &hidden}, p, nil
+	}
+	f.run.Remotes["build"] = cfg
+	seedRemote(t, f, 1, "tool wait 3s\nreply acknowledgment lost")
+	waitFor(t, "applied write with lost reply", 8*time.Second, lost.Load)
+	waitFor(t, "missing receipt was queried", 8*time.Second, hidden.Load)
+	f.run.Close()
+	var state string
+	if err := f.st.DB.QueryRow(`SELECT state FROM session_machine_actions WHERE operation='input' ORDER BY id DESC LIMIT 1`).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "unknown" {
+		t.Fatalf("missing receipt became no-write proof: %s", state)
+	}
+	a, err := f.run.MachineAvailability(context.Background(), "build")
+	if err != nil || a.State == "ready" {
+		t.Fatalf("unresolved effect allowed dispatch: %+v %v", a, err)
+	}
+	hide.Store(false)
+	next := &Runner{Store: f.st, Machine: f.core.Machine, Adapters: f.run.Adapters, Root: f.root, Host: f.run.Host, Log: f.run.Log, Poll: 20 * time.Millisecond, Remotes: f.run.Remotes, AwayEnabled: true, AwayGrace: 25 * time.Millisecond, RevalidatePending: f.core.RevalidatePending, RevalidateInitial: f.core.RevalidateInitial}
+	f.run = next
+	f.core.Runner = next
+	if err := next.Reconnect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "original applied input completed", 8*time.Second, f.has("turn_ended", 1))
+	waitFor(t, "original receipt reconciled", 8*time.Second, func() bool {
+		a, err := next.MachineAvailability(context.Background(), "build")
+		return err == nil && a.State == "ready"
+	})
+	if got := counts(t, f.st); got["turn_started"] != 1 || got["turn_ended"] != 1 {
+		t.Fatalf("unknown input repeated: %v", got)
+	}
+}
+
+func TestAwayStartAndBackgroundKeepRemainingActiveTime(t *testing.T) {
+	f := placementRecordFixture(t)
+	ctx := context.Background()
+	if err := f.st.SyncMachines(ctx, []store.MachineBinding{{Key: "build", SSH: "fixture", Root: "/fixture"}}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for _, q := range []string{
+		`INSERT INTO threads(id,scope,key,started_by,state,created_at,updated_at,machine) VALUES(1,'s','start-budget','owner','creating',1,1,'build')`,
+		`INSERT INTO sessions(id,thread_id,agent,state,spec,created_at,updated_at) VALUES(1,1,'fake','creating','',1,1)`,
+		`INSERT INTO turns(id,session_id,started_by,started_at,ended_at,status,background) VALUES(1,1,'person',1,2,'failure',2)`,
+	} {
+		if _, err := f.st.DB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	began := now.Add(-2 * time.Hour)
+	if _, err := f.st.DB.Exec(`UPDATE sessions SET updated_at=? WHERE id=1`, began.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.st.DB.Exec(`INSERT INTO session_pauses(session_id,began_at,ended_at) VALUES(1,?,?)`, began.Add(time.Second).UnixMilli(), now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	f.run.AwayEnabled = true
+	f.run.StartTimeout = 30 * time.Second
+	f.run.BackgroundWait = 30 * time.Second
+	f.run.Remotes = map[string]RemoteMachine{"build": {Connection: func() Connection { return Connection{Connected: true, Token: "timer-ready"} }}}
+	lv := &live{id: 1, remote: true, dir: StateDir(f.root, 1), started: began}
+	f.run.checkStart(lv)
+	var state string
+	f.st.DB.QueryRow(`SELECT state FROM sessions WHERE id=1`).Scan(&state)
+	if state != "creating" || lv.failed {
+		t.Fatalf("start budget counted absence: %s", state)
+	}
+	if err := f.st.Update(ctx, func(tx *store.Tx) error {
+		n, _, err := f.run.background(ctx, tx, 1)
+		if err == nil && n != 2 {
+			t.Fatalf("background budget counted absence: %d", n)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

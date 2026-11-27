@@ -12,6 +12,7 @@ import (
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/machineio"
 	"github.com/yousan/hataori/internal/store"
 )
 
@@ -276,55 +277,79 @@ func (r *Runner) actionInputs(lv *live, inputs []string) []string {
 // the accepted answer; it never retries API acceptance or answers another hook.
 func (r *Runner) refusePendingAnswer(sid, pending int64) error {
 	ctx := context.Background()
-	return r.Store.Update(ctx, func(tx *store.Tx) error {
-		var held int64
-		var id control.ThreadID
-		err := tx.QueryRowContext(ctx, `SELECT p.held_action,s.thread_id FROM pending_inputs p JOIN sessions s ON s.id=p.session_id WHERE p.id=? AND p.session_id=?`, pending, sid).Scan(&held, &id)
-		if err == sql.ErrNoRows {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		reason := "the original request no longer accepts this answer; no replacement request was answered"
-		if held != 0 {
-			if _, err := tx.ExecContext(ctx, `UPDATE machine_held_actions SET state='refused',reason=? WHERE id=?`, reason, held); err != nil {
-				return err
-			}
-		}
-		data, _ := json.Marshal(map[string]any{"action": "answer", "state": "refused", "reason": reason})
-		if _, err := tx.Append(ctx, control.Event{Thread: id, Kind: "machine_action", Time: time.Now(), Data: data}); err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE id=? AND session_id=?`, pending, sid)
+	return r.Store.Update(ctx, func(tx *store.Tx) error { return r.refusePendingAnswerTx(ctx, tx, sid, pending) })
+}
+
+func (r *Runner) refusePendingAnswerTx(ctx context.Context, tx *store.Tx, sid, pending int64) error {
+	var held int64
+	var id control.ThreadID
+	err := tx.QueryRowContext(ctx, `SELECT p.held_action,s.thread_id FROM pending_inputs p JOIN sessions s ON s.id=p.session_id WHERE p.id=? AND p.session_id=?`, pending, sid).Scan(&held, &id)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
 		return err
-	})
+	}
+	reason := "the original request no longer accepts this answer; no replacement request was answered"
+	if held != 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE machine_held_actions SET state='refused',reason=? WHERE id=?`, reason, held); err != nil {
+			return err
+		}
+	}
+	data, _ := json.Marshal(map[string]any{"action": "answer", "state": "refused", "reason": reason})
+	if _, err := tx.Append(ctx, control.Event{Thread: id, Kind: "machine_action", Time: time.Now(), Data: data}); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE id=? AND session_id=?`, pending, sid)
+	return err
 }
 
 func (r *Runner) resolveActionInputs(lv *live, raw, state string) error {
+	return r.recordActionResolution(lv, 0, raw, state)
+}
+
+// The correlated receipt and all local delivery markers form one commit.
+// Missing, pending and unknown receipts never reach this path.
+func (r *Runner) recordActionResolution(lv *live, action int64, raw, state string) error {
+	if state != "complete" && state != "refused" {
+		return machineio.ErrUnknown
+	}
 	var inputs []string
 	if err := json.Unmarshal([]byte(raw), &inputs); err != nil {
 		return err
 	}
 	var unsent []string
-	for _, in := range inputs {
-		if value, ok := strings.CutPrefix(in, "answer:"); ok {
-			id, err := strconv.ParseInt(value, 10, 64)
-			if err != nil {
+	ctx := context.Background()
+	err := r.Store.Update(ctx, func(tx *store.Tx) error {
+		if action != 0 {
+			if _, err := tx.ExecContext(ctx, `UPDATE session_machine_actions SET state=? WHERE id=?`, state, action); err != nil {
 				return err
 			}
-			if state == "complete" {
-				r.dropPending(id)
-			} else if err := r.refusePendingAnswer(lv.id, id); err != nil {
-				return err
-			}
-		} else if state == "refused" {
-			unsent = append(unsent, in)
 		}
+		for _, in := range inputs {
+			if value, ok := strings.CutPrefix(in, "answer:"); ok {
+				id, err := strconv.ParseInt(value, 10, 64)
+				if err != nil {
+					return err
+				}
+				if state == "complete" {
+					if _, err := tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE id=? AND session_id=?`, id, lv.id); err != nil {
+						return err
+					}
+				} else if err := r.refusePendingAnswerTx(ctx, tx, lv.id, id); err != nil {
+					return err
+				}
+			} else if state == "refused" {
+				unsent = append(unsent, in)
+			}
+		}
+		return r.setWrittenTx(ctx, tx, lv, unsent, false, nil)
+	})
+	if err != nil {
+		return err
 	}
 	if len(unsent) > 0 {
-		r.unmarkWritten(lv, unsent)
-		lv.warmPending = true // discard read-only Written provenance before retry
+		lv.warmPending = true
 		return core.ErrMachineUnchecked
 	}
 	return nil

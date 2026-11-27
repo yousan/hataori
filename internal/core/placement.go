@@ -438,8 +438,9 @@ func (c *Core) uncertainLocalLaunch(ctx context.Context, sid int64) bool {
 }
 
 // RevalidatePlacementLaunch runs before either recovering an unfinished launch
-// or reconnecting a completed launch with unsent first input. Resource admission
-// is separate: reconnecting an already owned host consumes no new room.
+// or reconnecting a local launch with unsent first input. Completed worker
+// hosts stay monitored; their input authority is checked after catch-up instead.
+// Resource admission is separate: an owned host consumes no new room.
 func (c *Core) RevalidatePlacementLaunch(ctx context.Context, sid int64) (bool, error) {
 	if c.Placement == nil {
 		return true, nil

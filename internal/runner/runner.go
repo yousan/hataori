@@ -1296,52 +1296,55 @@ const writtenNow = 2
 
 func (r *Runner) setWritten(lv *live, ids []string, written bool, text map[string]string) error {
 	err := r.Store.Update(context.Background(), func(tx *store.Tx) error {
-		ctx := context.Background()
-		for _, id := range ids {
-			var writtenText *string
-			if t, ok := text[id]; written && ok {
-				writtenText = &t
-			}
-			if id == firstInputID {
-				var fi string
-				if err := tx.QueryRowContext(ctx, `SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi); err != nil {
-					return err
-				}
-				var f firstInput
-				if fi == "" || json.Unmarshal([]byte(fi), &f) != nil {
-					continue
-				}
-				f.Written, f.Current, f.WrittenText = written, written, writtenText
-				if written && f.WrittenAt == 0 {
-					f.WrittenAt = time.Now().UnixMilli()
-				}
-				if !written {
-					f.WrittenAt = 0
-				}
-				b, _ := json.Marshal(f)
-				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(b), lv.id); err != nil {
-					return err
-				}
-				continue
-			}
-			row, err := strconv.ParseInt(id, 10, 64)
-			if err != nil {
-				continue // not one of ours
-			}
-			mark := 0
-			if written {
-				mark = writtenNow
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ?, written_text = ?, written_at=CASE WHEN ?=0 THEN 0 WHEN written_at=0 THEN ? ELSE written_at END WHERE id = ? AND session_id = ?`, mark, writtenText, mark, time.Now().UnixMilli(), row, lv.id); err != nil {
-				return err
-			}
-		}
-		return nil
+		return r.setWrittenTx(context.Background(), tx, lv, ids, written, text)
 	})
 	if err != nil {
 		r.Log.Error("marking input written", "session", lv.id, "err", err)
 	}
 	return err
+}
+
+func (r *Runner) setWrittenTx(ctx context.Context, tx *store.Tx, lv *live, ids []string, written bool, text map[string]string) error {
+	for _, id := range ids {
+		var writtenText *string
+		if t, ok := text[id]; written && ok {
+			writtenText = &t
+		}
+		if id == firstInputID {
+			var fi string
+			if err := tx.QueryRowContext(ctx, `SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi); err != nil {
+				return err
+			}
+			var f firstInput
+			if fi == "" || json.Unmarshal([]byte(fi), &f) != nil {
+				continue
+			}
+			f.Written, f.Current, f.WrittenText = written, written, writtenText
+			if written && f.WrittenAt == 0 {
+				f.WrittenAt = time.Now().UnixMilli()
+			}
+			if !written {
+				f.WrittenAt = 0
+			}
+			b, _ := json.Marshal(f)
+			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(b), lv.id); err != nil {
+				return err
+			}
+			continue
+		}
+		row, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			continue // not one of ours
+		}
+		mark := 0
+		if written {
+			mark = writtenNow
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ?, written_text = ?, written_at=CASE WHEN ?=0 THEN 0 WHEN written_at=0 THEN ? ELSE written_at END WHERE id = ? AND session_id = ?`, mark, writtenText, mark, time.Now().UnixMilli(), row, lv.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // handOver carries out what the codec makes of one pending input or

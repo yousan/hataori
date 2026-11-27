@@ -568,13 +568,8 @@ func (r *Runner) reconcileMachineActions(lv *live) error {
 		if err != nil {
 			var refusal *workerproto.Refusal
 			if errors.As(err, &refusal) && refusal.Code == "not_found" {
-				if _, e := r.Store.DB.Exec(`UPDATE session_machine_actions SET state='refused' WHERE id=?`, a.id); e != nil {
-					return e
-				}
-				if e := r.resolveActionInputs(lv, a.inputs, "refused"); e != nil {
-					return e
-				}
-				continue
+				// Missing receipt is not proof the write did not occur.
+				return machineio.ErrUnknown
 			}
 			return err
 		}
@@ -588,10 +583,7 @@ func (r *Runner) reconcileMachineActions(lv *live) error {
 		if receipt.State != "complete" && receipt.State != "refused" {
 			return machineio.ErrUnknown
 		}
-		if _, err := r.Store.DB.Exec(`UPDATE session_machine_actions SET state=? WHERE id=?`, receipt.State, a.id); err != nil {
-			return err
-		}
-		if err := r.resolveActionInputs(lv, a.inputs, receipt.State); err != nil {
+		if err := r.recordActionResolution(lv, a.id, a.inputs, receipt.State); err != nil {
 			return err
 		}
 	}

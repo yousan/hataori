@@ -20,6 +20,10 @@ cases = [
  ("worker hook real clock", "internal/runner/away.go", 'if c, ok := lv.codec.(agent.ClockedTicker); ok {', 'if c, ok := lv.codec.(agent.ClockedTicker); ok && false {', './internal/runner', '^TestAwayNewNativeHookUsesWallClockAfterPause$'),
  ("accepted answer visible refusal", "internal/runner/runner.go", 'if err != nil && answer {', 'if false && err != nil && answer {', './internal/runner', '^TestAwayAcceptedAnswerRefusalIsDurable/codec_expired$'),
 
+ ("missing receipt preserves uncertainty", "internal/runner/machines.go", '// Missing receipt is not proof the write did not occur.\n\t\t\t\treturn machineio.ErrUnknown', 'if err:=r.recordActionResolution(lv,a.id,a.inputs,"refused");err!=nil{return err}; continue', './internal/runner', '^TestAwayMissingReceiptAfterAppliedWriteNeverAllowsRetry$'),
+
+ ("receipt and input marker atomic commit", "internal/runner/away.go", 'var unsent []string\n\tctx := context.Background()\n\terr := r.Store.Update', 'var unsent []string\n\tctx := context.Background()\n if action!=0 {if _,err:=r.Store.DB.ExecContext(ctx,`UPDATE session_machine_actions SET state=? WHERE id=?`,state,action);err!=nil{return err}}\n\terr := r.Store.Update', './internal/runner', '^TestAwayRefusedReceiptAndWrittenMarkerCommitAtomically$'),
+
 ]
 # The gone check appears twice; remove both to cover both warm and new reads.
 selected=set(sys.argv[1:])
