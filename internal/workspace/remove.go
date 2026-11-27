@@ -123,6 +123,10 @@ type Remover struct {
 	// OtherRoots are the other hataori roots on this host. A remote under
 	// any of them, or under Maker.Root, does not count.
 	OtherRoots []string
+	// AuthorizeProof optionally requires operator-classified independence for
+	// every proof URL, including nested repositories and effective rewrites.
+	// It is nil for existing local cleanup; workers require it.
+	AuthorizeProof func(context.Context, string, string) error
 	// Retention is how long an entry stays in trash before the purge
 	// deletes it. The purge refuses to run with zero.
 	Retention time.Duration
@@ -1353,6 +1357,15 @@ func (c *checker) commits(g *reader, rp repo) error {
 		if err != nil {
 			return err
 		}
+		if c.r.AuthorizeProof != nil {
+			raw, err := g.line(c.ctx, "config", "--get-all", "remote."+name+".url")
+			if err != nil {
+				return err
+			}
+			if err := c.r.AuthorizeProof(c.ctx, raw, u); err != nil {
+				return c.refuse(rp, RemoteUnresolved, "proof destination is not independently classified")
+			}
+		}
 		addr, reason := c.localRemote(u, rp.dir)
 		if reason != "" {
 			if skipped == nil {
@@ -2056,6 +2069,9 @@ func (c *checker) ask(g *reader, rp repo, urls []string) (tips, scratch string, 
 	if err := os.WriteFile(filepath.Join(scratch, "objects", "info", "alternates"), []byte(objects+"\n"), 0o600); err != nil {
 		return "", scratch, nil, err
 	}
+	if c.r.AuthorizeProof != nil {
+		s.set("http.followRedirects", "false")
+	}
 	for i, u := range urls {
 		// git rewrites the address again by url.<base>.insteadOf: what
 		// was checked must be what is fetched.
@@ -2067,6 +2083,14 @@ func (c *checker) ask(g *reader, rp repo, urls []string) (tips, scratch string, 
 				rewritten = &Refusal{Reason: RemoteUnresolved, Repo: rp.rel, Kind: rp.kind, Detail: "remote " + redact(u) + " is rewritten to " + redact(got)}
 			}
 			continue
+		}
+		if c.r.AuthorizeProof != nil {
+			// An exact URL setting also overrides more specific worker-global
+			// HTTP configuration; the generic setting alone is insufficient.
+			s.set("http."+u+".followRedirects", "false")
+			if err := c.r.AuthorizeProof(c.ctx, u, u); err != nil {
+				return "", scratch, nil, err
+			}
 		}
 		if _, _, err := s.run(c.ctx, "-c", "gc.auto=0", "-c", "maintenance.auto=false",
 			"fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules",

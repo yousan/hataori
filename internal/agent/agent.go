@@ -77,12 +77,24 @@ type LoginStep struct {
 	Refused   string // the command rejected a code, with its text
 }
 
+// WorkerAdapters can build a worker-local adapter without ambient pass_env
+// additions. Probes and launches retain only the adapter's fixed user/login
+// environment. A resident refuses adapters without this contract.
+// Explicit adapter-owned configuration is still local operator authority.
+type WorkerAdapters interface {
+	ForWorker() Adapter
+}
+
 // Health is the result of Probe.
 type Health struct {
 	Installed bool
 	LoggedIn  bool
-	Version   string
-	Detail    string // why not, when either is false
+	// Unknown means the probe could not establish installation/login state.
+	// Installed may still be true when only the login check was inconclusive.
+	// It never means logged out, and cannot authorize new work.
+	Unknown bool
+	Version string
+	Detail  string // why not, when either is false
 }
 
 // Launch is everything the session host needs to start an agent.
@@ -413,6 +425,11 @@ type Event struct {
 
 	StartedBy Starter // TurnStarted
 	Input     string  // TurnStarted, InputTaken: the Input.ID of the input this turn reports; TurnEnded with NotDelivered or NotTaken: of the input never reported; TurnEnded with Interrupted: of the input that is not written any more; "" when none or not known
+
+	// RetainInput, on TurnEnded, keeps Input pending for a later report even
+	// though the turn failed. Its text may still be in the terminal editor;
+	// reconnecting must preserve the codec's protection against appending to it.
+	RetainInput bool
 
 	Tool string // ToolStarted, ToolEnded: the tool's name or label; SubagentStarted, SubagentEnded: the subagent's name or type
 	ID   string // ToolStarted, ToolEnded, SubagentStarted, SubagentEnded: pairs start and end
