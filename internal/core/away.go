@@ -421,7 +421,7 @@ func (c *Core) DispatchHeld(ctx context.Context) error {
 		if err := c.Store.DB.QueryRowContext(ctx, `SELECT state FROM machine_held_actions WHERE id=?`, v.id).Scan(&receipt); err != nil {
 			return err
 		}
-		if receipt == "dispatched" {
+		if receipt == "dispatched" || receipt == "refused" {
 			continue
 		}
 		if errors.Is(cause, ErrBusy) || errors.Is(cause, ErrMachineUnchecked) {
@@ -452,7 +452,7 @@ func (c *Core) DispatchHeld(ctx context.Context) error {
 // acceptHeld commits the normal API acceptance and absence-queue receipt in
 // the same transaction. "dispatched" means handed to the durable input queue;
 // agent delivery continues to use the original pending input/effect receipt.
-func (a *api) acceptHeld(ctx context.Context, tx *store.Tx) error {
+func (a *api) acceptHeld(ctx context.Context, tx *store.Tx, pending int64) error {
 	if a.heldActionID == 0 {
 		return nil
 	}
@@ -463,6 +463,11 @@ func (a *api) acceptHeld(ctx context.Context, tx *store.Tx) error {
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE machine_held_actions SET state='dispatched',reason='' WHERE id=?`, a.heldActionID); err != nil {
 		return err
+	}
+	if pending > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET held_action=? WHERE id=?`, a.heldActionID, pending); err != nil {
+			return err
+		}
 	}
 	data, _ := json.Marshal(map[string]any{"action": kind, "state": "dispatched", "reason": ""})
 	_, err := tx.Append(ctx, control.Event{Thread: id, Kind: "machine_action", Time: time.Now(), Data: data})

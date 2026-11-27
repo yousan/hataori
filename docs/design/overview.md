@@ -3546,7 +3546,8 @@ became idle during catch-up. Rejected initial input is archived with provenance 
 completed host keeps launch zero, its follower, binding and reservation. Only the
 initial input's recorded caller turn may end on withdrawal. Regrant never revives
 that archived input.
-`agent.Input.WrittenAt` restores the original active delivery clock after codec
+`agent.ClockedTicker.TickClocks(active, wall)` separates paused codec delivery
+deadlines from real worker-hook expiry. `agent.Input.WrittenAt` restores the original active delivery clock after codec
 reconstruction; durable write timestamps and pause intervals preserve the remaining
 budget across reconnect and main restart. `agent.HookReconciler` optionally withdraws requests whose original host hooks
 are no longer waiting; native pipe questions keep their own protocol semantics.
@@ -3554,6 +3555,11 @@ are no longer waiting; native pipe questions keep their own protocol semantics.
 identity/version/inventory probing succeeds again. Public protocol 3.47 carries
 availability/action events and `action_held`; worker protocol remains independently
 1.3 because its existing inventory/receipt/waiting-hook contract is unchanged.
+Accepted answer receipts are linked to pending inputs. Terminal codec/worker
+refusals are durable and visible; complete receipts retire the original pending
+answer, while unresolved receipts block catch-up completion. Written provenance
+is restored before decoding buffered output, and acknowledgements retire input
+during catch-up without dispatching new work.
 No actual macOS worker runtime support follows from these fixtures or CI.
 
 ## Appendix E: acceptance criteria after phase 1

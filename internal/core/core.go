@@ -2513,7 +2513,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				return err
 			}
 			if accepted {
-				return a.acceptHeld(ctx, tx)
+				return a.acceptHeld(ctx, tx, pending)
 			}
 			return nil
 		})
@@ -2769,7 +2769,7 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 		if err == nil {
 			err = a.c.keepPendingAuthority(ctx, tx, pending, a.caller, control.OpAnswer)
 			if err == nil {
-				err = a.acceptHeld(ctx, tx)
+				err = a.acceptHeld(ctx, tx, pending)
 			}
 		}
 		return err

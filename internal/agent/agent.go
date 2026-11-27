@@ -184,6 +184,12 @@ type InputRefuser interface {
 	RefuseInput(ids []string, reason Reason) Actions
 }
 
+// ClockedTicker separates paused main delivery deadlines from a worker hook's
+// wall-clock expiry. Other codecs use Tick with the active clock alone.
+type ClockedTicker interface {
+	TickClocks(active, wall time.Time) Actions
+}
+
 // HookReconciler withdraws requests whose original waiting host hook expired.
 // The caller supplies only a verified inventory of this session's live hooks,
 // after draining retained output. Native pipe requests do not implement it.

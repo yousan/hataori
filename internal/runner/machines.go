@@ -465,7 +465,7 @@ func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) (result
 			failed(true)
 			return err
 		}
-		if err := r.machineEffect(ctx, lv.id, remote, m, a.Inputs...); err != nil {
+		if err := r.machineEffect(ctx, lv.id, remote, m, r.actionInputs(lv, a.Inputs)...); err != nil {
 			var nothing *holder.NotSent
 			failed(errors.As(err, &nothing))
 			return err
@@ -492,7 +492,7 @@ func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) (result
 		if err != nil {
 			return err
 		}
-		if err := r.machineEffect(ctx, lv.id, remote, m); err != nil {
+		if err := r.machineEffect(ctx, lv.id, remote, m, r.actionInputs(lv, nil)...); err != nil {
 			return err
 		}
 	}
@@ -530,7 +530,7 @@ func (r *Runner) reconcileMachineActions(lv *live) error {
 		return nil
 	}
 	ctx := context.Background()
-	rows, err := r.Store.DB.Query(`SELECT id,request,inputs FROM session_machine_actions WHERE session_id=? AND run=? AND state IN ('pending','unknown') ORDER BY id`, lv.id, remote.Target.Run)
+	rows, err := r.Store.DB.Query(`SELECT id,request,inputs FROM session_machine_actions WHERE session_id=? AND run=? AND (state IN ('pending','unknown') OR EXISTS(SELECT 1 FROM json_each(session_machine_actions.inputs) j JOIN pending_inputs p ON j.value='answer:'||p.id)) ORDER BY id`, lv.id, remote.Target.Run)
 	if err != nil {
 		return err
 	}
@@ -568,6 +568,12 @@ func (r *Runner) reconcileMachineActions(lv *live) error {
 		if err != nil {
 			var refusal *workerproto.Refusal
 			if errors.As(err, &refusal) && refusal.Code == "not_found" {
+				if _, e := r.Store.DB.Exec(`UPDATE session_machine_actions SET state='refused' WHERE id=?`, a.id); e != nil {
+					return e
+				}
+				if e := r.resolveActionInputs(lv, a.inputs, "refused"); e != nil {
+					return e
+				}
 				continue
 			}
 			return err
@@ -579,12 +585,13 @@ func (r *Runner) reconcileMachineActions(lv *live) error {
 		if err := workerproto.CheckReceipt(original, receipt); err != nil {
 			return err
 		}
-		if receipt.State == "refused" {
-			var inputs []string
-			json.Unmarshal([]byte(a.inputs), &inputs)
-			r.unmarkWritten(lv, inputs)
+		if receipt.State != "complete" && receipt.State != "refused" {
+			return machineio.ErrUnknown
 		}
 		if _, err := r.Store.DB.Exec(`UPDATE session_machine_actions SET state=? WHERE id=?`, receipt.State, a.id); err != nil {
+			return err
+		}
+		if err := r.resolveActionInputs(lv, a.inputs, receipt.State); err != nil {
 			return err
 		}
 	}

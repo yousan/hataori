@@ -2,7 +2,11 @@ package runner
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
@@ -251,4 +255,77 @@ func (r *Runner) writtenClock(lv *live, at int64) time.Time {
 		return r.codecNow(lv)
 	}
 	return r.codecNow(lv).Add(-elapsed)
+}
+
+func (r *Runner) tickCodec(lv *live) agent.Actions {
+	if c, ok := lv.codec.(agent.ClockedTicker); ok {
+		return c.TickClocks(r.codecNow(lv), time.Now())
+	}
+	return lv.codec.Tick(r.codecNow(lv))
+}
+
+func (r *Runner) actionInputs(lv *live, inputs []string) []string {
+	out := append([]string{}, inputs...)
+	if lv.answerPending != 0 {
+		out = append(out, "answer:"+strconv.FormatInt(lv.answerPending, 10))
+	}
+	return out
+}
+
+// refusePendingAnswer records a terminal codec/receipt refusal before retiring
+// the accepted answer; it never retries API acceptance or answers another hook.
+func (r *Runner) refusePendingAnswer(sid, pending int64) error {
+	ctx := context.Background()
+	return r.Store.Update(ctx, func(tx *store.Tx) error {
+		var held int64
+		var id control.ThreadID
+		err := tx.QueryRowContext(ctx, `SELECT p.held_action,s.thread_id FROM pending_inputs p JOIN sessions s ON s.id=p.session_id WHERE p.id=? AND p.session_id=?`, pending, sid).Scan(&held, &id)
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		reason := "the original request no longer accepts this answer; no replacement request was answered"
+		if held != 0 {
+			if _, err := tx.ExecContext(ctx, `UPDATE machine_held_actions SET state='refused',reason=? WHERE id=?`, reason, held); err != nil {
+				return err
+			}
+		}
+		data, _ := json.Marshal(map[string]any{"action": "answer", "state": "refused", "reason": reason})
+		if _, err := tx.Append(ctx, control.Event{Thread: id, Kind: "machine_action", Time: time.Now(), Data: data}); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE id=? AND session_id=?`, pending, sid)
+		return err
+	})
+}
+
+func (r *Runner) resolveActionInputs(lv *live, raw, state string) error {
+	var inputs []string
+	if err := json.Unmarshal([]byte(raw), &inputs); err != nil {
+		return err
+	}
+	var unsent []string
+	for _, in := range inputs {
+		if value, ok := strings.CutPrefix(in, "answer:"); ok {
+			id, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return err
+			}
+			if state == "complete" {
+				r.dropPending(id)
+			} else if err := r.refusePendingAnswer(lv.id, id); err != nil {
+				return err
+			}
+		} else if state == "refused" {
+			unsent = append(unsent, in)
+		}
+	}
+	if len(unsent) > 0 {
+		r.unmarkWritten(lv, unsent)
+		lv.warmPending = true // discard read-only Written provenance before retry
+		return core.ErrMachineUnchecked
+	}
+	return nil
 }

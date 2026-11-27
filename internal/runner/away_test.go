@@ -37,9 +37,9 @@ func TestAwayExpiredWorkerHookIsWithdrawnBeforeHeldAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	f, _ := remoteFixture(t, true, func(c *fake.Config) { c.Hataori = wrapper })
+	c := enableFixtureAway(t, f)
 	seedRemote(t, f, 1, "ask colour\ntool wait 30s\nreply after question")
 	waitFor(t, "actual waiting worker hook", 5*time.Second, f.has("request", 1))
-	c := enableFixtureAway(t, f)
 	ctx := context.Background()
 	var request string
 	if err := f.st.DB.QueryRow(`SELECT handle FROM requests WHERE state='open'`).Scan(&request); err != nil {
@@ -93,9 +93,10 @@ func enableFixtureAway(t *testing.T, f *fixture) *fixtureConnection {
 	f.core.Away = &core.MachineAway{Status: func(ctx context.Context, key string) (control.MachineAvailability, error) {
 		return f.run.MachineAvailability(ctx, key)
 	}, Caller: func(_ context.Context, old control.Caller, scope, repo string) (control.Caller, error) {
-		return control.Caller{Principal: old.Principal, From: old.From, Via: old.Via, Scopes: []string{scope}, May: control.OpRead | control.OpSend | control.OpAnswer | control.OpStop}, nil
+		return control.Caller{Principal: old.Principal, From: old.From, Via: old.Via, Scopes: []string{scope}, May: all}, nil
 	}}
 	f.run.RevalidatePending = f.core.RevalidatePending
+	f.run.RevalidateInitial = f.core.RevalidateInitial
 	t.Cleanup(func() { c.connected.Store(true) })
 	waitFor(t, "initial current-generation catch-up", 5*time.Second, func() bool {
 		a, err := f.run.MachineAvailability(context.Background(), "build")
@@ -106,9 +107,9 @@ func enableFixtureAway(t *testing.T, f *fixture) *fixtureConnection {
 
 func TestAwayResidentRestartDrainsBeforeHeldInputAndStaleStop(t *testing.T) {
 	f, _ := remoteFixture(t, false)
+	c := enableFixtureAway(t, f)
 	seedRemote(t, f, 1, "tool wait 3s\nreply buffered before reconnect")
 	waitFor(t, "original worker turn", 5*time.Second, f.has("turn_started", 1))
-	c := enableFixtureAway(t, f)
 	ctx := context.Background()
 	var turn int64
 	f.st.DB.QueryRow(`SELECT max(id) FROM turns WHERE session_id=1`).Scan(&turn)
@@ -382,5 +383,117 @@ func TestAwayRevokedPendingInputPreservesEventSequence(t *testing.T) {
 	}
 	if lv.seq != 7 || counts(t, f.st)["turn_started"] != 1 {
 		t.Fatalf("next real event dropped: %d %v", lv.seq, counts(t, f.st))
+	}
+}
+
+func TestAwayAcceptedAnswerRefusalIsDurable(t *testing.T) {
+	for _, outcome := range []string{"codec expired", "complete receipt", "refused receipt"} {
+		t.Run(outcome, func(t *testing.T) {
+			f := placementRecordFixture(t)
+			for _, q := range []string{
+				`INSERT INTO threads(id,scope,key,started_by,state,created_at,updated_at,machine) VALUES(1,'s','answer-refusal','owner','running',1,1,'local')`,
+				`INSERT INTO sessions(id,thread_id,agent,state,created_at,updated_at) VALUES(1,1,'fake','running',1,1)`,
+				`INSERT INTO machine_held_actions(id,thread_id,session_id,run,turn,request,kind,key,data,state,created_at) VALUES(1,1,1,'run',1,'q1','answer','q1','{}','dispatched',1)`,
+				`INSERT INTO pending_inputs(id,session_id,request,data,context,held_action) VALUES(1,1,'q1','{}','',1)`,
+			} {
+				if _, err := f.st.DB.Exec(q); err != nil {
+					t.Fatal(err)
+				}
+			}
+			lv := &live{id: 1}
+			if outcome == "codec expired" {
+				if err := f.run.handOver(lv, 1, true, func() (agent.Actions, error) { return agent.Actions{}, errors.New("original request expired") }); err == nil {
+					t.Fatal("expired request unexpectedly accepted")
+				}
+			} else {
+				state := "complete"
+				if outcome == "refused receipt" {
+					state = "refused"
+				}
+				if err := f.run.resolveActionInputs(lv, `["answer:1"]`, state); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var pending int
+			var state string
+			f.st.DB.QueryRow(`SELECT count(*) FROM pending_inputs`).Scan(&pending)
+			f.st.DB.QueryRow(`SELECT state FROM machine_held_actions WHERE id=1`).Scan(&state)
+			want := "refused"
+			if outcome == "complete receipt" {
+				want = "dispatched"
+			}
+			if pending != 0 || state != want {
+				t.Fatalf("terminal answer outcome lost: %d %s", pending, state)
+			}
+			if want == "refused" && counts(t, f.st)["machine_action"] != 1 {
+				t.Fatal("accepted answer refusal was invisible")
+			}
+		})
+	}
+}
+
+func TestAwayHeldAnswerSurvivesClosedMainDatabase(t *testing.T) {
+	var reopened *store.Store
+	// Register first so the resident's own-host cleanup runs while the new DB
+	// is still open; no synthetic PID cleanup or process-name signalling.
+	t.Cleanup(func() {
+		if reopened != nil {
+			reopened.Close()
+		}
+	})
+	f, _ := remoteFixture(t, true)
+	c := enableFixtureAway(t, f)
+	seedRemote(t, f, 1, "ask colour\nreply resumed answer")
+	waitFor(t, "worker question before cut", 5*time.Second, f.has("request", 1))
+	ctx := context.Background()
+	var request string
+	if err := f.st.DB.QueryRow(`SELECT handle FROM requests WHERE state='open'`).Scan(&request); err != nil {
+		t.Fatal(err)
+	}
+	c.connected.Store(false)
+	for i := 0; i < 2; i++ {
+		if err := owner(f.core).Answer(ctx, control.RequestID(request), control.Answer{Text: "red"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.run.Close()
+	if err := f.st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	reopened, err = store.Open(ctx, f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.st = reopened
+	f.core.Store = reopened
+	f.core.Machine.Store = reopened
+	next := &Runner{Store: reopened, Machine: f.core.Machine, Adapters: f.run.Adapters, Root: f.root, Host: f.run.Host, Log: f.run.Log, Poll: 20 * time.Millisecond, Remotes: f.run.Remotes, AwayEnabled: true, AwayGrace: 25 * time.Millisecond, RevalidatePending: f.core.RevalidatePending, RevalidateInitial: f.core.RevalidateInitial}
+	f.run = next
+	f.core.Runner = next
+	if err := next.Reconnect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.core.DispatchHeld(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var replies int
+	f.st.DB.QueryRow(`SELECT count(*) FROM session_machine_actions WHERE operation='answer'`).Scan(&replies)
+	if replies != 0 {
+		t.Fatal("answer was sent while away")
+	}
+	c.generation.Add(1)
+	c.connected.Store(true)
+	waitFor(t, "restarted main caught up", 8*time.Second, func() bool { a, e := next.MachineAvailability(ctx, "build"); return e == nil && a.State == "ready" })
+	if err := f.core.DispatchHeld(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "held answer completed once", 8*time.Second, f.has("turn_ended", 1))
+	var held, notices int
+	f.st.DB.QueryRow(`SELECT count(*) FROM machine_held_actions`).Scan(&held)
+	f.st.DB.QueryRow(`SELECT count(*) FROM machine_absence_notices`).Scan(&notices)
+	f.st.DB.QueryRow(`SELECT count(*) FROM session_machine_actions WHERE operation='answer' AND state='complete'`).Scan(&replies)
+	if held != 1 || notices != 1 || replies != 1 {
+		t.Fatalf("answer/notice duplicated across DB restart: %d %d %d", held, notices, replies)
 	}
 }

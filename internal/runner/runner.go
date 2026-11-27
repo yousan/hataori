@@ -172,6 +172,7 @@ type live struct {
 	// that window, and nothing ends the window's process.
 	taken *takenIn
 
+	answerPending int64      // pending answer whose effect is being journaled, under mu
 	mu            sync.Mutex // the codec, the offsets and the actions, one at a time
 	seq           uint64
 	offset        int64            // in events.ndjson
@@ -1144,7 +1145,7 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 		}
 		// Before any new line is read: input written before the restart,
 		// so that the report of it, if it comes, is known for what it is.
-		if !lv.catchingUp && lv.readErr == nil {
+		if lv.readErr == nil {
 			r.handOverWritten(lv)
 		}
 	}
@@ -1380,7 +1381,14 @@ func (r *Runner) handOver(lv *live, pending int64, answer bool, f func() (agent.
 		}
 	}
 	a, err := f()
+	if err != nil && answer {
+		return errors.Join(err, r.refusePendingAnswer(lv.id, pending))
+	}
 	if err == nil {
+		if answer {
+			lv.answerPending = pending
+			defer func() { lv.answerPending = 0 }()
+		}
 		if err = r.do(lv, a); err != nil && !answer && a.KeysFailed != nil {
 			return nil
 		}
@@ -1615,7 +1623,7 @@ func (r *Runner) loop(lv *live) {
 			}
 			lastTick = time.Now()
 			lv.mu.Lock()
-			r.do(lv, lv.codec.Tick(r.codecNow(lv)))
+			r.do(lv, r.tickCodec(lv))
 			lv.mu.Unlock()
 			r.checkIdle(lv)
 		}
@@ -1688,9 +1696,8 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 			}
 		}
 		lv.warmPending = false
-		if !lv.catchingUp {
-			r.handOverWritten(lv)
-		}
+		lv.resend = true
+		r.handOverWritten(lv)
 	}
 	exited := r.polled(lv.dir).Ended() // looked at before reading, so nothing written before the exit is missed
 	b := r.read(lv)
@@ -1768,8 +1775,6 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 		}
 		// Catch-up did not hand a first/pending input over. Reconsider those
 		// only in a fresh read step after every owned session is reconciled.
-		lv.resend = true
-		r.handOverWritten(lv)
 		lv.pending = true
 		r.Store.DB.QueryRow(`SELECT coalesce(max(id),0) FROM pending_inputs WHERE session_id=?`, lv.id).Scan(&lv.upTo)
 		return true
@@ -2030,15 +2035,15 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 	if err := clearReported(ctx, tx, lv.id, b.events); err != nil {
 		return err
 	}
-	if lv.catchingUp {
-		return nil
-	}
 	if fi == "" {
 		return nil
 	}
 	var f firstInput
 	if err := json.Unmarshal([]byte(fi), &f); err != nil {
 		return err
+	}
+	if lv.catchingUp && !(f.Sent && (reported(b.events, firstInputID) || notDelivered(b.events, firstInputID))) {
+		return nil
 	}
 	willHandOver := !f.NoInput && !f.Written && ((!f.Sent && control.State(state) == control.Idle) || (f.Sent && lv.resend && !reported(b.events, firstInputID) && !notDelivered(b.events, firstInputID)))
 	if willHandOver && r.RevalidateInitial != nil {

@@ -245,7 +245,7 @@ func TestAwayClosedCleanupPreservesRemainingActiveAge(t *testing.T) {
 	awayReady(t, f, sid)
 	rm := &fakeRemover{}
 	f.core.Remover = rm
-	if n, err := f.core.RemoveClosed(ctx, time.Hour); err != nil || n != 0 || rm.Asked() != 0 {
+	if n, err := f.core.RemoveClosed(ctx, time.Hour); err != nil || n != 0 || rm.Asked() != 0 || len(f.eventsOf(t, id, KindRemovalRefused)) != 0 {
 		t.Fatalf("cleanup counted absence: %d %v asks=%d", n, err, rm.Asked())
 	}
 	now = now.Add(31 * time.Minute)
