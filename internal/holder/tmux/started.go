@@ -75,13 +75,13 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 	if err != nil {
 		return holder.Window{}, err
 	}
+	// Preserve the old execution state until its agent is proven stopped.
+	if err := h.clearLeftover(ctx, stateDir); err != nil {
+		return holder.Window{}, fmt.Errorf("tmux: an earlier run could not be cleared: %w", err)
+	}
 	if err := writePrivate(filepath.Join(stateDir, ExecFile), b); err != nil {
 		return holder.Window{}, err
 	}
-	// A session of this name is one an earlier run left, as when a daemon
-	// died between making it and recording it: its agent is ended, and it
-	// goes, before anything of this run is written.
-	h.clearLeftover(ctx, stateDir)
 	os.Remove(filepath.Join(stateDir, StatusFile)) // an earlier run's
 	os.Remove(filepath.Join(stateDir, PidFile))
 	// The log of this run starts empty, at position 0, before the pipe
@@ -192,7 +192,9 @@ func (h *Holder) makeWindow(ctx context.Context, stateDir string, size ...string
 				return ref{Socket: f[4], Server: server, Pane: f[0], Dir: stateDir}, made, f[3], nil
 			}
 		}
-		h.clearLeftover(ctx, stateDir)
+		if err := h.clearLeftover(ctx, stateDir); err != nil {
+			return ref{}, 0, "", err
+		}
 		cut = fmt.Errorf("tmux: new-session printed %q", out)
 	}
 	return ref{}, 0, "", cut
@@ -525,6 +527,12 @@ const killWait = 10 * time.Second
 // is told to be the agent's (agentsGroup); where that cannot be told while
 // the agent may run, Stop fails and leaves everything as it is.
 func (h *Holder) startedStop(ctx context.Context, r ref, process int, interrupt, terminate time.Duration) (holder.StopResult, error) {
+	return h.stopStarted(ctx, r, process, interrupt, terminate, false)
+}
+
+// Cleanup before another Start must keep an uncertain group and its pane:
+// otherwise a later attempt could no longer find it and start beside it.
+func (h *Holder) stopStarted(ctx context.Context, r ref, process int, interrupt, terminate time.Duration, keepUncertain bool) (holder.StopResult, error) {
 	var res holder.StopResult
 	p, err := h.findStarted(ctx, r, process)
 	if errors.Is(err, errGone) {
@@ -545,7 +553,7 @@ func (h *Holder) startedStop(ctx context.Context, r ref, process int, interrupt,
 	left := pgid > 1 && !groupGone(pgid)
 	if left {
 		left, err = h.agentsGroup(ctx, r, pgid)
-		if errors.Is(err, errLeft) {
+		if errors.Is(err, errLeft) && !keepUncertain {
 			res.Left, err = err.Error(), nil
 		}
 		if err != nil {
@@ -909,15 +917,75 @@ func (h *Holder) leftover(ctx context.Context, stateDir string) (map[string]pane
 
 // clearLeftover ends the agent an earlier run left and removes its panes.
 // tmux ends the session with its last pane.
-func (h *Holder) clearLeftover(ctx context.Context, stateDir string) {
-	ps, _ := h.leftover(ctx, stateDir) // an error is mostly that there is no such session
-	for id, p := range ps {
-		if p.pid > 1 && !p.dead {
-			syscall.Kill(-p.pid, syscall.SIGKILL)
-			waitGone(p.pid, killWait)
+func (h *Holder) clearLeftover(ctx context.Context, stateDir string) error {
+	ps, err := h.leftover(ctx, stateDir)
+	if err != nil {
+		if noLeftover(err) {
+			return nil
 		}
-		h.serverCmd(context.WithoutCancel(ctx), killPane(id, p)...)
+		return err
 	}
+	for id, p := range ps {
+		// Resolve the server without assuming that Server uses -S rather
+		// than -L or the default socket. Window already parses TMUX values.
+		out, err := h.serverCmd(ctx, "display-message", "-p", "-t", id, "#{socket_path},#{pid},0"+formatEnd)
+		if err != nil {
+			return err
+		}
+		env, whole := strings.CutSuffix(strings.TrimSuffix(string(out), "\n"), formatDone)
+		if !whole {
+			return fmt.Errorf("tmux: incomplete leftover server format: %.200q", out)
+		}
+		w, err := Window(env, id, p.pid)
+		if err != nil {
+			return err
+		}
+		r, err := parseRef(w)
+		if err != nil {
+			return err
+		}
+		r.Dir = stateDir
+		if strings.Trim(p.start, `"`) == placeholder {
+			if p.pid > 0 {
+				if _, err := h.stopStarted(ctx, r, p.pid, time.Second, time.Second, true); err != nil {
+					return err
+				}
+				// findStarted does not recognize a dead placeholder with no
+				// pid as an agent. Re-read it before guarded removal.
+				left, err := h.leftover(ctx, stateDir)
+				if noLeftover(err) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				var exists bool
+				p, exists = left[id]
+				if !exists {
+					continue
+				}
+				if strings.Trim(p.start, `"`) != placeholder || p.pid > 0 && !p.dead {
+					return fmt.Errorf("tmux: leftover placeholder %s changed or still runs", id)
+				}
+			}
+			// A dead placeholder never executed the agent or made children.
+			// Its exact start and server still guard this removal.
+			if err := h.removePane(ctx, r, p); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := h.stopStarted(ctx, r, p.pid, time.Second, time.Second, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// noLeftover is a listing that could not find its session or any server.
+func noLeftover(err error) bool {
+	var te *tmuxError
+	return noServer(err) || errors.As(err, &te) && strings.HasPrefix(te.msg, "can't find session:")
 }
 
 // Attached reports whether a tmux client shows the window's session now, as
