@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,32 @@ import (
 
 	"github.com/creack/pty"
 )
+
+// Setup hooks can hand the pane to a person before either sizing command.
+func TestStartLeavesAHooksReplacementSizeAlone(t *testing.T) {
+	for _, hook := range []string{"after-pipe-pane", "after-resize-window"} {
+		t.Run(hook, func(t *testing.T) {
+			s := newServer(t)
+			s.run("new-session", "-d", "-s", "person", "exec sleep 600")
+			base := quote(s.tmux) + " -S " + quote(s.sock)
+			body := base + " set-hook -g -u " + hook + "; " + base + " respawn-pane -k -t =hataori-t-7: 'exec sleep 611'; " + base + " resize-window -t =hataori-t-7: -x 91 -y 29"
+			s.run("set-hook", "-g", hook, "run-shell "+quote(body))
+			h := s.starter()
+			dir := filepath.Join(s.dir, "7")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			spec := sleeper
+			spec.Cols, spec.Rows = 103, 37
+			if _, err := h.Start(t.Context(), dir, spec); !errors.Is(err, errGone) {
+				t.Fatalf("Start after replacement: %v", err)
+			}
+			if got := s.run("display-message", "-p", "-t", "=hataori-t-7:", "#{pane_width}x#{pane_height} #{window-size}"); got != "91x29 manual" {
+				t.Errorf("replacement's size and sizing policy changed: %q", got)
+			}
+		})
+	}
+}
 
 // The first program sees the requested dimensions, including on 3.2a;
 // attaching and resizing a real client still controls the window afterwards.
