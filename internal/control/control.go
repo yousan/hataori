@@ -781,10 +781,12 @@ type LayoutThread struct {
 
 // ThreadInfo is one line of Threads.
 type ThreadInfo struct {
-	ID    ThreadID     `json:"id"`              // the thread's number; since 3.0, it replaces number
-	Scope string       `json:"scope"`           // the scope the thread belongs to; since 3.0
-	Links []ThreadLink `json:"links"`           // where it is shown, the first link first; since 3.0
-	Title string       `json:"title,omitempty"` // text: absent for a caller that may not read text, since 2.0
+	Machine  string       `json:"machine,omitempty"`   // configured key, never an SSH address
+	IOPaused string       `json:"io_paused,omitempty"` // retained output cannot be read/rebuilt
+	ID       ThreadID     `json:"id"`                  // the thread's number; since 3.0, it replaces number
+	Scope    string       `json:"scope"`               // the scope the thread belongs to; since 3.0
+	Links    []ThreadLink `json:"links"`               // where it is shown, the first link first; since 3.0
+	Title    string       `json:"title,omitempty"`     // text: absent for a caller that may not read text, since 2.0
 	// Name is the chat thread's own name as the chat service shows it, of
 	// the thread's first link (SetName), which follows a rename; text,
 	// absent for a caller that may not read text, and when none is known.

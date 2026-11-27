@@ -251,7 +251,7 @@ func (w *Worker) probeContext(parent context.Context, g *generation) error {
 			return unavailable(Reconciliation)
 		}
 	}
-	if workerproto.CheckInventory(expected, observation.Inventory) != nil {
+	if err := checkScopedInventory(expected, w.config.AttachmentTarget, observation.Inventory); err != nil {
 		return unavailable(Reconciliation)
 	}
 	if w.config.Reconcile != nil {
@@ -263,4 +263,21 @@ func (w *Worker) probeContext(parent context.Context, g *generation) error {
 		return unavailable(Reconciliation)
 	}
 	return nil
+}
+
+// An owner attachment checks only its pinned run. The main still rejects every
+// unregistered report; neither mode adopts targets reported by its peer.
+func checkScopedInventory(expected []workerproto.Target, target *workerproto.Target, inventory workerproto.Inventory) error {
+	if target == nil {
+		return workerproto.CheckInventory(expected, inventory)
+	}
+	if workerproto.CheckTarget(*target, *target) != nil {
+		return unavailable(Reconciliation)
+	}
+	for _, h := range inventory.Hosts {
+		if h.Target == *target {
+			return nil
+		}
+	}
+	return unavailable(Reconciliation)
 }

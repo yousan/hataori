@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.44**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.45**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -523,6 +523,25 @@ The result names the socket of the thread's session host. The terminal connects 
 
 Result: `Attachment`
 
+### Operation `AttachWorker`
+
+Since 3.44. Readies an owner terminal on a worker with the same scope, owner,
+state and wake checks as `AttachTerminal`. The existing operation refuses a
+worker thread before changing it; its `Attachment.socket` always remains a
+local Unix address. A client checks support for 3.44 before sending this new
+operation. It never falls back to local attachment or local execution.
+
+The owner opens an independent, binding-checked SSH connection to the resident.
+A main restart does not end that connection. A dropped attachment ends visibly;
+no raw key is stored or replayed. The descriptor is configuration and one owned
+run, not a credential or a worker-controlled socket pathname.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `id` | integer | required | the thread's number |
+
+Result: `WorkerAttachment`
+
 ### Operation `Limits`
 
 Since 1.13. The remaining usage of each agent, as its sessions last reported it: one entry per agent that has reported, by its registered name. An agent that has not, because nothing it gives says so, has no entry. A later report replaces an earlier one, whichever of the agent's sessions made it; it changes no thread and writes no event. The usage is the agent's account's, so it needs the `Threads` permission and no scope. It takes no arguments.
@@ -765,6 +784,8 @@ One file the owner let through with `Trust`; since 3.28.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
+| `machine` | string | optional | the configured machine key, or absent for an older daemon; not an SSH address; since 3.44 |
+| `io_paused` | string | optional | why retained output cannot currently be read or rebuilt; offsets and resulting events do not advance; since 3.44 |
 | `id` | integer | required | the thread's number, unique in the instance; since 3.0, before it a `{scope, key}` object beside `number` |
 | `scope` | string | required | the scope it belongs to; since 3.0 |
 | `links` | [`ThreadLink`] | required | where it is shown, the first link first; empty for a thread from before 3.0 whose scope is no longer in the config; since 3.0 |
@@ -793,6 +814,8 @@ The fields of `ThreadInfo`, and:
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
+| `machine` | string | optional | the configured machine key, or absent for an older daemon; not an SSH address; since 3.44 |
+| `io_paused` | string | optional | why retained output cannot currently be read or rebuilt; offsets and resulting events do not advance; since 3.44 |
 | `id` | integer | required | as in `ThreadInfo` |
 | `scope` | string | required | as in `ThreadInfo` |
 | `links` | [`ThreadLink`] | required | as in `ThreadInfo` |
@@ -929,6 +952,21 @@ Since 2.1. The result of `AttachTerminal`.
 | `number` | integer | required | the thread's number |
 | `socket` | string | required | the path of the Unix socket of the thread's session host; not text |
 
+### Type `WorkerAttachment`
+
+Since 3.44. Owner-only result of `AttachWorker`; all identities are read from
+the main's configured binding and durable target records.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `number` | integer | required | the thread's number |
+| `destination` | string | required | the operator-configured SSH alias |
+| `root` | string | required | the configured worker root, never a path to open on main |
+| `main` | string | required | the registered main installation |
+| `installation` | string | required | the pinned worker installation |
+| `thread` | integer | required | the target's thread |
+| `session` | string | required | the target's opaque session identity |
+| `run` | string | required | the target's host run |
 ### Type `TerminalChunk`
 
 Since 1.9.
@@ -1390,8 +1428,8 @@ Exactly one per turn.
 | `principal` | string | optional | as in `turn_started` |
 | `from` | string | optional | as in `turn_started`; since 1.6 |
 | `outcome` | string | required | `completion`, `blocked` (on a question) or `failure` |
-| `reason` | string | optional | for a failure: `limit`, `login`, `api_error`, `crashed`, `interrupted`, `not delivered`, `the window took no input`, ...; since 3.44, `unavailable` means the provider rejected access, distinct from quota exhaustion or an expired login |
-| `detail` | string | optional | the agent's explanation of a failed turn, when supplied; text, omitted for a reader that may not read it; since 3.44 |
+| `reason` | string | optional | for a failure: `limit`, `login`, `api_error`, `crashed`, `interrupted`, `not delivered`, `the window took no input`, ...; since 3.45, `unavailable` means the provider rejected access, distinct from quota exhaustion or an expired login |
+| `detail` | string | optional | the agent's explanation of a failed turn, when supplied; text, omitted for a reader that may not read it; since 3.45 |
 | `background` | integer | required | background tasks still running; a reader that wants "really finished" waits for 0. After a failure it is the last count the agent gave, with the starts and ends learned since, an estimate until a turn completes |
 | `subagents` | array | optional | the ids of the subagents among the `background` tasks, as in their `subagent_started`; absent for none, or when the agent does not tell. A reader that follows the subagents takes an open one that is not named here as ended with the turn, except where `outcome` is `blocked`: that end says nothing of them; since 3.37 |
 
