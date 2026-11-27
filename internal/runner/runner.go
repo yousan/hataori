@@ -2629,6 +2629,9 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stop
 		if err != nil {
 			return fmt.Errorf("runner: session %d: %w: %w", id, control.ErrNotInterrupted, err)
 		}
+		if a.InterruptReason != "" {
+			return fmt.Errorf("runner: session %d: %s: %w", id, a.InterruptReason, control.ErrNotInterrupted)
+		}
 		return fmt.Errorf("runner: session %d: %w", id, control.ErrNotInterrupted)
 	}
 	lv.mu.Unlock()
