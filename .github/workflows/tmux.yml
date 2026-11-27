@@ -73,5 +73,5 @@ jobs:
           tmux -V
           go test -timeout 150m -count="$TEST_COUNT" -run "$TEST_NAMES" ./internal/holder/tmux
       - name: Test closed-terminal ownership through the runner
-        if: ${{ !cancelled() && steps.tmux-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.tmux-build.outcome == 'success' && !matrix.tests }}
         run: go test -timeout 5m -count="$TEST_COUNT" -run '^TestClosedTerminal' ./internal/runner
