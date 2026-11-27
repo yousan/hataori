@@ -1,0 +1,54 @@
+[
+ {
+  "session": "start",
+  "case": "single",
+  "text": "!printf '%s\\n' start-relative.png",
+  "pasted": "!printf '%s\\n' start-relative.png",
+  "after": "Say ok after start single",
+  "prompt": "Say ok after start single",
+  "command_requests": 1,
+  "command_images": [],
+  "command_prompts": [],
+  "images": []
+ },
+ {
+  "session": "resume",
+  "case": "single",
+  "text": "!printf '%s\\n' resume-relative.png",
+  "pasted": "!printf '%s\\n' resume-relative.png",
+  "after": "Say ok after resume single",
+  "prompt": "Say ok after resume single",
+  "command_requests": 1,
+  "command_images": [],
+  "command_prompts": [],
+  "images": []
+ },
+ {
+  "session": "start",
+  "case": "multiline",
+  "text": "!printf '%s\\n' \\\n/tmp/capture-work/cwd/start-line.png",
+  "pasted": "!printf '%s\\n' \\\n/tmp/capture-work/cwd/start-line.png",
+  "after": "Say ok after start multiline",
+  "prompt": "[Image #1]!printf '%s\\n' \nSay ok after start multiline",
+  "command_requests": 0,
+  "command_images": null,
+  "command_prompts": [],
+  "images": [
+   "start-line.png"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "multiline",
+  "text": "!printf '%s\\n' \\\n/tmp/capture-work/cwd/resume-line.png",
+  "pasted": "!printf '%s\\n' \\\n/tmp/capture-work/cwd/resume-line.png",
+  "after": "Say ok after resume multiline",
+  "prompt": "[Image #2]!printf '%s\\n' \nSay ok after resume multiline",
+  "command_requests": 0,
+  "command_images": null,
+  "command_prompts": [],
+  "images": [
+   "resume-line.png"
+  ]
+ }
+]

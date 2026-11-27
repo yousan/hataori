@@ -455,3 +455,15 @@ check the captured paste, input attribution, saved paste and reconnect.
 Invisible-character attribution and ordinary terminal-sequence attribution
 remain covered separately by #916; those cases still check image behavior
 and paste persistence here.
+
+`2.1.332/image_shell/` was taken with the same helper and isolation on the
+same date, at a start and a resume. An ordinary one-line `!printf` command
+with a PNG basename is preserved. An opening shell command does not exempt
+later lines of its bracketed paste from image detection: the unchanged
+multiline input attaches the dummy image, holds the editor and combines it
+with the next harmless input. The rewrite preserves the opening command line
+and prefixes later bare image-path lines, including shell continuations.
+The rewritten captures send no image and report the follow-up input on its
+own. `command_images: null` with zero `command_requests` records that no API
+observation was available before the follow-up, rather than claiming no
+attachment; the follow-up always has an observed request.

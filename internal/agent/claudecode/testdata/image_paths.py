@@ -74,6 +74,19 @@ def no_images(text):
     return "\n".join(lines)
 
 
+def rewritten(text, confined=False):
+    if confined:
+        return no_images(written(text))
+    first = text.lstrip()
+    if first.startswith("!"):
+        end = re.search(r"[\r\n]", first)
+        if end is None:
+            return text
+        offset = len(text) - len(first) + end.start()
+        return text[:offset] + no_images(text[offset:])
+    return no_images(text)
+
+
 def png(pixel):
     def chunk(kind, data):
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
@@ -172,7 +185,7 @@ def scenario(out, name, confined, restricted, rewrite):
                 time.sleep(4)
                 for case, template in TEXTS:
                     text = template.format(cwd=w.cwd, out=w.out, p=phase)
-                    paste = no_images(written(text) if confined else text) if rewrite else text
+                    paste = rewritten(text, confined) if rewrite else text
                     prompts, stops, sent = len(s.calls("UserPromptSubmit")), len(s.calls("Stop")), len(api.sent)
                     s.pasted(paste)
                     s.wait("Stop", stops + 1, timeout=60)
@@ -208,6 +221,54 @@ SCENARIOS = {
 }
 
 
+def shell_scenario(out, name, rewrite):
+    """An opening ! does not exempt later lines from image recognition."""
+    target, cases = os.path.join(out, name), []
+    os.makedirs(target)
+    texts = [("single", "!printf '%s\\n' {p}-relative.png"),
+             ("multiline", "!printf '%s\\n' \\\n{cwd}/{p}-line.png")]
+    for case, template in texts:
+        w, api, sid = World(), API(), str(uuid.uuid4())
+        try:
+            for phase in ("start", "resume"):
+                args = ["claude", "--settings", w.settings, "--setting-sources", "user", "--model", "haiku",
+                        "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--permission-mode", "default"]
+                args += ["--resume", sid] if phase == "resume" else ["--session-id", sid]
+                s = Session(os.path.join(target, case), phase, args, w.cwd, environ(w, api, False))
+                try:
+                    s.wait("SessionStart", timeout=60)
+                    time.sleep(4)
+                    text = template.format(cwd=w.cwd, p=phase)
+                    paste = rewritten(text) if rewrite else text
+                    sent, prompts = len(api.sent), len(s.calls("UserPromptSubmit"))
+                    s.pasted(paste)
+                    time.sleep(3)
+                    command_sent = len(api.sent)
+                    command_images = images(api.sent[sent:command_sent], w.images) if command_sent > sent else None
+                    command_prompts = [s.payload(n)["prompt"] for n in s.calls("UserPromptSubmit")[prompts:]]
+                    after = "Say ok after %s %s" % (phase, case)
+                    stops = len(s.calls("Stop"))
+                    s.pasted(after)
+                    s.wait("Stop", stops + 1, timeout=60)
+                    got = s.calls("UserPromptSubmit")
+                    if len(got) <= prompts:
+                        raise RuntimeError("no prompt for the follow-up input")
+                    found = images(api.sent[command_sent:], w.images)
+                    cases.append({"session": phase, "case": case, "text": text, "pasted": paste,
+                                  "after": after, "prompt": s.payload(got[-1])["prompt"],
+                                  "command_requests": command_sent - sent, "command_images": command_images,
+                                  "command_prompts": command_prompts, "images": found})
+                    print(name, phase, case, found, file=sys.stderr, flush=True)
+                finally:
+                    s.exit()
+        finally:
+            api.server.shutdown()
+            shutil.rmtree(w.top)
+    with open(os.path.join(target, "outcome.json"), "w") as f:
+        json.dump(cases, f, ensure_ascii=False, indent=1)
+        f.write("\n")
+
+
 def main():
     out = os.path.abspath(sys.argv[1])
     os.makedirs(out, exist_ok=True)
@@ -224,6 +285,9 @@ def main():
     for name, how in SCENARIOS.items():
         if not sys.argv[2:] or name in sys.argv[2:]:
             scenario(out, name, *how)
+    for name, rewrite in (("image_shell_ordinary", False), ("image_shell_pasted", True)):
+        if not sys.argv[2:] or name in sys.argv[2:]:
+            shell_scenario(out, name, rewrite)
 
 
 if __name__ == "__main__":

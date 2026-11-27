@@ -136,3 +136,55 @@ func TestImagePathPasteCaptures(t *testing.T) {
 		}
 	}
 }
+
+func TestImagePathsAfterAnOrdinaryShellLine(t *testing.T) {
+	for _, name := range []string{"image_shell_ordinary", "image_shell_pasted"} {
+		b, err := os.ReadFile(filepath.Join("testdata/2.1.332/image_shell", name, "outcome.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cases []struct {
+			imagePathCase
+			After           string
+			CommandImages   []string `json:"command_images"`
+			CommandRequests int      `json:"command_requests"`
+		}
+		if err := json.Unmarshal(b, &cases); err != nil {
+			t.Fatal(err)
+		}
+		seen := map[string]bool{}
+		for _, captured := range cases {
+			key := captured.Session + "/" + captured.Case
+			if seen[key] {
+				t.Fatalf("%s: repeated %s", name, key)
+			}
+			seen[key] = true
+			if name == "image_shell_ordinary" {
+				want := 0
+				if captured.Case == "multiline" {
+					want = 1
+				}
+				if captured.Pasted != captured.Text || len(captured.Images) != want {
+					t.Errorf("%s: baseline paste %q, images %q, want %d", key, captured.Pasted, captured.Images, want)
+				}
+				continue
+			}
+			c := started(t)
+			a, err := c.Input(agent.Input{ID: "shell-text", Text: captured.Text})
+			if err != nil || len(a.Keys) != 1 || a.Keys[0].Paste != captured.Pasted || a.InputText["shell-text"] != captured.Pasted {
+				t.Errorf("%s: paste %v, %v; captured %q", key, a, err, captured.Pasted)
+			}
+			if len(captured.Images) != 0 || len(captured.CommandImages) != 0 || captured.Prompt != captured.After {
+				t.Errorf("%s: images %q/%q, following prompt %q, want %q", key, captured.CommandImages, captured.Images, captured.Prompt, captured.After)
+			}
+			if captured.CommandRequests > 0 && captured.CommandImages == nil {
+				t.Errorf("%s: no observation of the command's API request", key)
+			}
+		}
+		for _, key := range []string{"start/single", "resume/single", "start/multiline", "resume/multiline"} {
+			if !seen[key] || len(cases) != 4 {
+				t.Fatalf("%s: incomplete capture matrix", name)
+			}
+		}
+	}
+}

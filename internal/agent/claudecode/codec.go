@@ -314,8 +314,15 @@ const atSignNote = "In every message you are given, each at sign (@) is written 
 func (c *codec) pasteText(text string) string {
 	text = cleanPaste(text)
 	if c.spec.Confine == nil {
-		if strings.HasPrefix(strings.TrimLeftFunc(text, unicode.IsSpace), "!") {
-			return text // the CLI keeps image paths in shell mode as text
+		if first := strings.TrimLeftFunc(text, unicode.IsSpace); strings.HasPrefix(first, "!") {
+			// Keep the opening shell command line. The CLI still scans
+			// subsequent lines of the same paste for image paths.
+			end := strings.IndexAny(first, "\r\n")
+			if end < 0 {
+				return text
+			}
+			end += len(text) - len(first)
+			return text[:end] + noImagePaths(text[end:])
 		}
 		return noImagePaths(text)
 	}
