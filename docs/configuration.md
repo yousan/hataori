@@ -656,3 +656,18 @@ See [Worker resident](worker-resident.md) for the exact schema, explicit
 installation binding, user-service templates, recovery behavior and limits.
 This is a resident foundation; workspace registration and main integration
 ship separately. macOS worker support remains unavailable pending #969.
+
+## Worker SSH transport configuration
+
+The worker SSH library maps existing `machines[].ssh`, `machines[].root` and
+pinned installation bindings to a shared private Unix forward; daemon routing
+ships separately in #962. No new JSON fields or transport CLI ship in #960.
+The library requires an explicit private connection run directory, system
+OpenSSH and context-aware receiver-owned inventory/recovery callbacks. It uses
+operator keys/configuration for authentication, with strict host-key checks,
+noninteractive bounded connection attempts, agent/X11 forwarding disabled and
+no credential/config writes. It never launches an agent or service through SSH.
+See [Worker SSH transport](worker-ssh.md) for the exact API mapping, timing bounds,
+readiness/failure categories, tested isolated Linux/macOS scenarios and limits.
+Worker workspace operations and placement remain separate; macOS worker support
+is still gated by #969.
