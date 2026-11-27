@@ -15,6 +15,20 @@ import (
 	"github.com/yousan/hataori/internal/placement"
 )
 
+// Record-only fixtures never spawn a process and never invoke PID cleanup.
+// Their synthetic PID/status records must not be treated as process ownership.
+func placementRecordFixture(t *testing.T) *fixture {
+	t.Helper()
+	root := t.TempDir()
+	log := &syncBuffer{}
+	st, c, r, err := build(root, options{}, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Close(); st.Close() })
+	return &fixture{t: t, root: root, st: st, core: c, run: r, log: log}
+}
+
 func seedPlacementLocal(t *testing.T, f *fixture) {
 	t.Helper()
 	_, err := f.st.DB.Exec(`INSERT INTO threads(id,scope,key,started_by,state,created_at,updated_at,machine) VALUES(1,'s','placement-local','owner','creating',1,1,'local');
@@ -35,7 +49,7 @@ func placementEndFile(t *testing.T, f *fixture, id int64) {
 	}
 }
 func TestPlacementLocalPriorUnknownBlocksReplacementAndRelease(t *testing.T) {
-	f := newFixture(t, options{})
+	f := placementRecordFixture(t)
 	seedPlacementLocal(t, f)
 	f.run.endWait = time.Millisecond
 	ctx := context.Background()
@@ -55,7 +69,7 @@ func TestPlacementLocalPriorUnknownBlocksReplacementAndRelease(t *testing.T) {
 	}
 }
 func TestPlacementLocalRecoveryUsesOriginalHostBeforeNewAdmission(t *testing.T) {
-	f := newFixture(t, options{})
+	f := placementRecordFixture(t)
 	seedPlacementLocal(t, f)
 	ctx := context.Background()
 	f.core.Placement = &core.MachinePlacement{Machines: map[string]core.PlacementMachine{"local": {Limits: placement.Limits{MaxResident: 1}}}, Observe: func(context.Context, string, string) (placement.Observation, error) {

@@ -54,32 +54,6 @@
     ]
   },
   {
-    "guard": "earlier local holder proof",
-    "command": "go test -p 1 ./internal/runner -run ^TestPlacementLocalPriorUnknownBlocksReplacementAndRelease$ -parallel 1 -count=1",
-    "expected_failure": true,
-    "exit_code": 1,
-    "evidence": [
-      "--- FAIL: TestPlacementLocalPriorUnknownBlocksReplacementAndRelease (0.12s)",
-      "placement_test.go:42: unknown prior host admitted replacement <nil>",
-      "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.133s",
-      "FAIL"
-    ]
-  },
-  {
-    "guard": "original phase2 host recovery",
-    "command": "go test -p 1 ./internal/runner -run ^TestPlacementLocalRecoveryUsesOriginalHostBeforeNewAdmission$ -parallel 1 -count=1",
-    "expected_failure": true,
-    "exit_code": 1,
-    "evidence": [
-      "--- FAIL: TestPlacementLocalRecoveryUsesOriginalHostBeforeNewAdmission (0.12s)",
-      "placement_test.go:75: original completed host blocked by current resource use waiting for room on the recorded machine: local: machine is not ready",
-      "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.134s",
-      "FAIL"
-    ]
-  },
-  {
     "guard": "terminal trash history",
     "command": "go test -p 1 ./internal/worker -run ^TestPlacementRestoredWorkspaceTransfersAndRestarts$ -parallel 1 -count=1",
     "expected_failure": true,
@@ -102,6 +76,32 @@
       "placement_test.go:149: second restart followed canceled first input 1",
       "FAIL",
       "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.149s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "earlier local holder proof",
+    "command": "go test -p 1 ./internal/runner -run ^TestPlacementLocalPriorUnknownBlocksReplacementAndRelease$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementLocalPriorUnknownBlocksReplacementAndRelease (0.13s)",
+      "placement_test.go:57: unknown prior host admitted replacement <nil>",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.143s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "original phase2 host recovery",
+    "command": "go test -p 1 ./internal/runner -run ^TestPlacementLocalRecoveryUsesOriginalHostBeforeNewAdmission$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementLocalRecoveryUsesOriginalHostBeforeNewAdmission (0.15s)",
+      "placement_test.go:90: original completed host blocked by current resource use waiting for room on the recorded machine: local: machine is not ready",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.155s",
       "FAIL"
     ]
   }
