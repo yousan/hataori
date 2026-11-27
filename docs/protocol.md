@@ -967,16 +967,6 @@ the main's configured binding and durable target records.
 | `thread` | integer | required | the target's thread |
 | `session` | string | required | the target's opaque session identity |
 | `run` | string | required | the target's host run |
-| `inventory` | [`WorkerTarget`] | required | receiver-owned targets for the independent connection's inventory check |
-
-### Type `WorkerTarget`
-
-| Field | Type | Presence | Meaning |
-|---|---|---|---|
-| `thread` | integer | required | the owned target's thread |
-| `session` | string | required | its opaque session identity |
-| `run` | string | required | its host run |
-
 ### Type `TerminalChunk`
 
 Since 1.9.

@@ -3,8 +3,9 @@
 Status: worker protocol and runner integration through #962, part of #956. This document specifies
 worker protocol **1.2**. It is independent of the control protocol described in
 `protocol.md`; a control socket and an unversioned host socket are never worker
-endpoints. The resident foundation is described in `worker-resident.md`; SSH transport and runner integration
-ship separately. There is no remotely usable worker yet.
+endpoints. The resident is described in `worker-resident.md`. SSH transport and
+the machine-bound runner are implemented; public placement and away queues
+remain #963/#964, before the first-worker guide and product gate in #965.
 
 ## Compatibility and golden files
 

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -198,12 +199,12 @@ func TestRemoteRunnerQuestionAnswerAndFollowup(t *testing.T) {
 	if err := owner(f.core).Answer(context.Background(), control.RequestID(request), control.Answer{Text: "blue"}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "answered worker turn", 8*time.Second, f.has("turn_ended", 1))
+	waitFor(t, "answered worker turn", 8*time.Second, func() bool { return withText(t, f.st, "text", "original") == 1 })
 	if err := owner(f.core).Send(context.Background(), thread, "followup", control.Input{Text: "reply followup"}, control.Deliver); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "followup on same worker", 8*time.Second, f.has("turn_ended", 2))
-	if got := counts(t, f.st); got["turn_ended"] != 2 || got["request"] != 1 {
+	waitFor(t, "followup on same worker", 8*time.Second, func() bool { return withText(t, f.st, "text", "followup") == 1 && f.has("turn_ended", 3)() })
+	if got := counts(t, f.st); got["turn_ended"] != 3 || got["request"] != 1 {
 		t.Fatalf("worker lifecycle: %v", got)
 	}
 }
@@ -689,5 +690,108 @@ func TestRemoteRunnerUnknownUnreportedInputFailsVisibly(t *testing.T) {
 	waitFor(t, "visible not-delivered outcome", 8*time.Second, func() bool { return lastTurnReason(t, f.st) == "not delivered" })
 	if writes.Load() != 1 {
 		t.Fatalf("unknown paste repeated %d times", writes.Load())
+	}
+}
+
+func TestRemoteRunnerOversizedInputFailsOnceWithoutRetry(t *testing.T) {
+	f, _ := remoteFixture(t, false)
+	seedRemote(t, f, 1, "reply ready")
+	waitFor(t, "initial turn", 5*time.Second, f.has("turn_ended", 1))
+	err := owner(f.core).Send(context.Background(), thread, "oversized", control.Input{Text: strings.Repeat("x", workerproto.MaxChunk+1)}, control.Deliver)
+	if err == nil || !strings.Contains(err.Error(), "encoded bytes") {
+		t.Fatalf("missing size refusal: %v", err)
+	}
+	f.run.Close()
+	next := &Runner{Store: f.st, Machine: f.core.Machine, Adapters: f.run.Adapters, Root: f.root, Host: f.run.Host, Log: f.run.Log, Poll: 30 * time.Millisecond, Remotes: f.run.Remotes}
+	f.run = next
+	f.core.Runner = next
+	if err := next.Reconnect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "one visible size failure", 8*time.Second, func() bool { return lastTurnReason(t, f.st) == "not delivered" })
+	var inputs, failures int
+	f.st.DB.QueryRow(`SELECT count(*) FROM session_machine_actions WHERE operation='input'`).Scan(&inputs)
+	f.st.DB.QueryRow(`SELECT count(*) FROM events WHERE kind='turn_ended' AND json_extract(data,'$.reason')='not delivered'`).Scan(&failures)
+	if inputs != 1 || failures != 1 {
+		t.Fatalf("oversized input retried: writes=%d failures=%d", inputs, failures)
+	}
+}
+
+func TestRemoteRunnerRefusedHookGetsNewAttemptAfterRestart(t *testing.T) {
+	f, _ := remoteFixture(t, true)
+	seedRemote(t, f, 1, "ask colour\nreply original")
+	waitFor(t, "held question", 8*time.Second, f.has("request", 1))
+	var request string
+	if err := f.st.DB.QueryRow(`SELECT handle FROM requests WHERE state='open'`).Scan(&request); err != nil {
+		t.Fatal(err)
+	}
+	lv, err := f.run.get(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := lv.io.(*machineio.Remote)
+	info, err := remote.Info(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.run.Close()
+	// Freeze only the main's follower; the owned worker and hook keep running.
+	f.run.live = map[int64]*live{1: lv}
+	defer func() {
+		f.run.mu.Lock()
+		if f.run.live[1] == lv {
+			f.run.live = nil
+		}
+		f.run.mu.Unlock()
+	}()
+	socket := host.SocketPath(info.StateDir)
+	parked := socket + ".fixture"
+	parkedNow := false
+	t.Cleanup(func() {
+		if parkedNow {
+			os.Rename(parked, socket)
+		}
+	})
+	open := remote.Open
+	remote.Open = func(ctx context.Context) (net.Conn, *workerproto.Connection, error) {
+		c, p, err := open(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &transformReply{Conn: c, reader: bufio.NewReader(c), change: func(m workerproto.Message) workerproto.Message {
+			if m.Op == "describe" && m.Kind == "reply" && !parkedNow {
+				if err := os.Rename(socket, parked); err != nil {
+					t.Error(err)
+				} else {
+					parkedNow = true
+				}
+			}
+			return m
+		}}, p, nil
+	}
+	var nothing *holder.NotSent
+	if err := owner(f.core).Answer(context.Background(), control.RequestID(request), control.Answer{Text: "blue"}); !errors.As(err, &nothing) {
+		t.Fatalf("expected durable pre-write refusal: %v", err)
+	}
+	if err := os.Rename(parked, socket); err != nil {
+		t.Fatal(err)
+	}
+	parkedNow = false
+	remote.Open = open
+	f.run.live = nil
+	next := &Runner{Store: f.st, Machine: f.core.Machine, Adapters: f.run.Adapters, Root: f.root, Host: f.run.Host, Log: f.run.Log, Poll: 30 * time.Millisecond, Remotes: f.run.Remotes}
+	f.run = next
+	f.core.Runner = next
+	if err := next.Reconnect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "held answer after confirmed refusal", 8*time.Second, func() bool { return withText(t, f.st, "text", "original") == 1 })
+	var refused, complete int
+	f.st.DB.QueryRow(`SELECT count(*) FROM session_machine_actions WHERE operation='answer' AND state='refused'`).Scan(&refused)
+	f.st.DB.QueryRow(`SELECT count(*) FROM session_machine_actions WHERE operation='answer' AND state='complete'`).Scan(&complete)
+	if refused != 1 || complete != 1 {
+		var states string
+		f.st.DB.QueryRow(`SELECT group_concat(operation||':'||state||':'||request) FROM session_machine_actions`).Scan(&states)
+		t.Fatalf("answer attempts: refused=%d complete=%d, actions=%s, events=%v", refused, complete, states, f.eventData("turn_ended"))
 	}
 }

@@ -713,6 +713,10 @@ and away queues follow in #963/#964, and the combined guide/gate is #965.
 Retained history currently has a 64 MiB per-run budget and at most 128 sources;
 exhaustion pauses the session rather than discarding codec reconstruction bytes.
 An owner attachment uses its own connection and ends visibly on loss; it never
-replays raw keys. A new unknown run in its inventory also ends that connection
-conservatively. Actual macOS user-session, login/Keychain and sleep/wake support
+replays raw keys. Its connection checks only its pinned run; other sessions
+can start without invalidating it. One encoded worker input action is limited
+to 64 KiB including adapter/paste framing. An oversized accepted input reports
+an immediate size error and one visible `not delivered` outcome. Its codec
+explicitly retires that input, including steering input during another turn;
+restart never retries it. Actual macOS user-session, login/Keychain and sleep/wake support
 remains gated by #969; isolated fixture tests are not that runtime evidence.

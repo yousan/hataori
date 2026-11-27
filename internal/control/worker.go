@@ -11,19 +11,12 @@ type WorkerAttacher interface {
 // WorkerAttachment is configured connection information and one exact owned
 // target. It contains no session/forge/bot token and grants no other scope.
 type WorkerAttachment struct {
-	Number       int64          `json:"number"`
-	Destination  string         `json:"destination"`
-	Root         string         `json:"root"`
-	Main         string         `json:"main"`
-	Installation string         `json:"installation"`
-	Thread       uint64         `json:"thread"`
-	Session      string         `json:"session"`
-	Run          string         `json:"run"`
-	Inventory    []WorkerTarget `json:"inventory"`
-}
-
-type WorkerTarget struct {
-	Thread  uint64 `json:"thread"`
-	Session string `json:"session"`
-	Run     string `json:"run"`
+	Number       int64  `json:"number"`
+	Destination  string `json:"destination"`
+	Root         string `json:"root"`
+	Main         string `json:"main"`
+	Installation string `json:"installation"`
+	Thread       uint64 `json:"thread"`
+	Session      string `json:"session"`
+	Run          string `json:"run"`
 }

@@ -160,12 +160,8 @@ func openTerminalAttachment(ctx context.Context, c control.API, t control.Thread
 		return nil, 0, noop, err
 	}
 	cleanupPool := func() { pool.Close(); cleanup() }
-	expected := []workerproto.Target{}
-	for _, target := range at.Inventory {
-		expected = append(expected, workerproto.Target{Thread: target.Thread, Session: target.Session, Run: target.Run})
-	}
 	binding := workerproto.Binding{Main: at.Main, Worker: at.Installation}
-	w, err := pool.Worker(workerssh.Config{Destination: at.Destination, Root: at.Root, Binding: binding, Expected: func(context.Context) ([]workerproto.Target, error) { return expected, nil }})
+	w, err := pool.Worker(workerssh.Config{Destination: at.Destination, Root: at.Root, Binding: binding, AttachmentTarget: &workerproto.Target{Thread: at.Thread, Session: at.Session, Run: at.Run}})
 	lockInfo, _ = os.Lstat(lock)
 	if err != nil {
 		cleanupPool()

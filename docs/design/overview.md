@@ -1978,6 +1978,10 @@ registers opaque handles and retains bounded reconstruction data for the run.
 The pure codec and session state machine remain on main. Missing history,
 changed identities and read failures pause with `ThreadInfo.IOPaused`.
 
+`agent.InputRefuser.RefuseInput(ids, reason)` retires confirmed-unsent inputs
+without ending another running turn; remote codecs implement it for bounded
+transport rejection, including steering inputs.
+
 The optional control interface `WorkerAttacher` declares
 `AttachWorker(context.Context, ThreadID) (WorkerAttachment, error)`. It has the
 owner/scope checks of local attach and gives one configured, pinned target to an

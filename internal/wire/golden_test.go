@@ -193,7 +193,7 @@ func examples(t *testing.T) map[string]any {
 		"HostView":       control.HostView{Screen: "$ make\nok\n$ ", CursorX: 2, CursorY: 2},
 		"OperateHost":    hostOperation{Idle: 300},
 		"AttachTerminal": control.Attachment{Socket: "/srv/hataori/state/sessions/7/host.sock", Number: 7},
-		"AttachWorker":   control.WorkerAttachment{Number: 7, Destination: "worker-alias", Root: "/srv/worker", Main: "main-A", Installation: "worker-A", Thread: 7, Session: "s-7", Run: "run-A", Inventory: []control.WorkerTarget{{Thread: 7, Session: "s-7", Run: "run-A"}}},
+		"AttachWorker":   control.WorkerAttachment{Number: 7, Destination: "worker-alias", Root: "/srv/worker", Main: "main-A", Installation: "worker-A", Thread: 7, Session: "s-7", Run: "run-A"},
 		"Clients":        []control.ClientState{{Client: "discord", Connected: false, Since: exampleTime}},
 		"Forge": control.ForgeAnswer{Repo: "acme/widgets", Pull: &control.ForgePullDetail{
 			ForgePull: control.ForgePull{Number: 42, Title: "Fix the build", State: "open", Branch: "fix-build", Base: "main",

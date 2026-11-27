@@ -73,7 +73,10 @@ func (r *Runner) remoteDir(dir string) (*machineio.Remote, bool, error) {
 		return nil, false, nil
 	}
 	remote, err := r.isRemote(context.Background(), id)
-	if err != nil || !remote {
+	if err != nil {
+		return nil, true, err
+	}
+	if !remote {
 		return nil, false, nil
 	}
 	s, err := r.remoteSession(context.Background(), id)
@@ -132,6 +135,13 @@ func (r *Runner) prepareRemote(ctx context.Context, remote *machineio.Remote) er
 }
 
 func (r *Runner) launchRemote(ctx context.Context, id int64, name string, spec agent.Spec, first firstInput) (agent.Spec, error) {
+	ad, ok := r.Adapters[name]
+	if !ok {
+		return agent.Spec{}, errors.New("runner: worker adapter unavailable")
+	}
+	if _, ok := ad.NewCodec(spec).(agent.InputRefuser); !ok {
+		return agent.Spec{}, errors.New("runner: worker codec cannot reject unsupported input actions")
+	}
 	thread, _, confined, err := r.confinement(ctx, id)
 	if err != nil {
 		return agent.Spec{}, err
@@ -374,6 +384,18 @@ func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) error {
 		for _, b := range chunks {
 			data = append(data, b...)
 		}
+		if len(data) > workerproto.MaxChunk {
+			if len(a.Inputs) > 0 {
+				refuser, ok := lv.codec.(agent.InputRefuser)
+				if !ok {
+					return errors.New("runner: worker codec cannot reject an unsupported input action")
+				}
+				if err := r.do(lv, refuser.RefuseInput(a.Inputs, agent.NotDelivered)); err != nil {
+					return err
+				}
+			}
+			return fmt.Errorf("runner: worker input exceeds %d encoded bytes; nothing was sent", workerproto.MaxChunk)
+		}
 		m, err := remote.Request("input", key, workerproto.Input{Turn: turn, Data: data})
 		if err != nil {
 			failed(true)
@@ -386,8 +408,23 @@ func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) error {
 		}
 	}
 	for _, rep := range a.Reply {
-		key := "hook-" + digestRead(append(append([]byte(rep.Call), 0), rep.Body...))
+		base := "hook-" + digestRead(append(append([]byte(rep.Call), 0), rep.Body...))
+		key := base
+		var priorKey, state, request string
+		err := r.Store.DB.QueryRowContext(ctx, `SELECT key,state,request FROM session_machine_actions WHERE session_id=? AND run=? AND operation='answer' AND key LIKE ? ORDER BY id DESC LIMIT 1`, lv.id, remote.Target.Run, base+"%").Scan(&priorKey, &state, &request)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil {
+			key = priorKey
+			if state == "refused" {
+				key = base + "-" + runID()
+			}
+		}
 		m, err := remote.Request("answer", key, workerproto.Answer{Turn: turn, Request: rep.Call, Data: rep.Body})
+		if err == nil && request != "" && state != "refused" {
+			err = json.Unmarshal([]byte(request), &m)
+		}
 		if err != nil {
 			return err
 		}
@@ -535,21 +572,7 @@ func (r *Runner) WorkerAttachment(ctx context.Context, id int64) (control.Worker
 		return control.WorkerAttachment{}, err
 	}
 	cfg := r.Remotes[machine]
-	out := control.WorkerAttachment{Number: int64(remote.Target.Thread), Destination: cfg.Destination, Root: cfg.Root, Main: remote.Binding.Main, Installation: remote.Binding.Worker, Thread: remote.Target.Thread, Session: remote.Target.Session, Run: remote.Target.Run, Inventory: []control.WorkerTarget{}}
-	rows, err := r.Store.DB.QueryContext(ctx, `SELECT session_id,thread_id,run FROM machine_run_history WHERE machine=?`, machine)
-	if err != nil {
-		return out, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var sid, thread int64
-		var run string
-		if err := rows.Scan(&sid, &thread, &run); err != nil {
-			return out, err
-		}
-		out.Inventory = append(out.Inventory, control.WorkerTarget{Thread: uint64(thread), Session: "s-" + strconv.FormatInt(sid, 10), Run: run})
-	}
-	return out, rows.Err()
+	return control.WorkerAttachment{Number: int64(remote.Target.Thread), Destination: cfg.Destination, Root: cfg.Root, Main: remote.Binding.Main, Installation: remote.Binding.Worker, Thread: remote.Target.Thread, Session: remote.Target.Session, Run: remote.Target.Run}, nil
 }
 
 func (r *Runner) remoteTerminal(ctx context.Context, id int64, run string, after uint64) (<-chan control.TerminalChunk, error) {

@@ -47,6 +47,10 @@ type Config struct {
 	// Expected reads receiver-owned main records. A nil callback accepts only
 	// an empty resident inventory. Reports never register their own authority.
 	Expected func(context.Context) ([]workerproto.Target, error)
+	// AttachmentTarget is a narrow owner connection, independent of the main.
+	// Other inventory entries are ignored, never adopted or reconciled.
+	// It cannot be combined with Expected or a main Reconcile callback.
+	AttachmentTarget *workerproto.Target
 	// Reconcile can persist/check main recovery before readiness. It must honor
 	// its context and must not grant authority to an unregistered report.
 	Reconcile func(context.Context, Observation) error
@@ -109,6 +113,9 @@ func validDestination(s string) bool {
 }
 func validConfig(c Config) bool {
 	socket := worker.SocketPath(c.Root)
+	if c.AttachmentTarget != nil && (c.Expected != nil || c.Reconcile != nil || workerproto.CheckTarget(*c.AttachmentTarget, *c.AttachmentTarget) != nil) {
+		return false
+	}
 	return validDestination(c.Destination) && filepath.IsAbs(c.Root) && filepath.Clean(c.Root) == c.Root && c.Root != "/" && utf8.ValidString(c.Root) && !strings.ContainsFunc(c.Root, unicode.IsControl) && !strings.ContainsAny(socket, "$%") && workerproto.ValidID(c.Binding.Main) && workerproto.ValidID(c.Binding.Worker)
 }
 
@@ -119,13 +126,17 @@ func (p *Pool) Worker(config Config) (*Worker, error) {
 	if !validConfig(config) {
 		return nil, errors.New("worker SSH: invalid destination/root/installation or unsupported socket expansion")
 	}
+	if config.AttachmentTarget != nil {
+		target := *config.AttachmentTarget
+		config.AttachmentTarget = &target
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed || p.ctx.Err() != nil {
 		return nil, unavailable(Closed)
 	}
 	if w := p.workers[config.Destination]; w != nil {
-		if w.config.Root != config.Root || w.config.Binding != config.Binding {
+		if w.config.Root != config.Root || w.config.Binding != config.Binding || !sameAttachmentTarget(w.config.AttachmentTarget, config.AttachmentTarget) {
 			return nil, errors.New("worker SSH: destination already has a different registered worker")
 		}
 		return w, nil
@@ -183,4 +194,11 @@ func privateLock(path string) (*os.File, error) {
 func privateFile(info os.FileInfo) bool {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	return ok && st.Uid == uint32(os.Geteuid()) && info.Mode().IsRegular() && info.Mode().Perm()&0077 == 0
+}
+
+func sameAttachmentTarget(a, b *workerproto.Target) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }

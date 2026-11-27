@@ -176,6 +176,14 @@ type Codec interface {
 	Tick(now time.Time) Actions
 }
 
+// InputRefuser releases a codec's attempted inputs when the machine proves
+// that their encoded actions cannot be sent. Remote codecs implement it so a
+// transport limit fails those inputs visibly without waiting for a response
+// that can never arrive, or ending an unrelated running turn.
+type InputRefuser interface {
+	RefuseInput(ids []string, reason Reason) Actions
+}
+
 // Actions is what the caller of a Codec does next.
 type Actions struct {
 	Events []Event // for the core
