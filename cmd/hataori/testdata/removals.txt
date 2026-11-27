@@ -3,6 +3,7 @@
 cmd/hataori/daemon.go	sessionKey	.Remove	Removes only state/dashboard-session.key.new, the half-written session key, through the instance's os.Root, outside the workspaces.
 internal/dashboard/passkeyfile.go	passkeyFile.save	.Remove	Removes only state/dashboard-passkeys.json.new, the half-written passkeys file, through the instance's os.Root, outside the workspaces.
 docs/notes/sqlite-bench/main.go	run	os.RemoveAll	Removes only the benchmark directory freshly created by os.MkdirTemp, containing its disposable database.
+internal/store/testdata/machine-local/generate.go	main	os.RemoveAll	Removes only the fixture generator's own directory freshly created by os.MkdirTemp, containing its synthetic database; no instance root is accepted as input and the generator is excluded from the binary.
 internal/host/host.go	host.listen	os.Remove	Removes the stale host socket at the computed socket path in session state or the private socket directory, outside the workspace.
 internal/host/host.go	host.removeSocket	os.Remove	Removes the host socket and its session-state pointer file; the private external socket directory is removed only when empty, never recursively.
 internal/holder/host.go	Host.Reset	os.Remove	Removes only the ended host's status file in the session state directory before a resumed host is launched there, outside the workspace.
