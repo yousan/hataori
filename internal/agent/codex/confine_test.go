@@ -1,12 +1,14 @@
 package codex
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 )
@@ -181,9 +183,23 @@ func TestConfinedInstructionAckReplayOrdering(t *testing.T) {
 				if c.ready || c.running {
 					t.Fatal("rate-limit response released instructions gate")
 				}
+				retry := c.Tick(time.Now())
+				if opened {
+					if len(retry.Write) != 0 {
+						t.Fatal("live opened codec retried its original injection")
+					}
+				} else if len(retry.Write) != 1 || !bytes.Equal(retry.Write[0], injected.Write[0]) {
+					t.Fatal("reconstructed codec did not retry the exact trusted request")
+				}
+				if len(c.Tick(time.Now()).Write) != 0 || c.ready || c.running {
+					t.Fatal("retry repeated or bypassed the instructions gate")
+				}
 				ready := c.Decode(agent.Output, instructionAck(t, id))
 				if !c.ready || len(ready.Events) != 1 || ready.Events[0].Kind != agent.SessionReady || len(ready.Write) != 1 || parse(t, ready.Write[0]).Method != "turn/start" {
 					t.Fatal("actual injection acknowledgement did not release queued turn", ready)
+				}
+				if len(c.Tick(time.Now()).Write) != 0 {
+					t.Fatal("acknowledged gate replayed an injection or queued input")
 				}
 			}
 		}
@@ -219,6 +235,54 @@ func TestConfinedInstructionAckReplayOrdering(t *testing.T) {
 		if !c.closed || c.ready || len(a.Write) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.BlockedAtStart {
 			t.Fatal("invalid instruction acknowledgement released startup", a)
 		}
+		if len(c.Tick(time.Now()).Write) != 0 {
+			t.Fatal("recovery retried a refused instruction gate")
+		}
+	}
+	// An unopened replay must refuse the same missing trusted state as Open.
+	missing := NewCodec(agent.Spec{Confine: &agent.Confinement{}}, Options{})
+	refused := missing.Decode(agent.Output, thread)
+	if len(refused.Write) != 0 || len(refused.Events) != 1 || refused.Events[0].Reason != agent.BlockedAtStart || len(missing.Tick(time.Now()).Write) != 0 {
+		t.Fatal("recovery injected missing trusted instructions")
+	}
+}
+
+func TestConfinedRepeatedInjectionAcknowledgements(t *testing.T) {
+	var thread []byte
+	for _, line := range replay(t, "start") {
+		if line.Dir == "recv" && parse(t, line.Msg).Result.Thread != nil {
+			thread = line.Msg
+			break
+		}
+	}
+	acks, err := os.ReadFile("testdata/0.163.0/supervisor_injection_retry/acks.jsonl")
+	if err != nil || thread == nil {
+		t.Fatal("missing real repeated-injection capture", err)
+	}
+	c := NewCodec(agent.Spec{Confine: &agent.Confinement{}}, Options{confinedInstructions: "current-recovery-instructions"})
+	c.Decode(agent.Output, thread)
+	c.Input(agent.Input{ID: "queued", Text: "one-input"})
+	if len(c.Tick(time.Now()).Write) != 1 {
+		t.Fatal("pending replay did not retry")
+	}
+	ready, turns, count := 0, 0, 0
+	for _, ack := range bytes.Split(bytes.TrimSpace(acks), []byte("\n")) {
+		count++
+		a := c.Decode(agent.Output, ack)
+		for _, e := range a.Events {
+			if e.Kind == agent.SessionReady {
+				ready++
+			}
+		}
+		for _, write := range a.Write {
+			if parse(t, write).Method != "turn/start" {
+				t.Fatal("unexpected action after injection acknowledgement")
+			}
+			turns++
+		}
+	}
+	if count != 2 || ready != 1 || turns != 1 || len(c.Tick(time.Now()).Write) != 0 {
+		t.Fatal("real repeated acknowledgements duplicated readiness or queued input")
 	}
 }
 
