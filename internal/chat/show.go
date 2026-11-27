@@ -225,6 +225,7 @@ type eventData struct {
 	Choices   []string `json:"choices"`
 	Outcome   string   `json:"outcome"`
 	Reason    string   `json:"reason"`
+	Detail    string   `json:"detail"`
 	Key       string   `json:"key"`
 	Session   int64    `json:"session"`
 	Turn      int64    `json:"turn"` // turn_started, turn_ended
@@ -528,6 +529,12 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		delete(r.turn, e.Thread)
 		delete(r.by, e.Thread)
 		delete(r.via, e.Thread)
+		if line, handled, err := f.supervisorAvailability(ctx, r, e, d); err != nil || handled {
+			if err != nil || line == "" {
+				return nil, err
+			}
+			return row(surface.Message{Text: line}), nil
+		}
 		if d.Outcome == "failure" {
 			who, err := f.stoppedBy(ctx, d.Outcome, d.Reason, d.Turn)
 			if err != nil {
@@ -536,7 +543,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 			if who != "" {
 				return row(surface.Message{Text: "Stopped by " + who + "."}), nil
 			}
-			return row(surface.Message{Text: failureLine(d.Reason)}), nil
+			return row(surface.Message{Text: failureDetail(failureLine(d.Reason), d.Detail)}), nil
 		}
 	}
 	return nil, nil
@@ -605,6 +612,8 @@ func (f *FrontEnd) stoppedBy(ctx context.Context, outcome, reason string, turn i
 // failureLine is the one line a failed turn gets.
 func failureLine(reason string) string {
 	switch reason {
+	case "unavailable":
+		return "The turn failed: the provider is unavailable."
 	case "limit":
 		return "The turn failed: the usage limit was reached."
 	case "login":

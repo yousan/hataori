@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.45**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.46**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -188,7 +188,7 @@ Since 3.34 a supervisor may ask for a thread that only reads, with `research`: t
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `machine` | string | optional | exact configured machine key; ineligible selection refuses without fallback; since 3.45 |
+| `machine` | string | optional | exact configured machine key; ineligible selection refuses without fallback; since 3.46 |
 | `key` | string | required | makes the call safe to repeat |
 | `scope` | string | required | the scope; for chat, a channel |
 | `thread` | string | required | the conversation of the first link, in the scope's own channel, of the scope's owner; empty to let the scope's owner open one; since 3.0 it names a link, before it the thread's key |
@@ -203,7 +203,7 @@ Result: integer
 
 The new thread's number; since 3.0, before it a `{scope, key}` object.
 
-Since 3.45, a client naming `machine` checks protocol 3.45 before sending;
+Since 3.46, a client naming `machine` checks protocol 3.46 before sending;
 an older daemon could otherwise ignore it. Automatic placement without room
 accepts one durable pending thread and its original link/input. Repeated keys
 return that thread; oldest accepted starts are reconsidered first. `Close`
@@ -803,9 +803,9 @@ One file the owner let through with `Trust`; since 3.28.
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `machine` | string | optional | the configured machine key, or absent for an older daemon; not an SSH address; since 3.44 |
-| `placement_pending` | boolean | optional | unplaced or waiting for admission on its fixed machine; since 3.45 |
-| `placement_reason` | string | optional | why placement waits; since 3.45 |
-| `availability` | `MachineAvailability` | optional | configured machine status: required `state`, `at` time, optional `reason`; no worker address or root; since 3.45 |
+| `placement_pending` | boolean | optional | unplaced or waiting for admission on its fixed machine; since 3.46 |
+| `placement_reason` | string | optional | why placement waits; since 3.46 |
+| `availability` | `MachineAvailability` | optional | configured machine status: required `state`, `at` time, optional `reason`; no worker address or root; since 3.46 |
 | `io_paused` | string | optional | why retained output cannot currently be read or rebuilt; offsets and resulting events do not advance; since 3.44 |
 | `id` | integer | required | the thread's number, unique in the instance; since 3.0, before it a `{scope, key}` object beside `number` |
 | `scope` | string | required | the scope it belongs to; since 3.0 |
@@ -835,9 +835,9 @@ The fields of `ThreadInfo`, and:
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `placement_pending` | boolean | optional | as in ThreadInfo; since 3.45 |
-| `placement_reason` | string | optional | as in ThreadInfo; since 3.45 |
-| `availability` | `MachineAvailability` | optional | as in ThreadInfo; since 3.45 |
+| `placement_pending` | boolean | optional | as in ThreadInfo; since 3.46 |
+| `placement_reason` | string | optional | as in ThreadInfo; since 3.46 |
+| `availability` | `MachineAvailability` | optional | as in ThreadInfo; since 3.46 |
 | `machine` | string | optional | the configured machine key, or absent for an older daemon; not an SSH address; since 3.44 |
 | `io_paused` | string | optional | why retained output cannot currently be read or rebuilt; offsets and resulting events do not advance; since 3.44 |
 | `id` | integer | required | as in `ThreadInfo` |
@@ -1403,7 +1403,7 @@ The `data` of each event kind. Integers are the instance's own numbers for threa
 
 ### Event `placement`
 
-Since 3.45, reports accepted automatic waiting, fixed-machine selection or
+Since 3.46, reports accepted automatic waiting, fixed-machine selection or
 cancellation. Required fields: `machine` (empty while unplaced/canceled),
 `pending` (boolean), `reason` (empty after selection). It belongs to the thread
 and follows its existing scope and conversation filters.
@@ -1465,7 +1465,8 @@ Exactly one per turn.
 | `principal` | string | optional | as in `turn_started` |
 | `from` | string | optional | as in `turn_started`; since 1.6 |
 | `outcome` | string | required | `completion`, `blocked` (on a question) or `failure` |
-| `reason` | string | optional | for a failure: `limit`, `login`, `api_error`, `crashed`, `interrupted`, `not delivered`, `the window took no input`, ... |
+| `reason` | string | optional | for a failure: `limit`, `login`, `api_error`, `crashed`, `interrupted`, `not delivered`, `the window took no input`, ...; since 3.45, `unavailable` means the provider rejected access, distinct from quota exhaustion or an expired login |
+| `detail` | string | optional | the agent's explanation of a failed turn, when supplied; text, omitted for a reader that may not read it; since 3.45 |
 | `background` | integer | required | background tasks still running; a reader that wants "really finished" waits for 0. After a failure it is the last count the agent gave, with the starts and ends learned since, an estimate until a turn completes |
 | `subagents` | array | optional | the ids of the subagents among the `background` tasks, as in their `subagent_started`; absent for none, or when the agent does not tell. A reader that follows the subagents takes an open one that is not named here as ended with the turn, except where `outcome` is `blocked`: that end says nothing of them; since 3.37 |
 
@@ -1656,13 +1657,13 @@ The decision in the asker's thread, since 3.10.
 
 A supervisor's `Start` or `Send`, stored as a proposal in its own thread instead of being made, since 3.26.
 
-Optional `machine` retains an explicit start selection since 3.45.
+Optional `machine` retains an explicit start selection since 3.46.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `request` | string | required | what `Answer` names |
 | `number` | integer | required | the proposal's number, as `proposed` gave it |
-| `machine` | string | optional | requested machine for a start; since 3.45 |
+| `machine` | string | optional | requested machine for a start; since 3.46 |
 | `action` | string | required | `send` or `start` |
 | `target` | integer | optional | for `send`, the thread |
 | `question` | string | optional | for `send` to a thread waiting on a question, the request it answers, as in `request` |

@@ -242,7 +242,7 @@ func (c *Client) Start(ctx context.Context, r control.StartRequest) (control.Thr
 	}
 	feature := "a research thread"
 	if r.Machine != "" {
-		since, feature = "3.45", "machine placement"
+		since, feature = "3.46", "machine placement"
 	}
 	err := c.callSince(ctx, since, feature, "Start", r, &out)
 	return out, err

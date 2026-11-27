@@ -189,6 +189,7 @@ type Result struct {
 type Ended struct {
 	Outcome    string // Completion, Blocked or Failure
 	Reason     string
+	Detail     string // provider explanation of a failed turn, when supplied
 	Background int
 	Subagents  []string // those of the background tasks that are subagents
 }
@@ -222,6 +223,9 @@ func Step(s Snapshot, in Input) (Result, error) {
 		}
 		if e.Reason != "" {
 			d["reason"] = e.Reason
+		}
+		if e.Detail != "" {
+			d["detail"] = e.Detail
 		}
 		if len(e.Subagents) > 0 {
 			d["subagents"] = slices.Clone(e.Subagents)
@@ -398,6 +402,7 @@ func stepAgent(s Snapshot, in Input, r *Result,
 			if ended.Reason == "" {
 				ended.Reason = string(agent.APIError)
 			}
+			ended.Detail = e.Text
 		}
 		end(ended)
 		to(control.Idle, "")
