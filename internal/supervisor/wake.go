@@ -1800,6 +1800,8 @@ func (d Decision) line() string {
 			return fmt.Sprintf("%s: approved by %s; its turn was interrupted, and it got your reason.", what, d.By)
 		case "ended":
 			return fmt.Sprintf("%s: approved by %s, but its turn had already ended; nothing was interrupted.", what, d.By)
+		case "not_interrupted":
+			return fmt.Sprintf("%s: approved by %s, but its window did not take the interrupt; your reason was accepted and waits for the turn to end.", what, d.By)
 		case "refused":
 			return fmt.Sprintf("%s: refused by %s; nothing was interrupted.", what, d.By)
 		}

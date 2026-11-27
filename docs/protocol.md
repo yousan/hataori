@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.42**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.43**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -238,7 +238,7 @@ Result: none
 
 ### Operation `AskInterrupt`
 
-Since 3.10. Asks a person in the scope to approve interrupting the running turn. The request is shown in the thread the daemon bound the caller to, the supervisor's own thread or a conversation of its. The caller must have been given asking: a supervisor's connection has it; the owner's connection without such a thread is `forbidden`. Nothing is interrupted until approval. Once approved, the daemon takes the reason as the target's input, as `Send` with busy 2 would, as the asker, only if the turn that ran when asked still runs. The interrupt names that turn, and the daemon checks it in the same step as the interrupt. So when the turn ends after the approval took the reason and before the interrupt, nothing is interrupted, the turn after it neither, and the outcome is `ended`; the reason, taken while the turn ran, reaches the agent as any message sent into a turn that ended first does. When an answer that approves fails after it took the reason (its interrupt failed, or recording the outcome did), the approval stays open; approved again, it is decided again: the reason is not taken or given again, the turn that ran when asked is interrupted only if it still runs, checked in the same step, and otherwise the outcome is `ended`. A repeated key returns the same request; an empty key makes no repeat check. An open request for the same running turn, asked in the same thread, is returned instead of a second one; one asked in another thread is that thread's. The caller's own approval thread cannot be the target (`forbidden`). A thread without a running turn is `refused`; send instead.
+Since 3.10. Asks a person in the scope to approve interrupting the running turn. The request is shown in the thread the daemon bound the caller to, the supervisor's own thread or a conversation of its. The caller must have been given asking: a supervisor's connection has it; the owner's connection without such a thread is `forbidden`. Nothing is interrupted until approval. Once approved, the daemon takes the reason as the target's input, as `Send` with busy 2 would, as the asker, only if the turn that ran when asked still runs. The interrupt names that turn, and the daemon checks it in the same step as the interrupt. So when the turn ends after the approval took the reason and before the interrupt, nothing is interrupted, the turn after it neither, and the outcome is `ended`; the reason, taken while the turn ran, reaches the agent as any message sent into a turn that ended first does. Since 3.43, an interrupt that the window did not take closes the approval with the outcome `not_interrupted` and `allow` true, while `Answer` reports the interrupt error; its accepted reason waits for the turn to end. When an answer that approves otherwise fails after it took the reason (its interrupt failed, or recording the outcome did), the approval stays open; approved again, it is decided again: the reason is not taken or given again, the turn that ran when asked is interrupted only if it still runs, checked in the same step, and otherwise the outcome is `ended`. A repeated key returns the same request; an empty key makes no repeat check. An open request for the same running turn, asked in the same thread, is returned instead of a second one; one asked in another thread is that thread's. The caller's own approval thread cannot be the target (`forbidden`). A thread without a running turn is `refused`; send instead.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -1558,12 +1558,14 @@ The decision in the asker's thread, since 3.10.
 |---|---|---|---|
 | `request` | string | required | what `Answer` names |
 | `allow` | boolean | required | whether approved |
-| `outcome` | string | required | `interrupted`, `ended`, or `refused` |
+| `outcome` | string | required | `interrupted`, `ended`, `refused`, or, since 3.43, `not_interrupted` |
 | `target` | integer | required | the target thread |
 | `principal` | string | optional | the person who answered |
 | `from` | string | optional | the `<client>:<id>` it came from, as in `thread_created` |
 | `link` | object | optional | the conversation where answered |
 | `via` | string | optional | as in `input`; since 3.23 |
+
+Since 3.43, `not_interrupted` records an approval whose reason was accepted but whose interrupt the agent's window did not take. The turn continues and the reason waits for its end, as for a `Send` with busy 2 that answers `not_interrupted`. `allow` is true, the approval is closed, and `Answer` still reports the interrupt error. A later answer cannot replace this decision with a refusal.
 
 ### Event `proposal_made`
 
