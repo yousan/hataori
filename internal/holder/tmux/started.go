@@ -112,20 +112,6 @@ func (h *Holder) Start(ctx context.Context, stateDir string, spec holder.Spec) (
 	// replaced.
 	onServer, withProcess := fmt.Sprintf("#{==:#{pid},%d}", r.Server), fmt.Sprintf("#{==:#{pane_pid},%d}", made)
 	keep, run := h.setUp(r)
-	// On 3.2a the initial detached window can ignore new-session's size.
-	// Resize the placeholder before the agent starts, then restore inherited
-	// sizing so a client that attaches later still controls the window.
-	for _, command := range []string{
-		fmt.Sprintf("resize-window -t %s -x %d -y %d", r.Pane, cols, rows),
-		"set-option -w -u -t " + r.Pane + " window-size",
-	} {
-		// A setup or resize hook can replace the placeholder, too.
-		guarded := ifPane(r.Pane, command, onServer, withProcess)
-		for i := range guarded {
-			guarded[i] = quote(guarded[i])
-		}
-		keep += " ; " + strings.Join(guarded, " ")
-	}
 	// If the first condition is cut short, nothing runs, including the
 	// respawn. A second check still protects against changes in setup hooks.
 	ack, err := newBuffer()
