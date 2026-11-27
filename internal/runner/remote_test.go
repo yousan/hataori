@@ -668,8 +668,6 @@ func (c *unwrittenUnknown) Read(b []byte) (int, error) {
 
 func TestRemoteRunnerUnknownUnreportedInputPreservesUncertainty(t *testing.T) {
 	f, _ := remoteFixture(t, false)
-	seedRemote(t, f, 1, "reply ready")
-	waitFor(t, "initial turn", 5*time.Second, f.has("turn_ended", 1))
 	cfg := f.run.Remotes["build"]
 	open := cfg.Open
 	var writes atomic.Int64
@@ -681,14 +679,10 @@ func TestRemoteRunnerUnknownUnreportedInputPreservesUncertainty(t *testing.T) {
 		return &unwrittenUnknown{Conn: c, writes: &writes}, p, nil
 	}
 	f.run.Remotes["build"] = cfg
-	// Existing followers retain their verified transport object.
-	lv, err := f.run.get(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lv.mu.Lock()
-	lv.io.(*machineio.Remote).Open = cfg.Open
-	lv.mu.Unlock()
+	// Configure the cut before starting any follower; the machine map is
+	// immutable while the runner and its cleanup loop use it.
+	seedRemote(t, f, 1, "reply ready")
+	waitFor(t, "initial turn", 5*time.Second, f.has("turn_ended", 1))
 	if err := owner(f.core).Send(context.Background(), thread, "unknown", control.Input{Text: "reply unknown delivery"}, control.Deliver); !errors.Is(err, machineio.ErrUnknown) {
 		t.Fatalf("unknown delivery: %v", err)
 	}
@@ -704,7 +698,7 @@ func TestRemoteRunnerUnknownUnreportedInputPreservesUncertainty(t *testing.T) {
 	if err := next.Reconnect(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	lv, err = next.get(1)
+	lv, err := next.get(1)
 	if err != nil {
 		t.Fatal(err)
 	}
