@@ -64,6 +64,8 @@ jobs:
             exit 1
           fi
       - run: go vet ./...
+      - name: isolated worker SSH scenarios
+        run: go test -v -count=1 -timeout 2m ./internal/workerssh
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
       # cmd/hataori runs the daemon, session hosts and a browser for each
@@ -106,6 +108,8 @@ jobs:
           "$copy/Contents/MacOS/Google Chrome" --version
           echo "HATAORI_TEST_CHROME=$copy/Contents/MacOS/Google Chrome" >> "$GITHUB_ENV"
       - run: go vet ./...
+      - name: isolated worker SSH scenarios
+        run: go test -v -count=1 -timeout 2m ./internal/workerssh
       - name: build without cgo
         run: CGO_ENABLED=0 go build ./...
       - name: go test
