@@ -82,7 +82,18 @@ func NewCodec(spec agent.Spec, opts Options) agent.Codec {
 	if opts.InputTimeout == 0 {
 		opts.InputTimeout = DefaultInputTimeout
 	}
-	return &codec{spec: spec, opts: opts, next: 1, requests: make(map[int]string)}
+	c := &codec{spec: spec, opts: opts, next: 1, requests: make(map[int]string)}
+	if spec.Confine != nil {
+		// A daemon reconnect replays stdout without calling Open. Reserve the
+		// same handshake ids so rate-limit response ordering cannot satisfy
+		// the current-instructions gate by accident.
+		c.next = 4
+		c.requests[1], c.requests[2], c.requests[3] = "initialize", "thread/start", RateLimitsRead
+		if spec.ResumeID != "" {
+			c.requests[2] = "thread/resume"
+		}
+	}
+	return c
 }
 
 // emit numbers and appends an event.
@@ -117,6 +128,9 @@ func (c *codec) Open() agent.Actions {
 		c.emit(&a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
 		return a
 	}
+	if c.spec.Confine != nil {
+		c.next = 1 // Open emits the handshake reserved by NewCodec for replay.
+	}
 	c.write(&a, "initialize", map[string]any{"clientInfo": map[string]any{"name": "hataori", "version": "0"}, "capabilities": map[string]any{"experimentalApi": true}}, true)
 	c.write(&a, "initialized", map[string]any{}, false)
 	p := map[string]any{}
@@ -136,9 +150,8 @@ func (c *codec) Open() agent.Actions {
 		p["approvalPolicy"] = c.opts.ApprovalPolicy
 	}
 	if c.spec.Confine != nil {
-		// Explicit on both start and resume: config defaults do not replace
-		// instructions saved with an existing CLI thread. Launch has the full
-		// composition; the runner intentionally stores only its base spec.
+		// Keep the complete launch composition for initial context and rebuilds.
+		// Resume also needs the acknowledged injection below to refresh history.
 		p["developerInstructions"] = c.opts.confinedInstructions
 		p["sandbox"] = "read-only"
 		p["approvalPolicy"] = "never"
@@ -257,6 +270,11 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 	defer c.mu.Unlock()
 	var a agent.Actions
 	if src != agent.Output {
+		return a
+	}
+	if c.spec.Confine != nil && c.opts.confinedInstructions == "" && !c.closed {
+		c.closed = true
+		c.emit(&a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
 		return a
 	}
 	var m message
@@ -388,7 +406,7 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 	}
 	if method == "thread/inject_items" && c.pendingReady != nil && !c.closed {
 		var ack map[string]json.RawMessage
-		if json.Unmarshal(m.Result, &ack) != nil || ack == nil {
+		if json.Unmarshal(m.Result, &ack) != nil || ack == nil || len(ack) != 0 {
 			c.closed = true
 			c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
 			return

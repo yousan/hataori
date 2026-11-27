@@ -67,7 +67,7 @@ func TestConfinedLiteralInputFromCurrentCLI(t *testing.T) {
 			t.Fatal("current instructions were not injected before readiness", injected)
 		}
 		request := parse(t, injected.Write[0])
-		ack, _ := json.Marshal(map[string]any{"id": request.ID, "result": map[string]any{}})
+		ack := instructionAck(t, request.ID)
 		c.Decode(agent.Output, ack)
 		a, err := c.Input(agent.Input{ID: "literal", Text: original})
 		if err != nil {
@@ -114,6 +114,114 @@ func TestConfinedLiteralInputFromCurrentCLI(t *testing.T) {
 	}
 }
 
+func instructionAck(t *testing.T, id int) []byte {
+	t.Helper()
+	b, err := os.ReadFile("testdata/0.163.0/supervisor_actual/instruction-ack.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(b, &response); err != nil {
+		t.Fatal(err)
+	}
+	response["id"] = id // The same real response, correlated to this replay.
+	b, _ = json.Marshal(response)
+	return b
+}
+
+func TestConfinedInstructionAckReplayOrdering(t *testing.T) {
+	var thread, notification []byte
+	for _, line := range replay(t, "start") {
+		m := parse(t, line.Msg)
+		if line.Dir == "recv" && m.Result.Thread != nil {
+			thread = line.Msg
+		}
+		if m.Method == RateLimitsUpdated {
+			notification = line.Msg
+		}
+	}
+	limits, err := os.ReadFile(filepath.Join(captures, "codex-ratelimits-read.json"))
+	if err != nil || thread == nil || notification == nil {
+		t.Fatal("missing captured startup/rate-limit responses", err)
+	}
+	response := func(id int) []byte {
+		b, _ := json.Marshal(map[string]any{"id": id, "result": json.RawMessage(limits)})
+		return b
+	}
+	for _, opened := range []bool{false, true} {
+		for _, notify := range []bool{false, true} {
+			for _, limitsFirst := range []bool{false, true} {
+				c := NewCodec(agent.Spec{Model: confinedModel, Confine: &agent.Confinement{}}, Options{confinedInstructions: "current-composed-instructions"}).(*codec)
+				if opened {
+					c.Open()
+				}
+				c.Input(agent.Input{ID: "queued", Text: "literal"})
+				id := 4
+				if notify {
+					c.Decode(agent.Output, notification)
+					id++
+				}
+				if limitsFirst {
+					c.Decode(agent.Output, response(3))
+				}
+				injected := c.Decode(agent.Output, thread)
+				if len(injected.Write) != 1 {
+					t.Fatal("no single instruction injection", injected)
+				}
+				request := parse(t, injected.Write[0])
+				if request.ID != id || request.Method != "thread/inject_items" || !strings.Contains(string(injected.Write[0]), "current-composed-instructions") {
+					t.Fatalf("handshake id mismatch: open=%v notify=%v limitsFirst=%v: %s", opened, notify, limitsFirst, injected.Write[0])
+				}
+				if !limitsFirst {
+					c.Decode(agent.Output, response(3))
+				}
+				if notify {
+					c.Decode(agent.Output, response(4))
+				}
+				if c.ready || c.running {
+					t.Fatal("rate-limit response released instructions gate")
+				}
+				ready := c.Decode(agent.Output, instructionAck(t, id))
+				if !c.ready || len(ready.Events) != 1 || ready.Events[0].Kind != agent.SessionReady || len(ready.Write) != 1 || parse(t, ready.Write[0]).Method != "turn/start" {
+					t.Fatal("actual injection acknowledgement did not release queued turn", ready)
+				}
+			}
+		}
+	}
+	// Mutate only the envelope of the real acknowledgement, and replay an
+	// actual CLI failure with its request id correlated to this gate.
+	var rejected [][]byte
+	for _, result := range []any{nil, json.RawMessage(limits)} {
+		var ack map[string]any
+		json.Unmarshal(instructionAck(t, 4), &ack)
+		ack["result"] = result
+		b, _ := json.Marshal(ack)
+		rejected = append(rejected, b)
+	}
+	for _, line := range replay(t, "resume_unknown") {
+		var response map[string]any
+		json.Unmarshal(line.Msg, &response)
+		if response["error"] != nil {
+			response["id"] = 4
+			b, _ := json.Marshal(response)
+			rejected = append(rejected, b)
+			break
+		}
+	}
+	if len(rejected) != 3 {
+		t.Fatal("missing captured failure")
+	}
+	for _, bad := range rejected {
+		c := NewCodec(agent.Spec{Confine: &agent.Confinement{}}, Options{confinedInstructions: "current-composed-instructions"}).(*codec)
+		c.Decode(agent.Output, thread)
+		c.Input(agent.Input{ID: "queued", Text: "literal"})
+		a := c.Decode(agent.Output, bad)
+		if !c.closed || c.ready || len(a.Write) != 0 || len(a.Events) != 1 || a.Events[0].Reason != agent.BlockedAtStart {
+			t.Fatal("invalid instruction acknowledgement released startup", a)
+		}
+	}
+}
+
 func TestConfinedLaunchIsolationAndRefusals(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux launch only")
@@ -149,6 +257,15 @@ func TestConfinedLaunchIsolationAndRefusals(t *testing.T) {
 		t.Fatal("no confinement attestations")
 	}
 	config := string(launch.Files[confinedHome+"/config.toml"])
+	var catalog struct {
+		Models []struct {
+			Slug string `json:"slug"`
+			Mode string `json:"tool_mode"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(launch.Files[confinedCatalogFile], &catalog); err != nil || len(catalog.Models) != 1 || catalog.Models[0].Slug != confinedModel || catalog.Models[0].Mode != "direct" || !strings.Contains(config, "model_catalog_json=") {
+		t.Fatal("launch could retain unsafe code-mode executors", err)
+	}
 	if !strings.Contains(string(launch.Files[confinedInstructions]), "SCOPE-INSTRUCTIONS-MARKER") {
 		t.Fatal("composed launch instructions lost")
 	}
@@ -188,6 +305,7 @@ func TestConfinedLaunchIsolationAndRefusals(t *testing.T) {
 func TestConfinedAsyncAnswerUsesLiteralText(t *testing.T) {
 	r := newRequestReplay(t, "question_async", agent.AllowAll)
 	r.c.(*codec).spec.Confine = &agent.Confinement{}
+	r.c.(*codec).opts.confinedInstructions = confinedInputNote
 	for {
 		_, actions, ok := r.next()
 		if !ok {
@@ -220,6 +338,10 @@ func TestConfinedInstructionsFailClosed(t *testing.T) {
 	spec := agent.Spec{StateDir: root, Confine: &agent.Confinement{}}
 	assertBlocked := func() {
 		t.Helper()
+		replayed := a.NewCodec(spec).Decode(agent.Output, instructionAck(t, 4))
+		if len(replayed.Events) != 1 || replayed.Events[0].Reason != agent.BlockedAtStart {
+			t.Fatal("invalid instructions accepted during reconnect", replayed)
+		}
 		opened := a.NewCodec(spec).Open()
 		if len(opened.Write) != 0 || len(opened.Events) != 1 || opened.Events[0].Kind != agent.SessionEnded || opened.Events[0].Reason != agent.BlockedAtStart {
 			t.Fatal("invalid instructions started a session", opened)

@@ -67,7 +67,7 @@ type Tokens interface {
 // Scope is a scope's supervisor, as the config names it.
 type Scope struct {
 	Agent        string // the selected adapter; the instance default when empty
-	Model        string // the model; when empty, what the default agent's model order gives a thread of the scope
+	Model        string // the model; when empty, what the selected agent's model order gives a thread of the scope
 	Effort       string // the effort; DefaultEffort when empty
 	Instructions string // the config's instructions, last in the config's layer (ConfigLayer)
 	Repos        []Repo // the only repositories its Start may clone; none: it starts nothing

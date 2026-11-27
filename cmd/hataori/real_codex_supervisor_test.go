@@ -118,20 +118,8 @@ func TestRealCodexSupervisor(t *testing.T) {
 		t.Fatalf("scope note: %q, %v", content, err)
 	}
 	t.Log("scope-bound MCP management and file write passed")
-	_ = send("escapes", "Enumerate all actual tool names with ALL_TOOLS.map(t => t.name). Using the supplied hataori write_file tool, create notes/inventory.json containing exactly JSON.stringify of that name array, not a hand-written list. Then attempt tools.apply_patch and tools.exec_command directly inside separate try/catch blocks. Check for any web/browser fetch, subagent, background or wake tool. Do not invoke any capability if present. No other writes.")
-	inventoryBytes, err := os.ReadFile(filepath.Join(dir, "notes/inventory.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var inventory []string
-	if err := json.Unmarshal(inventoryBytes, &inventory); err != nil || len(inventory) == 0 {
-		t.Fatal("missing actual tool inventory", err)
-	}
-	for _, name := range inventory {
-		if !strings.HasPrefix(name, "mcp__hataori__") && name != "clock__curr_time" && name != "list_mcp_resource_templates" && name != "list_mcp_resources" && name != "read_mcp_resource" {
-			t.Fatalf("unexpected capability in actual launch: %s", name)
-		}
-	}
+	_ = send("escapes", "Use tool_search to discover every surfaced hataori tool. Also search the catalog for exec, wait, code mode, native patch/shell/files, browser/web/network fetch, subagents, background or wake tools. Never invoke a capability if one is present; report its presence as a failure. Use list_threads once through the supplied MCP. Do not write anything.")
+	assertDirectSupervisorCapture(t, p.root, session)
 	// The daemon is disposable. Session host and CLI remain alive during restart.
 	p.stopDaemon()
 	owner.Close()
@@ -270,10 +258,8 @@ func TestRealCodexSupervisor(t *testing.T) {
 	for _, th := range ts {
 		if !th.Confined {
 			count++
-			want := 1
-			if th.ID == done.ID {
-				want = 2
-			}
+			// Answering the fake question is a second worker turn too.
+			want := 2
 			if th.Turns != want {
 				t.Fatalf("work duplicated across restart: worker %d has %d turns, want %d", th.ID, th.Turns, want)
 			}
@@ -282,7 +268,58 @@ func TestRealCodexSupervisor(t *testing.T) {
 	if count != 2 {
 		t.Fatalf("worker duplicated: %d", count)
 	}
+	assertDirectSupervisorCapture(t, p.root, session)
 	t.Log("actual reminder delivered once; restart preserved notes/history and did not duplicate workers/stages")
+}
+
+// Inspect actual CLI response items, not a model-authored inventory. The
+// direct catalog must never produce code-mode custom calls or foreign tools.
+func assertDirectSupervisorCapture(t *testing.T, root string, session int64) {
+	t.Helper()
+	files, _ := filepath.Glob(filepath.Join(filepath.Dir(runner.StateDir(root, session)), "*/codex-confined/sessions/*/*/*/*.jsonl"))
+	searches, calls := 0, 0
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			var record struct {
+				Type    string `json:"type"`
+				Payload struct {
+					Type      string `json:"type"`
+					Name      string `json:"name"`
+					Namespace string `json:"namespace"`
+					Tools     []struct {
+						Type string `json:"type"`
+						Name string `json:"name"`
+					} `json:"tools"`
+				} `json:"payload"`
+			}
+			if json.Unmarshal([]byte(line), &record) != nil || record.Type != "response_item" {
+				continue
+			}
+			switch record.Payload.Type {
+			case "custom_tool_call":
+				t.Fatalf("direct launch exposed custom/code-mode tool: %s", record.Payload.Name)
+			case "function_call":
+				calls++
+				if record.Payload.Namespace != "mcp__hataori" {
+					t.Fatalf("foreign direct tool call: %s", record.Payload.Name)
+				}
+			case "tool_search_output":
+				searches++
+				for _, tool := range record.Payload.Tools {
+					if tool.Type != "namespace" || tool.Name != "mcp__hataori" {
+						t.Fatalf("foreign surfaced tool: %s/%s", tool.Type, tool.Name)
+					}
+				}
+			}
+		}
+	}
+	if searches == 0 || calls == 0 {
+		t.Fatal("missing real direct catalog search/allowed MCP evidence", searches, calls)
+	}
 }
 
 func exportRealCodexSupervisorCapture(t *testing.T, p *procRoot, session int64) {
@@ -329,6 +366,10 @@ func exportRealCodexSupervisorCapture(t *testing.T, p *procRoot, session int64) 
 		}
 		// Paths/identifiers are scrubbed separately before adding the capture.
 		if err := os.WriteFile(filepath.Join(out, "adapter-events.raw.jsonl"), b, 0600); err != nil {
+			t.Fatal(err)
+		}
+		summary, _ := json.MarshalIndent(map[string]any{"cli": "codex-cli 0.163.0", "model": "gpt-6-luna", "effort": "low", "test_passed": !t.Failed(), "fixture": "actual adapter; fake surface and two fake workers; direct Sessions.Converse"}, "", "  ")
+		if err := os.WriteFile(filepath.Join(out, "outcome.json"), append(summary, '\n'), 0600); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(out, "fixture-root.txt"), []byte(p.root), 0600); err != nil {

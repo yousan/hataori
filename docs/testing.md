@@ -93,7 +93,8 @@ Linux only, codex-cli 0.163.0, model `gpt-6-luna`, existing ChatGPT CLI
 file authentication and bubblewrap. No terminal or other provider runs. The
 actual adapter launches a disposable daemon/scope with a fake chat surface
 and two fake workers. It checks composed instruction delivery and refresh,
-MCP management and file access, the actual tool inventory, daemon restart,
+direct MCP management and file access, actual catalog search outputs with no
+code-mode/custom tool calls, daemon restart,
 process resume, conversation and fresh wake launches, question answering,
 authorized next-stage dispatch, a real five-minute reminder and no duplicate
 worker/stage after restart. The conversation step calls the existing

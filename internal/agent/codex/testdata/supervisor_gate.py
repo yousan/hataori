@@ -6,7 +6,8 @@ Usage: supervisor_gate.py NEW_OUTPUT_DIR [read-only|workspace-write] [no-environ
 No credential is read by Python or copied. bubblewrap exposes existing auth.json
 read-only to Codex, hides the real home/workspaces, and makes all mutable CLI
 state and test targets disposable. Does not delete fixtures. No tmux or API.
-The outer wrapper is test protection, not a proposed adapter confinement.
+The outer wrapper protects the fixture; the adapter separately implements its
+reviewed mount plan and current-instruction handshake.
 """
 import json
 import os
@@ -34,7 +35,7 @@ FLAGS += ["-c", 'web_search="disabled"', "-c", "agents.max_depth=0",
           "-c", 'projects={"/fixture/work"={trust_level="untrusted"}}',
           "-c", 'mcp_servers={sv={command="/usr/bin/python3",args=["/fixture/mcp.py"],env={FIXTURE_CREDENTIAL="disposable-fixture-only"},default_tools_approval_mode="approve"}}']
 
-MCP = '''import json, os, pathlib, sys
+MCP = '''import json, os, pathlib, sys, time
 for line in sys.stdin:
     m=json.loads(line)
     if "id" not in m: continue
@@ -46,6 +47,8 @@ for line in sys.stdin:
     elif method=="tools/call" and m["params"]["name"]=="record_note":
         assert os.environ.get("FIXTURE_CREDENTIAL")=="disposable-fixture-only"
         pathlib.Path("/fixture/notes/mcp-note.txt").write_text(m["params"]["arguments"]["note"])
+        if m["params"]["arguments"]["note"]=="delayed-after-turn":
+            pathlib.Path("/fixture/notes/delayed-event.json").write_text(json.dumps({"at":time.time(),"note":"delayed-after-turn"}))
         r={"content":[{"type":"text","text":"Recorded in the disposable fixture."}]}
     else:
         print(json.dumps({"jsonrpc":"2.0","id":m["id"],"error":{"code":-32601,"message":"Unsupported"}}),flush=True)
@@ -74,6 +77,12 @@ def main():
     (root/"work/mention.txt").write_text("DO-NOT-ATTACH-FIXTURE-CONTENT\n")
     cli = Path(shutil.which("codex")).resolve()
     auth = Path(os.environ.get("CODEX_HOME", str(Path.home()/".codex")))/"auth.json"
+    if len(sys.argv)>5 and sys.argv[5]=="direct-mode":
+        catalog = json.loads(Path(os.environ["HATAORI_CODEX_FIXTURE_CATALOG"]).read_text())
+        selected = next(m for m in catalog["models"] if m["slug"] == MODEL)
+        selected["tool_mode"] = "direct"
+        (root/"model-catalog.json").write_text(json.dumps({"models":[selected]}))
+        FLAGS.extend(["-c", 'model_catalog_json="/fixture/model-catalog.json"'])
     if not auth.is_file():
         raise SystemExit("existing file auth unavailable; no login or copy attempted")
     cmd = ["bwrap"]
@@ -200,6 +209,23 @@ def main():
             outcome["resumed_turn_status"] = turn(
                 "After resume enumerate every actual tool name again and record note resumed-ok with sv.record_note. "
                 "No native environment tools should exist.")
+            if len(sys.argv)>4 and sys.argv[4]=="background-probe":
+                outcome["delayed_turn_started_at"] = time.time()
+                outcome["delayed_turn_status"] = turn(
+                    "Disposable code-mode lifecycle test. Use exec with yield_time_ms 1000 in its directive. "
+                    "Inside that script await new Promise(resolve => setTimeout(resolve, 12000)); "
+                    "then await tools.mcp__sv__record_note({note:'delayed-after-turn'}). "
+                    "When exec reports Script running, immediately give your final answer without waiting "
+                    "or using functions.wait. This only writes a disposable test marker. Do not call other tools.")
+                outcome["delayed_turn_completed_at"] = time.time()
+                time.sleep(15)
+                marker = root/"notes/delayed-event.json"
+                outcome["delayed_marker_while_idle"] = json.loads(marker.read_text()) if marker.exists() else None
+                outcome["second_turn_started_at"] = time.time()
+                outcome["second_turn_status"] = turn("Reply only harmless-second-turn. Do not call any tool or record any note.")
+                time.sleep(3)
+                outcome["delayed_marker_after_second_turn"] = json.loads(marker.read_text()) if marker.exists() else None
+
     except Exception as e:
         outcome["error"] = str(e)
     finally:
@@ -239,7 +265,7 @@ def main():
     (out/"outcome.json").write_text(json.dumps(scrub(outcome),indent=2)+"\n")
     with (out/"wire.jsonl").open("w") as f:
         for row in raw:
-            if "reasoning" in row["msg"].get("method", "").lower():
+            if "reasoning" in row["msg"].get("method", "").lower() or row["msg"].get("method", "").startswith(("account/", "thread/tokenUsage")):
                 continue
             f.write(json.dumps(scrub(row))+"\n")
     print(json.dumps({k:outcome.get(k) for k in ("version","sandbox","turn_status","error","native_write","mcp_note","exit_code")},indent=2))

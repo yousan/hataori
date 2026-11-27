@@ -14,14 +14,31 @@ with `stable_environment_tools=false`. The current CLI's
 [environment-tool registration](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/src/tools/spec_plan.rs)
 gates native patch and shell tools separately from supplied MCP tools.
 
-The current tool inventory contained only the supplied fixture MCP tool,
-MCP resource accessors for the supplied servers, and the read-only clock.
-Native `apply_patch` and `exec_command` calls threw `TypeError`. In code mode,
-`fetch`, `process`, `require` and `WebSocket` were undefined; its `exec` is
-JavaScript orchestration over that inventory, not an OS shell. No shell,
-file tool, subagent, web/browser/network fetch or background/wake tool was
-available. Read-only sandbox and approval policy `never` remain defense in
-depth; refusing a write is insufficient to attest `NoWriteTools`.
+The initial code-mode tool inventory looked safe but was **insufficient**.
+A bounded real probe yielded a delayed MCP note call, ended that turn, and
+waited 15 seconds without a write. Starting an unrelated turn that explicitly
+requested no tools caused the old queued MCP call to execute immediately.
+`supervisor_code_mode_background/` retains this rejected-mode evidence.
+Disabling native shell/patch alone cannot support this supervisor boundary.
+
+The final launch removes code mode entirely. Its isolated `model_catalog_json`
+contains the exact chosen model object fetched by the CLI in the disposable
+fixture, changing only `tool_mode` from `code_mode_only` to `direct`. Root cache
+identity/account fields are excluded. The embedded catalog is pinned with the
+CLI and model; it is not a translated conversation or a provider change.
+The CLI's [static catalog manager](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/model-provider/src/provider.rs)
+uses this catalog authoritatively, and [tool planning](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/src/tools/spec_plan.rs)
+registers no exec/wait handlers; the [router](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/src/tools/router.rs)
+requires no code-mode dispatcher in Direct mode.
+Code-mode flags are disabled as defense in depth.
+
+Real direct-mode catalog searches surfaced only the supplied fixture MCP tool;
+allowed direct MCP calls and literal input/resume succeeded. No exec/wait or
+code-mode runtime was available for the delayed-cell probe, and neither idle
+nor a later turn produced its marker. No native shell/patch, browser/network, subagent or background/wake mechanism
+was available. Hataori may still supply its scope-bound reminder tool. Read-only sandbox and approval
+policy `never` remain defense in depth; refusing a write alone is insufficient
+to attest `NoWriteTools`.
 
 The adapter reads complete composed instructions from a generated session-state
 file. Missing or unrecognized instructions refuse codec startup. The current
@@ -32,8 +49,10 @@ adapter therefore uses `thread/inject_items` to append the current trusted
 composition as a developer message after start/resume, and waits for its
 acknowledgment before reporting readiness or starting a turn. Failure refuses
 startup. This snapshot explicitly replaces earlier supervisor snapshots, keeping
-the documented layer order. Static CLI instructions contain only the adapter's
-literal-input explanation. Native tools remain independently disabled.
+the documented layer order. Full static CLI instructions also support context rebuilds;
+`retain_client_developer_messages=true` retains injected snapshots across
+compaction. Only trusted launch composition enters this channel, never user
+input. Native tools remain independently disabled.
 Automatic daemon startup is also disabled; stdio app-server needs no proxy.
 
 Text input on pipes is not a terminal command. Every input and steer replaces
@@ -67,17 +86,29 @@ the token does not belong in stored specs, captures or the conversation.
 
 ## Evidence and limits
 
-- `internal/agent/codex/testdata/0.163.0/supervisor_gate/`: sanitized real
-  stdio messages and filesystem observations from disposable fixtures,
-  captured on 2026-11-27 by `supervisor_gate.py`. Allowed MCP note writes,
-  unavailable native tools, direct escape attempts, hostile project settings,
-  literal command/file/skill text and a fresh-process resume all passed.
-  A synthetic MCP credential reached only its supplied server and was absent
-  from its rollout files. Virtual home and rollout filenames are normalized.
-- `TestRealCodexSupervisor`: opt-in, actual adapter and daemon with a fake
-  chat service and fake workers. Initial launch, allowed management/file
-  operations, daemon reconnection and process sleep/resume have passed.
-  The full worker/conversation/reminder proof is recorded when complete.
+- `internal/agent/codex/testdata/0.163.0/supervisor_gate/`: initial real
+  stdio/settings/literal/native-tool evidence, captured on 2026-11-27 by
+  `supervisor_gate.py`. Its code-mode inventory was insufficient for the
+  background guarantee; it is retained as rejected-mode evidence.
+- `supervisor_code_mode_background/`: bounded delayed-cell counterexample.
+  The write happened after the first turn completed, when a later turn began.
+- `supervisor_direct/`: fresh real direct-mode allowed MCP, native/cell
+  absence, hostile project settings, literal input and process-resume proof.
+  The delayed-cell request could not start; both later marker checks were
+  empty. A synthetic MCP credential reached only its supplied server and
+  was absent from rollout files. Virtual paths/identifiers are normalized.
+- `supervisor_rejected_code_mode/`: earlier actual-adapter response items,
+  kept separately because that mode is unsafe even though management works.
+- `TestRealCodexSupervisor`: opt-in actual adapter/daemon with fake chat and
+  two fake workers. The final Direct-mode run passed in 416 seconds on
+  2026-11-27: initial/updated instruction delivery, catalog search and native/cell
+  absence, direct management/file calls, process sleep/resume, reconnect, separate
+  human conversation, fresh wakes, question answer/next stage and one actual
+  five-minute reminder across restart. Both workers had exactly two authorized
+  turns afterward (question answering is a second turn), with no extra worker
+  or stage. `supervisor_actual/` holds selected sanitized response items and
+  the actual instruction-injection acknowledgement; no USER.md tool read
+  supplied the refreshed marker.
 - Capture-based regression tests check the actual CLI's returned literal
   input and its delivery identity; adapter refusal and settings isolation,
   selected-agent own/conversation/wake launches and operator switching have
@@ -85,10 +116,22 @@ the token does not belong in stored specs, captures or the conversation.
   tmux test or other provider is needed for this work.
 
 The fixtures do not constitute a general-purpose OS sandbox proof, a proof
-for other models/versions, or a production deployment. No production state,
-worker or configuration was changed, and no login command was initiated. Required reviews are a fresh
+for other models/versions, or a production deployment. Direct mode uses a
+frozen model catalog; changing that catalog requires a fresh real proof. No production state,
+worker or configuration was changed, and no login flow or credential change was initiated.
+Required reviews are a fresh
 independent Codex code review and a separate confinement-focused review.
 Final-head CI must pass before merge; main CI must pass after merge.
+
+The prototype can reproduce the rejected delayed-cell case with
+`supervisor_gate.py <new-output> read-only no-environment background-probe`.
+For the direct comparison, set `HATAORI_CODEX_FIXTURE_CATALOG` to the isolated
+CLI fixture's `models_cache.json` and append `direct-mode`. The script writes
+only the selected model object, with its tool mode changed; it excludes cache
+identity fields. The embedded catalog is that same parsed object, independently
+compared with only `tool_mode` changed. `scrub_actual.py` selects actual adapter
+outputs and redacts paths/identifiers after the test exports its fixture files.
+Never use production logs/configuration or an authentication file as evidence.
 
 ## Non-destructive operator switch and rollback
 
