@@ -44,8 +44,52 @@ func DialContext(ctx context.Context, stateDir string) (*Client, error) {
 	return &Client{conn: c, dec: json.NewDecoder(bufio.NewReader(c))}, nil
 }
 
+// DialIdentity connects to the socket computed for this owned state directory,
+// never to a stored socket-pointer address, and verifies the live host's opaque
+// identity. It is for callers that reserved the identity before launching.
+func DialIdentity(ctx context.Context, stateDir, identity string) (*Client, error) {
+	if identity == "" {
+		return nil, errors.New("host: empty owned-run identity")
+	}
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "unix", defaultSocket(stateDir))
+	if err != nil {
+		return nil, err
+	}
+	c := &Client{conn: conn, dec: json.NewDecoder(bufio.NewReader(conn))}
+	got, err := c.Identity()
+	if err != nil || got != identity {
+		c.Close()
+		return nil, errors.New("host: owned-run identity does not match")
+	}
+	return c, nil
+}
+
 // Close closes the connection; the host keeps running.
 func (c *Client) Close() error { return c.conn.Close() }
+
+// Identity returns the caller-reserved identity held by the live host. An old
+// host that lacks the operation refuses; an empty identity never proves that
+// an externally recorded run owns this host.
+func (c *Client) Identity() (string, error) {
+	c.conn.SetDeadline(time.Now().Add(2 * time.Second))
+	defer c.conn.SetDeadline(time.Time{})
+	r, err := c.call(request{Op: "identity"})
+	return r.Identity, err
+}
+
+// Deadline bounds operations on a dedicated connection. Callers sharing a
+// Client must coordinate deadline changes with their own calls.
+func (c *Client) Deadline(t time.Time) error { return c.conn.SetDeadline(t) }
+
+// End stops this connected host's command, keeping a verified connection
+// rather than dialing a pathname again after checking its run identity. The
+// caller reads the recorded final status afterwards; no PID is taken from it
+// as permission to signal a process.
+func (c *Client) End(interrupt, terminate time.Duration) (StopResult, error) {
+	r, err := c.call(request{Op: "stop", Interrupt: interrupt, Terminate: terminate})
+	return StopResult{Already: r.Already, Signals: r.Signals}, err
+}
 
 func (c *Client) call(req request) (response, error) {
 	c.mu.Lock()

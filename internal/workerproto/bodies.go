@@ -14,37 +14,39 @@ type Operation struct {
 	Capability string
 	Session    bool
 	Durable    bool
+	Since      int // first minor in major 1
 }
 
 var operations = map[string]Operation{
-	"health":          {"health", "health", false, false},
-	"inventory":       {"inventory", "health", false, false},
-	"probe":           {"probe", "health", false, false},
-	"prepare":         {"prepare", "host", true, true},
-	"start":           {"start", "host", true, true},
-	"stop":            {"stop", "host", true, true},
-	"input":           {"input", "host", true, true},
-	"answer":          {"answer", "host", true, true},
-	"receipt":         {"receipt", "receipts", true, false},
-	"attach":          {"attach", "terminal", true, false},
-	"keys":            {"keys", "terminal", true, false},
-	"resize":          {"resize", "terminal", true, false},
-	"detach":          {"detach", "terminal", true, false},
-	"follow":          {"follow", "replay", true, false},
-	"read":            {"read", "replay", true, false},
-	"history_release": {"history_release", "replay", true, true},
-	"clone":           {"clone", "workspace", true, true},
-	"fetch":           {"fetch", "workspace", true, true},
-	"inspect":         {"inspect", "workspace", true, false},
-	"remove":          {"remove", "workspace", true, true},
-	"restore":         {"restore", "workspace", true, true},
-	"acknowledge":     {"acknowledge", "workspace", true, true},
-	"purge":           {"purge", "workspace", true, true},
-	"upload":          {"upload", "transfer", true, true},
-	"download":        {"download", "transfer", true, false},
-	"login_start":     {"login_start", "login", false, false},
-	"login_input":     {"login_input", "login", false, false},
-	"login_cancel":    {"login_cancel", "login", false, false},
+	"health":          {"health", "health", false, false, 0},
+	"inventory":       {"inventory", "health", false, false, 0},
+	"probe":           {"probe", "health", false, false, 0},
+	"prepare":         {"prepare", "host", true, true, 0},
+	"start":           {"start", "host", true, true, 0},
+	"end_host":        {"end_host", "lifecycle", true, true, 1},
+	"stop":            {"stop", "host", true, true, 0},
+	"input":           {"input", "host", true, true, 0},
+	"answer":          {"answer", "host", true, true, 0},
+	"receipt":         {"receipt", "receipts", true, false, 0},
+	"attach":          {"attach", "terminal", true, false, 0},
+	"keys":            {"keys", "terminal", true, false, 0},
+	"resize":          {"resize", "terminal", true, false, 0},
+	"detach":          {"detach", "terminal", true, false, 0},
+	"follow":          {"follow", "replay", true, false, 0},
+	"read":            {"read", "replay", true, false, 0},
+	"history_release": {"history_release", "replay", true, true, 0},
+	"clone":           {"clone", "workspace", true, true, 0},
+	"fetch":           {"fetch", "workspace", true, true, 0},
+	"inspect":         {"inspect", "workspace", true, false, 0},
+	"remove":          {"remove", "workspace", true, true, 0},
+	"restore":         {"restore", "workspace", true, true, 0},
+	"acknowledge":     {"acknowledge", "workspace", true, true, 0},
+	"purge":           {"purge", "workspace", true, true, 0},
+	"upload":          {"upload", "transfer", true, true, 0},
+	"download":        {"download", "transfer", true, false, 0},
+	"login_start":     {"login_start", "login", false, false, 0},
+	"login_input":     {"login_input", "login", false, false, 0},
+	"login_cancel":    {"login_cancel", "login", false, false, 0},
 }
 
 func Operations() []Operation {
@@ -84,8 +86,9 @@ type AgentConfig struct {
 
 type AgentHealth struct {
 	AgentConfig
-	Installed bool   `json:"installed"`
-	Login     string `json:"login"` // logged_in, logged_out, unknown
+	Installed    bool   `json:"installed"`
+	Login        string `json:"login"`                  // logged_in, logged_out, unknown
+	Installation string `json:"installation,omitempty"` // 1.1: installed, missing, unknown
 }
 
 // Telemetry is an observation, never an admission grant. A consumer checks age,
@@ -95,6 +98,7 @@ type Telemetry struct {
 	ValidMS    int64   `json:"valid_ms"`
 	Known      bool    `json:"known"`
 	MemoryFree uint64  `json:"memory_free"`
+	DiskFree   uint64  `json:"disk_free,omitempty"` // 1.1; absence is unknown to older peers
 	Load       float64 `json:"load"`
 }
 
@@ -428,7 +432,7 @@ func validateBody(m Message) error {
 		return refuse("invalid_message", "invalid message kind")
 	}
 	switch m.Op {
-	case "health", "inventory":
+	case "health", "inventory", "end_host":
 		return body(m, func(Empty) bool { return true })
 	case "probe":
 		return body(m, agent)
@@ -485,12 +489,22 @@ func validateBody(m Message) error {
 }
 
 func agentHealth(a AgentHealth) bool {
-	return agent(a.AgentConfig) && oneOf(a.Login, "logged_in", "logged_out", "unknown") && (a.Installed || a.Login == "unknown")
+	if !agent(a.AgentConfig) || !oneOf(a.Login, "logged_in", "logged_out", "unknown") || !a.Installed && a.Login != "unknown" {
+		return false
+	}
+	return a.Installation == "" || a.Installation == "installed" && a.Installed || oneOf(a.Installation, "missing", "unknown") && !a.Installed && a.Login == "unknown"
 }
 
 func telemetry(t Telemetry) bool {
 	return t.ObservedMS >= 0 && t.ValidMS >= 0 && t.ValidMS <= 60000 && !math.IsNaN(t.Load) && !math.IsInf(t.Load, 0) && t.Load >= 0 &&
-		(t.Known && t.ObservedMS > 0 && t.ValidMS > 0 || !t.Known && t.MemoryFree == 0 && t.Load == 0)
+		(t.Known && t.ObservedMS > 0 && t.ValidMS > 0 || !t.Known && t.MemoryFree == 0 && t.DiskFree == 0 && t.Load == 0)
+}
+
+// FreshTelemetry is a necessary freshness check, never an admission grant by
+// itself. Unknown, future-dated, expired or invalid observations cannot prove
+// capacity. Disk constraints additionally require protocol 1.1 or later.
+func FreshTelemetry(t Telemetry, nowMS int64) bool {
+	return telemetry(t) && t.Known && nowMS >= t.ObservedMS && nowMS-t.ObservedMS < t.ValidMS
 }
 
 // RequestHash binds a durable key to the exact operation and JSON body, not a

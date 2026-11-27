@@ -643,3 +643,16 @@ A thread can be shown in more than one chat conversation, on one chat service or
 - The channel must be the scope's own or listed in the scope's `show_in`. The person must be the owner or one of the scope's `people`, as for posting into the thread.
 - Attaching a thread where it is shown already changes nothing. A chat thread that shows one hataori thread is not linked to another.
 - A refused attach links nothing, opens nothing and writes one log line.
+
+
+## Worker resident configuration
+
+`hataori worker init|run` uses an explicit separate worker root and never loads
+this instance configuration or uses `HATAORI_ROOT`. Its private
+`config/worker.json` lists locally installed agent/configuration profiles;
+`settings`, optional `config_dir` and `no_project_settings` are local operator
+choices. Worker adapters ignore ambient `pass_env` for probes and launches.
+See [Worker resident](worker-resident.md) for the exact schema, explicit
+installation binding, user-service templates, recovery behavior and limits.
+This is a resident foundation; workspace registration and main integration
+ship separately. macOS worker support remains unavailable pending #969.
