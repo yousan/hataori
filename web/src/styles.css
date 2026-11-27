@@ -94,6 +94,16 @@ body {
   outline-offset: 1px;
 }
 
+/* Shared interaction feedback keeps each button's state colors intact. */
+.shell button:enabled:hover {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.shell :where(button, summary, .filter, .box-row textarea, .answers-field textarea, .answers-check input):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .main {
   flex: 1;
   overflow: auto;
