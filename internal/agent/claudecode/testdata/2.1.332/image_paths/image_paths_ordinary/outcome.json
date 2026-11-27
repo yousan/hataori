@@ -1,0 +1,404 @@
+[
+ {
+  "session": "start",
+  "case": "whole_inside",
+  "text": "/tmp/capture-work/cwd/start-whole.png",
+  "pasted": "/tmp/capture-work/cwd/start-whole.png",
+  "prompt": "[Image #1]",
+  "images": [
+   "start-whole.png"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "line_inside",
+  "text": "Look at this\n/tmp/capture-work/cwd/start-line.png\nthen answer",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/start-line.png\nthen answer",
+  "prompt": "[Image #2]Look at this\nthen answer",
+  "images": [
+   "start-line.png"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "whole_outside",
+  "text": "/tmp/capture-work/outside/start-outside.png",
+  "pasted": "/tmp/capture-work/outside/start-outside.png",
+  "prompt": "[Image #3]",
+  "images": [
+   "start-outside.png"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "line_outside",
+  "text": "Look at this\n/tmp/capture-work/outside/start-line-outside.png",
+  "pasted": "Look at this\n/tmp/capture-work/outside/start-line-outside.png",
+  "prompt": "[Image #4]Look at this",
+  "images": [
+   "start-line-outside.png"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "link_outside",
+  "text": "Look at this\n/tmp/capture-work/cwd/start-link.png",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/start-link.png",
+  "prompt": "[Image #5]Look at this",
+  "images": [
+   "start-linked.png"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "link_inside",
+  "text": "Look at this\n/tmp/capture-work/cwd/start-inside-link.png",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/start-inside-link.png",
+  "prompt": "[Image #6]Look at this",
+  "images": [
+   "start-inside-linked.png"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "quoted",
+  "text": "Look at this\n\"/tmp/capture-work/cwd/start spaces.PNG\"",
+  "pasted": "Look at this\n\"/tmp/capture-work/cwd/start spaces.PNG\"",
+  "prompt": "[Image #7]Look at this",
+  "images": [
+   "start spaces.PNG"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "single_quoted",
+  "text": "Look at this\n'/tmp/capture-work/cwd/start single.png'",
+  "pasted": "Look at this\n'/tmp/capture-work/cwd/start single.png'",
+  "prompt": "[Image #8]Look at this",
+  "images": [
+   "start single.png"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "escaped",
+  "text": "Look at this\n/tmp/capture-work/cwd/start\\ escaped.PNG",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/start\\ escaped.PNG",
+  "prompt": "[Image #9]Look at this",
+  "images": [
+   "start escaped.PNG"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "escaped_extension",
+  "text": "Look at this\n/tmp/capture-work/cwd/start-extension.p\\ng",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/start-extension.p\\ng",
+  "prompt": "[Image #10]Look at this",
+  "images": [
+   "start-extension.png"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "invisible_before",
+  "text": "Look at this\n​/tmp/capture-work/cwd/start-invisible-before.png",
+  "pasted": "Look at this\n​/tmp/capture-work/cwd/start-invisible-before.png",
+  "prompt": "Look at this\n/tmp/capture-work/cwd/start-invisible-before.png",
+  "images": []
+ },
+ {
+  "session": "start",
+  "case": "invisible_extension",
+  "text": "Look at this\n/tmp/capture-work/cwd/start-invisible-extension.p​ng",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/start-invisible-extension.p​ng",
+  "prompt": "Look at this\n/tmp/capture-work/cwd/start-invisible-extension.png",
+  "images": []
+ },
+ {
+  "session": "start",
+  "case": "invisible_after",
+  "text": "Look at this\n/tmp/capture-work/cwd/start-invisible-after.png​",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/start-invisible-after.png​",
+  "prompt": "Look at this\n/tmp/capture-work/cwd/start-invisible-after.png",
+  "images": []
+ },
+ {
+  "session": "start",
+  "case": "terminal_sequence",
+  "text": "Look at this\n\u001b[31m/tmp/capture-work/cwd/start-terminal.png",
+  "pasted": "Look at this\n\u001b[31m/tmp/capture-work/cwd/start-terminal.png",
+  "prompt": "[Image #11]Look at this",
+  "images": [
+   "start-terminal.png"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "jpg",
+  "text": "Look at this\n/tmp/capture-work/cwd/start-image.jpg",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/start-image.jpg",
+  "prompt": "[Image #12]Look at this",
+  "images": [
+   "start-image.jpg"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "jpeg",
+  "text": "Look at this\n/tmp/capture-work/cwd/start-image.jpeg",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/start-image.jpeg",
+  "prompt": "[Image #13]Look at this",
+  "images": [
+   "start-image.jpeg"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "gif",
+  "text": "Look at this\n/tmp/capture-work/cwd/start-image.gif",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/start-image.gif",
+  "prompt": "[Image #14]Look at this",
+  "images": [
+   "start-image.gif"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "webp",
+  "text": "Look at this\n/tmp/capture-work/cwd/start-image.webp",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/start-image.webp",
+  "prompt": "[Image #15]Look at this",
+  "images": [
+   "start-image.webp"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "two_paths",
+  "text": "Look at these\n/tmp/capture-work/outside/start-one.png /tmp/capture-work/outside/start-two.png",
+  "pasted": "Look at these\n/tmp/capture-work/outside/start-one.png /tmp/capture-work/outside/start-two.png",
+  "prompt": "[Image #16] [Image #17]Look at these",
+  "images": [
+   "start-one.png",
+   "start-two.png"
+  ]
+ },
+ {
+  "session": "start",
+  "case": "relative",
+  "text": "Look at this\nstart-relative.png",
+  "pasted": "Look at this\nstart-relative.png",
+  "prompt": "Look at this\nstart-relative.png",
+  "images": []
+ },
+ {
+  "session": "start",
+  "case": "wake",
+  "text": "A turn ended.\n> /tmp/capture-work/cwd/start-wake.png",
+  "pasted": "A turn ended.\n> /tmp/capture-work/cwd/start-wake.png",
+  "prompt": "A turn ended.\n> /tmp/capture-work/cwd/start-wake.png",
+  "images": []
+ },
+ {
+  "session": "resume",
+  "case": "whole_inside",
+  "text": "/tmp/capture-work/cwd/resume-whole.png",
+  "pasted": "/tmp/capture-work/cwd/resume-whole.png",
+  "prompt": "[Image #18]",
+  "images": [
+   "resume-whole.png"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "line_inside",
+  "text": "Look at this\n/tmp/capture-work/cwd/resume-line.png\nthen answer",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/resume-line.png\nthen answer",
+  "prompt": "[Image #19]Look at this\nthen answer",
+  "images": [
+   "resume-line.png"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "whole_outside",
+  "text": "/tmp/capture-work/outside/resume-outside.png",
+  "pasted": "/tmp/capture-work/outside/resume-outside.png",
+  "prompt": "[Image #20]",
+  "images": [
+   "resume-outside.png"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "line_outside",
+  "text": "Look at this\n/tmp/capture-work/outside/resume-line-outside.png",
+  "pasted": "Look at this\n/tmp/capture-work/outside/resume-line-outside.png",
+  "prompt": "[Image #21]Look at this",
+  "images": [
+   "resume-line-outside.png"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "link_outside",
+  "text": "Look at this\n/tmp/capture-work/cwd/resume-link.png",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/resume-link.png",
+  "prompt": "[Image #22]Look at this",
+  "images": [
+   "resume-linked.png"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "link_inside",
+  "text": "Look at this\n/tmp/capture-work/cwd/resume-inside-link.png",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/resume-inside-link.png",
+  "prompt": "[Image #23]Look at this",
+  "images": [
+   "resume-inside-linked.png"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "quoted",
+  "text": "Look at this\n\"/tmp/capture-work/cwd/resume spaces.PNG\"",
+  "pasted": "Look at this\n\"/tmp/capture-work/cwd/resume spaces.PNG\"",
+  "prompt": "[Image #24]Look at this",
+  "images": [
+   "resume spaces.PNG"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "single_quoted",
+  "text": "Look at this\n'/tmp/capture-work/cwd/resume single.png'",
+  "pasted": "Look at this\n'/tmp/capture-work/cwd/resume single.png'",
+  "prompt": "[Image #25]Look at this",
+  "images": [
+   "resume single.png"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "escaped",
+  "text": "Look at this\n/tmp/capture-work/cwd/resume\\ escaped.PNG",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/resume\\ escaped.PNG",
+  "prompt": "[Image #26]Look at this",
+  "images": [
+   "resume escaped.PNG"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "escaped_extension",
+  "text": "Look at this\n/tmp/capture-work/cwd/resume-extension.p\\ng",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/resume-extension.p\\ng",
+  "prompt": "[Image #27]Look at this",
+  "images": [
+   "resume-extension.png"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "invisible_before",
+  "text": "Look at this\n​/tmp/capture-work/cwd/resume-invisible-before.png",
+  "pasted": "Look at this\n​/tmp/capture-work/cwd/resume-invisible-before.png",
+  "prompt": "Look at this\n/tmp/capture-work/cwd/resume-invisible-before.png",
+  "images": []
+ },
+ {
+  "session": "resume",
+  "case": "invisible_extension",
+  "text": "Look at this\n/tmp/capture-work/cwd/resume-invisible-extension.p​ng",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/resume-invisible-extension.p​ng",
+  "prompt": "Look at this\n/tmp/capture-work/cwd/resume-invisible-extension.png",
+  "images": []
+ },
+ {
+  "session": "resume",
+  "case": "invisible_after",
+  "text": "Look at this\n/tmp/capture-work/cwd/resume-invisible-after.png​",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/resume-invisible-after.png​",
+  "prompt": "Look at this\n/tmp/capture-work/cwd/resume-invisible-after.png",
+  "images": []
+ },
+ {
+  "session": "resume",
+  "case": "terminal_sequence",
+  "text": "Look at this\n\u001b[31m/tmp/capture-work/cwd/resume-terminal.png",
+  "pasted": "Look at this\n\u001b[31m/tmp/capture-work/cwd/resume-terminal.png",
+  "prompt": "[Image #28]Look at this",
+  "images": [
+   "resume-terminal.png"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "jpg",
+  "text": "Look at this\n/tmp/capture-work/cwd/resume-image.jpg",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/resume-image.jpg",
+  "prompt": "[Image #29]Look at this",
+  "images": [
+   "resume-image.jpg"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "jpeg",
+  "text": "Look at this\n/tmp/capture-work/cwd/resume-image.jpeg",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/resume-image.jpeg",
+  "prompt": "[Image #30]Look at this",
+  "images": [
+   "resume-image.jpeg"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "gif",
+  "text": "Look at this\n/tmp/capture-work/cwd/resume-image.gif",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/resume-image.gif",
+  "prompt": "[Image #31]Look at this",
+  "images": [
+   "resume-image.gif"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "webp",
+  "text": "Look at this\n/tmp/capture-work/cwd/resume-image.webp",
+  "pasted": "Look at this\n/tmp/capture-work/cwd/resume-image.webp",
+  "prompt": "[Image #32]Look at this",
+  "images": [
+   "resume-image.webp"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "two_paths",
+  "text": "Look at these\n/tmp/capture-work/outside/resume-one.png /tmp/capture-work/outside/resume-two.png",
+  "pasted": "Look at these\n/tmp/capture-work/outside/resume-one.png /tmp/capture-work/outside/resume-two.png",
+  "prompt": "[Image #33] [Image #34]Look at these",
+  "images": [
+   "resume-one.png",
+   "resume-two.png"
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "relative",
+  "text": "Look at this\nresume-relative.png",
+  "pasted": "Look at this\nresume-relative.png",
+  "prompt": "Look at this\nresume-relative.png",
+  "images": []
+ },
+ {
+  "session": "resume",
+  "case": "wake",
+  "text": "A turn ended.\n> /tmp/capture-work/cwd/resume-wake.png",
+  "pasted": "A turn ended.\n> /tmp/capture-work/cwd/resume-wake.png",
+  "prompt": "A turn ended.\n> /tmp/capture-work/cwd/resume-wake.png",
+  "images": []
+ }
+]

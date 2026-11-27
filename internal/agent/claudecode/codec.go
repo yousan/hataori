@@ -327,12 +327,13 @@ func (c *codec) pasteText(text string) string {
 // --restricted allows images inside the session's directory too (#915).
 // A word before the line makes it text. Check each line, including quoted
 // and escaped paths, without looking at any file or the clipboard. Lines
-// already quoted by a wake or reminder need no prefix. Classify what the
-// CLI shows, but keep the original line after any prefix.
+// already quoted by a wake or reminder need no prefix. The CLI removes
+// terminal color sequences before recognizing paths, so classify without
+// those sequences, but keep the original line after any prefix.
 func noImagePaths(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
-		first := strings.TrimSpace(shown(line))
+		first := strings.TrimSpace(controlSequence.ReplaceAllString(line, ""))
 		if strings.HasPrefix(first, commandPrefix) || strings.HasPrefix(first, "> ") {
 			continue
 		}

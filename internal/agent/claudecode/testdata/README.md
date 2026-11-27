@@ -417,3 +417,41 @@ The CLI writes the lines of a warning that start with ⚠ in bold, also where th
 | `trust_marks_refused`, `_allowed` | `Bash(café x)` with one accent of its own, `Bash(rm -rf x)` with 14 behind `rm`, `Bash(ls:*)`, `Bash(git diff:*)` | ordinary, without and with `TrustFiles` | as `trust_warnings_dirs_refused` and `_allowed`, the rules quoted as drawn |
 | `trust_marks_emoji` | `Bash(❤️x y)`, `Bash(1️⃣x y)` and `Bash(⌚️x y)`, each with U+FE0F, for which the CLI counts two columns with its character, and `Bash(ls:*)` | ordinary, no `TrustFiles` | as `trust_warnings_dirs_refused`, the rules quoted as drawn |
 | `trust_marks_sign` | `Bash(éé⚠ x)` with two accents of their own, `Bash(ls:*)` | ordinary, `TrustFiles` | nothing: a warning sign in the rules. No key and no event within 15 s. |
+
+## Image paths in pasted input (2.1.332, taken for #915)
+
+`2.1.332/image_paths/` was taken on 2026-11-27 with `image_paths.py`, then
+`scrub.py`. Each scenario starts and resumes the same real CLI session. HOME,
+configuration, working directory and outside directory are new temporary
+directories. The images are generated dummies, and the API is `mention.py`'s
+loopback stand-in, answering "ok". No real model, login or user files are used.
+The version probe has its own empty HOME, configuration and working directory.
+
+The two baseline scenarios paste the input unchanged. `image_paths_ordinary`
+uses ordinary tools; `image_paths_confined` uses the confined tool list and
+`--restricted`. Both attach in-directory absolute image paths, including a
+whole input, a separate line, quotes, escaped spaces and extensions, and a
+symlink to an in-directory image. Ordinary mode also attaches outside paths,
+outside symlinks and two outside paths on one line; restricted mode excludes
+those. The hook reports image markers in place of attached paths.
+
+The `.png`, `.jpg`, `.jpeg`, `.gif` and `.webp` names all hold distinct dummy
+PNG bytes. They establish filename suffix recognition, not decoder coverage
+for each format. The API request's latest user message is inspected even when
+a system message follows it; earlier user messages' images are excluded.
+An absent request is an error, rather than evidence that no image was sent.
+
+A terminal color sequence before a path does not prevent attachment. A
+zero-width space before the path, inside its extension or after it does:
+image recognition and invisible-character removal occur at different stages.
+The relative basename and quoted wake line attach nothing in these captures;
+no clipboard image was prepared.
+
+The three `_pasted` scenarios use the adapter's rewrite: ordinary, confined,
+and the confined rewrite without `--restricted`. No image reaches the API in
+any of their 21 inputs at either start or resume. `outcome.json` records each
+input, actual paste, reported prompt and dummy images sent. The adapter tests
+check the captured paste, input attribution, saved paste and reconnect.
+Invisible-character attribution and ordinary terminal-sequence attribution
+remain covered separately by #916; those cases still check image behavior
+and paste persistence here.

@@ -17,9 +17,6 @@ func TestImagePathLinesAreText(t *testing.T) {
 			{"Look at these\n/tmp/one.gif /tmp/two.webp", "Look at these\n" + commandPrefix + "/tmp/one.gif /tmp/two.webp"},
 			{"Look at these\n/one.png /tmp/two.webp", "Look at these\n" + commandPrefix + "/one.png /tmp/two.webp"},
 			{"Look at this\n/tmp/escaped.p\\ng", "Look at this\n" + commandPrefix + "/tmp/escaped.p\\ng"},
-			{"Look at this\n\u200b/tmp/example.png", "Look at this\n" + commandPrefix + "\u200b/tmp/example.png"},
-			{"Look at this\n/tmp/example.p\u200bng", "Look at this\n" + commandPrefix + "/tmp/example.p\u200bng"},
-			{"Look at this\n/tmp/example.png\u200b", "Look at this\n" + commandPrefix + "/tmp/example.png\u200b"},
 		} {
 			got := c.pasteText(tt.text)
 			if got != tt.want {
@@ -29,7 +26,8 @@ func TestImagePathLinesAreText(t *testing.T) {
 				t.Errorf("confined=%v: pasting twice changes %q into %q", confine != nil, got, twice)
 			}
 		}
-		for _, text := range []string{"Say ok", "Look at /tmp/example.png please", "Look at /tmp/example.png", "/help", "/review /tmp/example.png", "Text\n> /tmp/example.png"} {
+		for _, text := range []string{"Say ok", "Look at /tmp/example.png please", "Look at /tmp/example.png", "/help", "/review /tmp/example.png", "Text\n> /tmp/example.png",
+			"Look at this\n\u200b/tmp/example.png", "Look at this\n/tmp/example.p\u200bng", "Look at this\n/tmp/example.png\u200b"} {
 			want := text
 			if confine != nil {
 				want = noCommand(text)

@@ -20,7 +20,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import unicodedata
 import uuid
 import zlib
 
@@ -60,8 +59,7 @@ TEXTS = [
 def no_images(text):
     lines = text.split("\n")
     for i, line in enumerate(lines):
-        visible = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line)
-        first = "".join(c for c in visible if unicodedata.category(c) != "Cf").strip()
+        first = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line).strip()
         path = first.strip("\"'")
         absolute = path.startswith(("/", "\\")) or len(path) > 2 and path[1] == ":"
         if not absolute and ("/" in path or "\\" in path):
@@ -144,9 +142,10 @@ def images(sent, known):
     for body in sent:
         found = []
         messages = json.loads(body).get("messages", [])
-        if messages and messages[-1].get("role") == "user":
+        latest = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+        if latest is not None:
             requests += 1
-            visit(messages[-1].get("content"))
+            visit(latest.get("content"))
             if len(found) > len(most):
                 most = found
     if requests == 0:
@@ -156,6 +155,8 @@ def images(sent, known):
 
 def scenario(out, name, confined, restricted, rewrite):
     w, api, sid, cases = World(), API(), str(uuid.uuid4()), []
+    target = os.path.join(out, name)
+    os.makedirs(target)
     try:
         for phase in ("start", "resume"):
             args = ["claude", "--settings", w.settings, "--setting-sources", "user", "--model", "haiku",
@@ -165,7 +166,7 @@ def scenario(out, name, confined, restricted, rewrite):
             if restricted:
                 args += ["--restricted"]
             args += ["--resume", sid] if phase == "resume" else ["--session-id", sid]
-            s = Session(os.path.join(w.top, "sessions"), phase, args, w.cwd, environ(w, api, confined))
+            s = Session(target, phase, args, w.cwd, environ(w, api, confined))
             try:
                 s.wait("SessionStart", timeout=60)
                 time.sleep(4)
@@ -178,7 +179,10 @@ def scenario(out, name, confined, restricted, rewrite):
                     got = s.calls("UserPromptSubmit")
                     if len(got) != prompts + 1:
                         raise RuntimeError("%s: expected one prompt" % case)
-                    found = images(api.sent[sent:], w.images)
+                    try:
+                        found = images(api.sent[sent:], w.images)
+                    except RuntimeError as e:
+                        raise RuntimeError("%s %s %s: %s" % (name, phase, case, e)) from e
                     cases.append({"session": phase, "case": case, "text": text, "pasted": paste,
                                   "prompt": s.payload(got[-1])["prompt"], "images": found})
                     print(name, phase, case, found, file=sys.stderr, flush=True)
@@ -186,9 +190,11 @@ def scenario(out, name, confined, restricted, rewrite):
                 s.exit()
     finally:
         api.server.shutdown()
+        os.makedirs(os.path.join(target, "debug"))
+        with open(os.path.join(target, "debug", "api-requests.json"), "w") as f:
+            json.dump([json.loads(body) for body in api.sent], f, ensure_ascii=False)
         shutil.rmtree(w.top)
-    os.makedirs(os.path.join(out, name))
-    with open(os.path.join(out, name, "outcome.json"), "w") as f:
+    with open(os.path.join(target, "outcome.json"), "w") as f:
         json.dump(cases, f, ensure_ascii=False, indent=1)
         f.write("\n")
 
