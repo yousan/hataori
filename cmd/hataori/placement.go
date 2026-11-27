@@ -39,6 +39,13 @@ func configurePlacement(ctx context.Context, root string, cfg *instance.Config, 
 	}
 	p.Observe = func(ctx context.Context, key, name string) (placement.Observation, error) {
 		if key != "local" {
+			status, err := r.MachineAvailability(ctx, key)
+			if err != nil {
+				return placement.Observation{}, err
+			}
+			if status.State != "ready" {
+				return placement.Observation{}, nil
+			}
 			if m, ok := r.Remotes[key]; ok && m.Observe != nil {
 				return m.Observe(ctx, name)
 			}
@@ -119,7 +126,7 @@ func configurePlacement(ctx context.Context, root string, cfg *instance.Config, 
 			}
 			for _, sc := range cfg.Scopes {
 				if sc.Key == scope && (sc.Client == client || slices.ContainsFunc(sc.ShowIn, func(s string) bool { return strings.HasPrefix(s, client+":") })) {
-					return control.Caller{From: old.From, Scopes: []string{scope}, May: control.OpStart | control.OpSend | control.OpAttach}, nil
+					return control.Caller{From: old.From, Scopes: []string{scope}, May: control.OpStart | control.OpSend | control.OpAttach | control.OpStop | control.OpAnswer}, nil
 				}
 			}
 			return refuse()
@@ -128,11 +135,16 @@ func configurePlacement(ctx context.Context, root string, cfg *instance.Config, 
 			return dashboardCaller(cfg.People, []string{scope}, cfg.HostTerminals, cfg.HostInput, string(old.Principal)), nil
 		}
 		if old.Principal == control.Principal(cfg.People.Owner()) && old.Via == "" {
-			return control.Caller{Principal: old.Principal, Scopes: []string{scope}, May: control.OpStart | control.OpSend | control.OpAttach}, nil
+			return control.Caller{Principal: old.Principal, Scopes: []string{scope}, May: control.OpStart | control.OpSend | control.OpAttach | control.OpStop | control.OpAnswer}, nil
 		}
 		return refuse()
 	}
 	c.Placement = p
+	r.AwayEnabled = true
+	r.AwayGrace = cfg.MachineAwayGrace
+	c.Away = &core.MachineAway{Status: r.MachineAvailability, Caller: p.Caller}
+	r.RevalidatePending = c.RevalidatePending
+	r.RevalidateInitial = c.RevalidateInitial
 	r.Admit = c.AdmitSession
 	r.RevalidateLaunch = c.RevalidatePlacementLaunch
 	return nil

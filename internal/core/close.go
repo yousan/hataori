@@ -48,6 +48,9 @@ func (a *api) CloseThread(ctx context.Context, id control.ThreadID) error {
 		return err
 	}
 	defer a.c.locks.lock(threadLock(id))()
+	if err := a.c.requireCheckedMachine(ctx, id); err != nil {
+		return err
+	}
 	sid, state, err := a.c.current(ctx, a.c.Store.DB, id)
 	if err != nil {
 		return err
@@ -108,6 +111,9 @@ func (a *api) RemoveThread(ctx context.Context, id control.ThreadID) error {
 // the state change to removed, or removal_refused with the reason.
 func (c *Core) remove(ctx context.Context, id control.ThreadID, principal control.Principal, trigger string) error {
 	defer c.locks.lock(threadLock(id))()
+	if err := c.requireCheckedMachine(ctx, id); err != nil {
+		return err
+	}
 	machine, err := c.workspaceMachine(ctx, id)
 	if err != nil {
 		return err
@@ -242,28 +248,53 @@ func (c *Core) RemoveClosed(ctx context.Context, age time.Duration) (int, error)
 	if age <= 0 {
 		return 0, errors.New("core: removal pass: no age set")
 	}
-	since := c.now().Add(-age).UnixMilli()
-	// A thread started confined has a directory of its own, which nothing
-	// removes, and one taken in a person's directory: the pass does not try.
-	rows, err := c.Store.DB.QueryContext(ctx, `SELECT t.id FROM threads t WHERE t.state = ? AND t.updated_at <= ? AND t.confined = 0 AND t.foreign_workspace = 0
-		AND NOT EXISTS (SELECT 1 FROM events e WHERE e.thread_id = t.id AND e.kind = ? AND e.time > ?
-			AND json_extract(CAST(e.data AS TEXT), '$.trigger') = ?)
-		ORDER BY t.id`, string(control.Closed), since, string(KindRemovalRefused), since, ByClosedAge)
+	now := c.now()
+	// Keep the closed-age and refusal retry budgets in active time. Real
+	// timestamps remain unchanged for history and external observers.
+	rows, err := c.Store.DB.QueryContext(ctx, `SELECT t.id,s.id,t.updated_at,
+		coalesce((SELECT max(e.time) FROM events e WHERE e.thread_id=t.id AND e.kind=? AND json_extract(CAST(e.data AS TEXT),'$.trigger')=?),0)
+		FROM threads t JOIN sessions s ON s.id=(SELECT max(v.id) FROM sessions v WHERE v.thread_id=t.id)
+		WHERE t.state=? AND t.confined=0 AND t.foreign_workspace=0 ORDER BY t.id`, string(KindRemovalRefused), ByClosedAge, string(control.Closed))
 	if err != nil {
 		return 0, fmt.Errorf("core: removal pass: %w", err)
 	}
-	var ids []control.ThreadID
-	for rows.Next() {
-		var id control.ThreadID
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return 0, fmt.Errorf("core: removal pass: %w", err)
-		}
-		ids = append(ids, id)
+	type candidate struct {
+		id                    control.ThreadID
+		sid, updated, refused int64
 	}
+	var candidates []candidate
+	for rows.Next() {
+		var v candidate
+		if err := rows.Scan(&v.id, &v.sid, &v.updated, &v.refused); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		candidates = append(candidates, v)
+	}
+	err = rows.Err()
 	rows.Close()
-	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("core: removal pass: %w", err)
+	if err != nil {
+		return 0, err
+	}
+	var ids []control.ThreadID
+	for _, v := range candidates {
+		elapsed, err := store.ActiveAge(ctx, c.Store.DB, v.sid, time.UnixMilli(v.updated), now)
+		if err != nil {
+			return 0, err
+		}
+		if elapsed < age {
+			continue
+		}
+		if v.refused != 0 {
+			elapsed, err = store.ActiveAge(ctx, c.Store.DB, v.sid, time.UnixMilli(v.refused), now)
+			if err != nil {
+				return 0, err
+			}
+			if elapsed < age {
+				continue
+			}
+		}
+		ids = append(ids, v.id)
 	}
 	n := 0
 	for _, id := range ids {

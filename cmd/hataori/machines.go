@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -63,6 +65,7 @@ func startMachineConnections(ctx context.Context, root string, cfg *instance.Con
 	for _, m := range bindings {
 		pinned[m.Key] = m.Installation
 	}
+	connectionEpoch := rand.Text()
 	r.Remotes = map[string]runner.RemoteMachine{}
 	for _, m := range cfg.Machines {
 		if m.Key == store.LocalMachine {
@@ -127,7 +130,21 @@ func startMachineConnections(ctx context.Context, root string, cfg *instance.Con
 		if err != nil {
 			return nil, err
 		}
-		r.Remotes[m.Key] = runner.RemoteMachine{Admission: &workerproto.Admission{MaxResident: m.MaxResident, MaxStarting: m.MaxStarting, MaxLoad: m.MaxLoad, MinFreeMemory: uint64(m.MinFreeMemoryBytes), MinFreeDisk: uint64(m.MinFreeDiskBytes)},
+		r.Remotes[m.Key] = runner.RemoteMachine{Connection: func() runner.Connection {
+			status := w.Status()
+			return runner.Connection{Connected: status.Ready, Token: fmt.Sprintf("%s:%d", connectionEpoch, status.Generation), Reason: string(status.Cause), Immediate: status.Cause == workerssh.Binding || status.Cause == workerssh.Protocol}
+		}, Failed: func(err error) {
+			cause := workerssh.Transport
+			var refusal *workerproto.Refusal
+			if errors.As(err, &refusal) {
+				if refusal.Code == "binding" {
+					cause = workerssh.Binding
+				} else if refusal.Code == "incompatible_major" || refusal.Code == "invalid_message" {
+					cause = workerssh.Protocol
+				}
+			}
+			w.Invalidate(cause)
+		}, Admission: &workerproto.Admission{MaxResident: m.MaxResident, MaxStarting: m.MaxStarting, MaxLoad: m.MaxLoad, MinFreeMemory: uint64(m.MinFreeMemoryBytes), MinFreeDisk: uint64(m.MinFreeDiskBytes)},
 			Status: func() control.MachineAvailability {
 				status := w.Status()
 				viewMu.RLock()

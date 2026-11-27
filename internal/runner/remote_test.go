@@ -31,7 +31,7 @@ import (
 	"github.com/yousan/hataori/internal/workerproto"
 )
 
-func remoteFixture(t *testing.T, terminal bool) (*fixture, *worker.Resident) {
+func remoteFixture(t *testing.T, terminal bool, configure ...func(*fake.Config)) (*fixture, *worker.Resident) {
 	t.Helper()
 	f := newFixture(t, options{terminal: terminal, poll: 30 * time.Millisecond})
 	t.Cleanup(func() {
@@ -63,7 +63,11 @@ func remoteFixture(t *testing.T, terminal bool) (*fixture, *worker.Resident) {
 			t.Fatal(err)
 		}
 	}
-	settings, _ := json.Marshal(fake.Config{Conversations: filepath.Join(root, "conversations"), Record: filepath.Join(root, "records"), Command: []string{os.Args[0], "role", "fake"}, Hataori: os.Args[0], Terminal: terminal})
+	config := fake.Config{Conversations: filepath.Join(root, "conversations"), Record: filepath.Join(root, "records"), Command: []string{os.Args[0], "role", "fake"}, Hataori: os.Args[0], Terminal: terminal}
+	for _, f := range configure {
+		f(&config)
+	}
+	settings, _ := json.Marshal(config)
 	resident, err := worker.Open(root, binding, worker.Options{Config: &worker.Config{Agents: []worker.Configuration{{Agent: "fake", Name: "default", Settings: settings, NoProjectSettings: false}}, Workspaces: worker.WorkspaceConfig{Repositories: map[string]string{"fixture": (&url.URL{Scheme: "file", Path: repo}).String()}}}, HostCommand: host.Command{Path: os.Args[0], Args: []string{"role", "host"}, Env: []string{}}, Telemetry: func() workerproto.Telemetry {
 		return workerproto.Telemetry{Known: true, ObservedMS: time.Now().UnixMilli(), ValidMS: 10000, MemoryFree: 1 << 30, DiskFree: 1 << 30}
 	}, NewAdapter: func(_ string, b []byte) (agent.Adapter, error) { return fake.New(b) }})
@@ -662,10 +666,8 @@ func (c *unwrittenUnknown) Read(b []byte) (int, error) {
 	return c.Conn.Read(b)
 }
 
-func TestRemoteRunnerUnknownUnreportedInputFailsVisibly(t *testing.T) {
+func TestRemoteRunnerUnknownUnreportedInputPreservesUncertainty(t *testing.T) {
 	f, _ := remoteFixture(t, false)
-	seedRemote(t, f, 1, "reply ready")
-	waitFor(t, "initial turn", 5*time.Second, f.has("turn_ended", 1))
 	cfg := f.run.Remotes["build"]
 	open := cfg.Open
 	var writes atomic.Int64
@@ -677,18 +679,18 @@ func TestRemoteRunnerUnknownUnreportedInputFailsVisibly(t *testing.T) {
 		return &unwrittenUnknown{Conn: c, writes: &writes}, p, nil
 	}
 	f.run.Remotes["build"] = cfg
-	// Existing followers retain their verified transport object.
-	lv, err := f.run.get(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lv.mu.Lock()
-	lv.io.(*machineio.Remote).Open = cfg.Open
-	lv.mu.Unlock()
+	// Configure the cut before starting any follower; the machine map is
+	// immutable while the runner and its cleanup loop use it.
+	seedRemote(t, f, 1, "reply ready")
+	waitFor(t, "initial turn", 5*time.Second, f.has("turn_ended", 1))
 	if err := owner(f.core).Send(context.Background(), thread, "unknown", control.Input{Text: "reply unknown delivery"}, control.Deliver); !errors.Is(err, machineio.ErrUnknown) {
 		t.Fatalf("unknown delivery: %v", err)
 	}
 	waitFor(t, "ambiguous attempted write", 5*time.Second, func() bool { return writes.Load() == 1 })
+	var originalWritten int
+	if err := f.st.DB.QueryRow(`SELECT max(written) FROM pending_inputs WHERE session_id=1`).Scan(&originalWritten); err != nil {
+		t.Fatal(err)
+	}
 	f.run.Close()
 	next := &Runner{Store: f.st, Machine: f.core.Machine, Adapters: f.run.Adapters, Root: f.root, Host: f.run.Host, Log: f.run.Log, Poll: 30 * time.Millisecond, Remotes: f.run.Remotes}
 	f.run = next
@@ -696,7 +698,26 @@ func TestRemoteRunnerUnknownUnreportedInputFailsVisibly(t *testing.T) {
 	if err := next.Reconnect(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "visible not-delivered outcome", 8*time.Second, func() bool { return lastTurnReason(t, f.st) == "not delivered" })
+	lv, err := next.get(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A follower intentionally holds its handover lock during unresolved
+	// startup. Stop this main's follower before driving isolated recovery steps.
+	next.Close()
+	lv.mu.Lock()
+	for range 3 {
+		next.stepLocked(lv)
+	}
+	blocked := lv.warmPending && errors.Is(lv.readErr, machineio.ErrUnknown)
+	lv.mu.Unlock()
+	var written, pending int
+	if err := f.st.DB.QueryRow(`SELECT count(*),coalesce(max(written),0) FROM pending_inputs WHERE session_id=1`).Scan(&pending, &written); err != nil {
+		t.Fatal(err)
+	}
+	if !blocked || pending != 1 || originalWritten == 0 || written != originalWritten || counts(t, f.st)["turn_ended"] != 1 {
+		t.Fatalf("uncertain input released: blocked=%v pending=%d written=%d events=%v", blocked, pending, written, counts(t, f.st))
+	}
 	if writes.Load() != 1 {
 		t.Fatalf("unknown paste repeated %d times", writes.Load())
 	}
@@ -728,6 +749,7 @@ func TestRemoteRunnerOversizedInputFailsOnceWithoutRetry(t *testing.T) {
 
 func TestRemoteRunnerRefusedHookGetsNewAttemptAfterRestart(t *testing.T) {
 	f, _ := remoteFixture(t, true)
+	enableFixtureAway(t, f)
 	seedRemote(t, f, 1, "ask colour\nreply original")
 	waitFor(t, "held question", 8*time.Second, f.has("request", 1))
 	var request string
@@ -788,7 +810,7 @@ func TestRemoteRunnerRefusedHookGetsNewAttemptAfterRestart(t *testing.T) {
 	parkedNow = false
 	remote.Open = open
 	f.run.live = nil
-	next := &Runner{Store: f.st, Machine: f.core.Machine, Adapters: f.run.Adapters, Root: f.root, Host: f.run.Host, Log: f.run.Log, Poll: 30 * time.Millisecond, Remotes: f.run.Remotes}
+	next := &Runner{Store: f.st, Machine: f.core.Machine, Adapters: f.run.Adapters, Root: f.root, Host: f.run.Host, Log: f.run.Log, Poll: 30 * time.Millisecond, Remotes: f.run.Remotes, AwayEnabled: true, AwayGrace: 25 * time.Millisecond, RevalidatePending: f.core.RevalidatePending, RevalidateInitial: f.core.RevalidateInitial}
 	f.run = next
 	f.core.Runner = next
 	if err := next.Reconnect(context.Background()); err != nil {

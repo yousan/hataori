@@ -184,6 +184,19 @@ type InputRefuser interface {
 	RefuseInput(ids []string, reason Reason) Actions
 }
 
+// ClockedTicker separates paused main delivery deadlines from a worker hook's
+// wall-clock expiry. Other codecs use Tick with the active clock alone.
+type ClockedTicker interface {
+	TickClocks(active, wall time.Time) Actions
+}
+
+// HookReconciler withdraws requests whose original waiting host hook expired.
+// The caller supplies only a verified inventory of this session's live hooks,
+// after draining retained output. Native pipe requests do not implement it.
+type HookReconciler interface {
+	ReconcileHooks(waiting []string) Actions
+}
+
 // Actions is what the caller of a Codec does next.
 type Actions struct {
 	Events []Event // for the core
@@ -348,6 +361,9 @@ type Input struct {
 	// restarted, and its report has not been read. The codec records it as
 	// written and waiting for its report, and never writes its text again.
 	Written bool
+	// WrittenAt is the original write in the same active clock as Tick.
+	// Zero preserves compatibility with an older runner without a timestamp.
+	WrittenAt time.Time
 	// WrittenText, with Written, is the text the codec recorded when the
 	// input was written. nil means that no text was recorded, rather than
 	// that an empty text was written.

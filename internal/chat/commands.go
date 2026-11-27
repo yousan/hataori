@@ -305,6 +305,8 @@ func (f *FrontEnd) stopTurn(ctx context.Context, c surface.Command) error {
 	api := f.API(control.Caller{From: f.from(c.Author), Scopes: f.scopesIn(c.Conv.Channel), May: control.OpRead | control.OpStop})
 	err = api.Stop(ctx, t.ID, 0)
 	switch {
+	case errors.Is(err, control.ErrActionHeld):
+		return f.answer(ctx, c, fmt.Sprintf("Stop for thread #%d is pending machine reconciliation. Nothing has been stopped yet.", t.ID))
 	case errors.Is(err, control.ErrForbidden):
 		return nil // the core logged it; nothing is shown
 	case errors.Is(err, control.ErrNotInterrupted):
@@ -359,7 +361,14 @@ func (f *FrontEnd) status(ctx context.Context, c surface.Command) error {
 // threadStatus shows one thread: its state, model and last output.
 func threadStatus(t control.ThreadInfo) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Thread #%d: %s", t.ID, t.State)
+	if a := t.Availability; a != nil && a.State != "ready" {
+		fmt.Fprintf(&b, "Thread #%d: %s since %s; last known %s", t.ID, a.State, a.At.UTC().Format(time.RFC3339), t.State)
+		if a.LastKnownAt != nil {
+			fmt.Fprintf(&b, " at %s", a.LastKnownAt.UTC().Format(time.RFC3339))
+		}
+	} else {
+		fmt.Fprintf(&b, "Thread #%d: %s", t.ID, t.State)
+	}
 	if t.PlacementPending {
 		fmt.Fprintf(&b, "\nWaiting for machine placement: %s", t.PlacementReason)
 	} else if t.Machine != "" {
@@ -403,7 +412,11 @@ func channelStatus(ts []control.ThreadInfo) string {
 		open = open[len(open)-statusMax:]
 	}
 	for _, t := range open {
-		fmt.Fprintf(&b, "\n#%d %s", t.ID, t.State)
+		if a := t.Availability; a != nil && a.State != "ready" {
+			fmt.Fprintf(&b, "\n#%d %s since %s (last known %s)", t.ID, a.State, a.At.UTC().Format(time.RFC3339), t.State)
+		} else {
+			fmt.Fprintf(&b, "\n#%d %s", t.ID, t.State)
+		}
 		if t.PlacementPending {
 			b.WriteString(" (waiting for placement)")
 		} else if t.Machine != "" {

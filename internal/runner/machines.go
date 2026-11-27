@@ -29,6 +29,8 @@ import (
 // RemoteMachine is configured authority, never populated from worker output.
 // Open verifies the pinned binding independently on each new connection.
 type RemoteMachine struct {
+	Failed            func(error)
+	Connection        func() Connection
 	Status            func() control.MachineAvailability
 	Observe           func(context.Context, string) (placement.Observation, error)
 	Admission         *workerproto.Admission
@@ -398,7 +400,22 @@ func (r *Runner) inheritWorkspace(ctx context.Context, id int64, workspace strin
 
 // actRemote persists the exact effect before sending it. The main's written
 // input marker is already durable. Replay rebuilds codecs without this method.
-func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) error {
+func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) (result error) {
+	if r.AwayEnabled && !r.sessionChecked(lv.id) {
+		failed(true) // readiness refused before any effect was journaled or sent
+		return core.ErrMachineUnchecked
+	}
+	defer func() {
+		if result != nil && r.AwayEnabled {
+			key, err := r.sessionMachine(lv.id)
+			if err == nil {
+				if m := r.Remotes[key]; m.Failed != nil {
+					m.Failed(result)
+				}
+			}
+			r.noteRemoteReadFailure(lv)
+		}
+	}()
 	remote, ok := lv.io.(*machineio.Remote)
 	if !ok {
 		return errors.New("runner: remote effect transport is unavailable")
@@ -448,7 +465,12 @@ func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) error {
 			failed(true)
 			return err
 		}
-		if err := r.machineEffect(ctx, lv.id, remote, m, a.Inputs...); err != nil {
+		inputs, err := r.actionInputs(lv, a.Inputs)
+		if err != nil {
+			failed(true)
+			return &holder.NotSent{Err: err}
+		}
+		if err := r.machineEffectFor(ctx, lv, remote, m, inputs...); err != nil {
 			var nothing *holder.NotSent
 			failed(errors.As(err, &nothing))
 			return err
@@ -475,7 +497,11 @@ func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) error {
 		if err != nil {
 			return err
 		}
-		if err := r.machineEffect(ctx, lv.id, remote, m); err != nil {
+		inputs, err := r.actionInputs(lv, nil)
+		if err != nil {
+			return &holder.NotSent{Err: err}
+		}
+		if err := r.machineEffectFor(ctx, lv, remote, m, inputs...); err != nil {
 			return err
 		}
 	}
@@ -483,6 +509,11 @@ func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) error {
 }
 
 func (r *Runner) machineEffect(ctx context.Context, id int64, remote *machineio.Remote, m workerproto.Message, inputs ...string) error {
+	return r.machineEffectFor(ctx, &live{id: id}, remote, m, inputs...)
+}
+
+func (r *Runner) machineEffectFor(ctx context.Context, lv *live, remote *machineio.Remote, m workerproto.Message, inputs ...string) error {
+	id := lv.id
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err
@@ -490,6 +521,10 @@ func (r *Runner) machineEffect(ctx context.Context, id int64, remote *machineio.
 	inputJSON, _ := json.Marshal(inputs)
 	_, err = r.Store.DB.ExecContext(ctx, `INSERT INTO session_machine_actions(session_id,run,operation,key,request,state,inputs) VALUES(?,?,?,?,?,'pending',?) ON CONFLICT(session_id,run,operation,key) DO NOTHING`, id, remote.Target.Run, m.Op, m.Key, string(b), string(inputJSON))
 	if err != nil {
+		return &holder.NotSent{Err: err}
+	}
+	var action int64
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT id FROM session_machine_actions WHERE session_id=? AND run=? AND operation=? AND key=?`, id, remote.Target.Run, m.Op, m.Key).Scan(&action); err != nil {
 		return &holder.NotSent{Err: err}
 	}
 	_, err = remote.Effect(ctx, m)
@@ -500,6 +535,15 @@ func (r *Runner) machineEffect(ctx context.Context, id int64, remote *machineio.
 		if errors.As(err, &no) {
 			state = "refused"
 		}
+	}
+	if state == "refused" && len(inputs) > 0 {
+		var refusal *workerproto.Refusal
+		retryAnswer := !errors.As(err, &refusal) || refusal.Code == "unavailable"
+		resolution := r.recordActionResolution(lv, action, string(inputJSON), state, retryAnswer)
+		if errors.Is(resolution, core.ErrMachineUnchecked) {
+			resolution = nil
+		}
+		return errors.Join(err, resolution)
 	}
 	if _, e := r.Store.DB.ExecContext(ctx, `UPDATE session_machine_actions SET state=? WHERE session_id=? AND run=? AND operation=? AND key=?`, state, id, remote.Target.Run, m.Op, m.Key); e != nil {
 		return errors.Join(err, e)
@@ -513,7 +557,7 @@ func (r *Runner) reconcileMachineActions(lv *live) error {
 		return nil
 	}
 	ctx := context.Background()
-	rows, err := r.Store.DB.Query(`SELECT id,request,inputs FROM session_machine_actions WHERE session_id=? AND run=? AND state IN ('pending','unknown') ORDER BY id`, lv.id, remote.Target.Run)
+	rows, err := r.Store.DB.Query(`SELECT id,request,inputs FROM session_machine_actions WHERE session_id=? AND run=? AND (state IN ('pending','unknown') OR (state='complete' AND EXISTS(SELECT 1 FROM json_each(session_machine_actions.inputs) j JOIN pending_inputs p ON p.session_id=session_machine_actions.session_id AND j.value='answer:'||p.id||':'||p.receipt_key))) ORDER BY id`, lv.id, remote.Target.Run)
 	if err != nil {
 		return err
 	}
@@ -551,7 +595,8 @@ func (r *Runner) reconcileMachineActions(lv *live) error {
 		if err != nil {
 			var refusal *workerproto.Refusal
 			if errors.As(err, &refusal) && refusal.Code == "not_found" {
-				continue
+				// Missing receipt is not proof the write did not occur.
+				return machineio.ErrUnknown
 			}
 			return err
 		}
@@ -562,12 +607,11 @@ func (r *Runner) reconcileMachineActions(lv *live) error {
 		if err := workerproto.CheckReceipt(original, receipt); err != nil {
 			return err
 		}
-		if receipt.State == "refused" {
-			var inputs []string
-			json.Unmarshal([]byte(a.inputs), &inputs)
-			r.unmarkWritten(lv, inputs)
+		if receipt.State != "complete" && receipt.State != "refused" {
+			return machineio.ErrUnknown
 		}
-		if _, err := r.Store.DB.Exec(`UPDATE session_machine_actions SET state=? WHERE id=?`, receipt.State, a.id); err != nil {
+		retryAnswer := receipt.Refusal != nil && receipt.Refusal.Code == "unavailable"
+		if err := r.recordActionResolution(lv, a.id, a.inputs, receipt.State, retryAnswer); err != nil {
 			return err
 		}
 	}
@@ -681,6 +725,9 @@ func (r *Runner) remoteTerminal(ctx context.Context, id int64, run string, after
 // Cleanup retries only the durable current targets of terminal sessions. A
 // disconnected worker never turns Unknown into Gone or grants a local path.
 func (r *Runner) cleanupRemoteSleeper(ctx context.Context, id int64) {
+	if !r.sessionChecked(id) {
+		return
+	}
 	var run string
 	if err := r.Store.DB.QueryRowContext(ctx, `SELECT x.run FROM session_machine_runs x JOIN sessions s ON s.id=x.session_id WHERE s.id=? AND s.state IN ('asleep','closed','failed')`, id).Scan(&run); err != nil {
 		return

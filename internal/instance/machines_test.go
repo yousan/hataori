@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func parseMachines(t *testing.T, machines, scopeMachines string) *Config {
@@ -81,5 +82,20 @@ func TestMachineConfigRefusalsNameTheKey(t *testing.T) {
 	b, _ := json.Marshal(raw)
 	if _, err := ParseConfig(b); err == nil || !strings.Contains(err.Error(), "max_load") {
 		t.Fatal(err)
+	}
+}
+
+func TestMachineAwayGraceShippedConfig(t *testing.T) {
+	if got := parseMachines(t, "", "").MachineAwayGrace; got != 30*time.Second {
+		t.Fatalf("default grace %s", got)
+	}
+	if got := parseMachines(t, `,"machine_away_grace":"2s"`, "").MachineAwayGrace; got != 2*time.Second {
+		t.Fatalf("configured grace %s", got)
+	}
+	for _, v := range []string{"0s", "-1s", "2h", "bad"} {
+		raw := `{"owner":"ada","people":[{"name":"ada","ids":["chat:one"]}],"trigger":"!go","idle":"1m","adapters":{"fake":{}},"drivers":{"chat":{}},"scopes":[{"key":"room","client":"chat"}],"machine_away_grace":"` + v + `"}`
+		if _, err := ParseConfig([]byte(raw)); err == nil || !strings.Contains(err.Error(), "machine_away_grace") {
+			t.Fatalf("invalid grace %s: %v", v, err)
+		}
 	}
 }

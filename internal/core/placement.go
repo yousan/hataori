@@ -62,6 +62,9 @@ func (c *Core) RunPlacements(ctx context.Context) {
 	tick := time.NewTicker(3 * time.Second)
 	defer tick.Stop()
 	for {
+		if err := c.DispatchHeld(ctx); err != nil && ctx.Err() == nil {
+			c.Log.Error("dispatching held machine actions", "err", err)
+		}
 		if err := c.DispatchPlacements(ctx); err != nil && ctx.Err() == nil {
 			c.Log.Error("dispatching placements", "err", err)
 		}
@@ -435,16 +438,23 @@ func (c *Core) uncertainLocalLaunch(ctx context.Context, sid int64) bool {
 }
 
 // RevalidatePlacementLaunch runs before either recovering an unfinished launch
-// or reconnecting a completed launch with unsent first input. Resource admission
-// is separate: reconnecting an already owned host consumes no new room.
+// or reconnecting a local launch with unsent first input. Completed worker
+// hosts stay monitored; their input authority is checked after catch-up instead.
+// Resource admission is separate: an owned host consumes no new room.
 func (c *Core) RevalidatePlacementLaunch(ctx context.Context, sid int64) (bool, error) {
 	if c.Placement == nil {
 		return true, nil
 	}
-	var scope, repo, raw, state string
+	var scope, repo, raw, state, machine string
+	var launch int
 	var confined bool
-	if err := c.Store.DB.QueryRowContext(ctx, `SELECT t.scope,t.repo,t.confined,s.first_input,s.state FROM sessions s JOIN threads t ON t.id=s.thread_id WHERE s.id=?`, sid).Scan(&scope, &repo, &confined, &raw, &state); err != nil {
+	if err := c.Store.DB.QueryRowContext(ctx, `SELECT t.scope,t.repo,t.confined,s.first_input,s.state,t.machine,s.launch FROM sessions s JOIN threads t ON t.id=s.thread_id WHERE s.id=?`, sid).Scan(&scope, &repo, &confined, &raw, &state, &machine, &launch); err != nil {
 		return false, err
+	}
+	// A completed worker host must remain followed even if its unsent input
+	// is revoked. RevalidateInitial withdraws only the input after catch-up.
+	if c.Away != nil && machine != store.LocalMachine && launch == 0 {
+		return true, nil
 	}
 	if confined || state != "creating" || raw == "" {
 		return true, nil

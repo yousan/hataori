@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.46**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.47**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -92,6 +92,7 @@ Events are stored, and a reader reads them from a position, possibly long after 
 | `forbidden` | error code | - | the caller may not make this call in this scope |
 | `disabled` | error code | - | the scope is not enabled, or it is no longer in the config: nothing starts in it, and its threads are only read, stopped, closed and removed |
 | `busy` | error code | - | a turn is running and the call said to refuse; for `OperateHost`, the pane is being operated already (since 3.11) |
+| `action_held` | error code | - | the named stop is held while its machine is unavailable; nothing has been stopped; since 3.47 |
 | `not_found` | error code | - | no such thread or request; also a thread, a request or a conversation's thread of a scope that is not the caller's, which is answered as one that does not exist, with the same message |
 | `closed` | error code | - | the thread is closed or removed: nothing was sent, and a message does not wake it; since 2.3 |
 | `removal_refused` | error code | - | the workspace may hold work that exists nowhere else, so it was not removed; the message says why; since 2.3 |
@@ -212,7 +213,25 @@ rechecks current scope, person and configuration. A chosen machine is fixed
 for wake, replacement, removal and reopen; no fallback relocates it. Supervisor
 proposals retain `machine` and recheck placement when approved.
 
+Since 3.47 worker availability overlays the underlying thread state. Any
+availability other than `ready` blocks placement and dispatch immediately.
+Transport failure records `away` after `machine_away_grace` (default 30 seconds),
+retaining the first failure time/reason; identity/version refusal is immediate.
+`checking` and `catching_up` also mean unavailable. A thread's `state` remains
+its last known underlying state; readers must display availability and
+`last_known_state`/`last_known_at`, never describe an away turn as running now.
+Retained output and original receipts/waiting hooks reconcile before readiness.
+Unknown inventory neither ends a turn nor releases its reservation.
+
 ### Operation `Send`
+
+Since 3.47, accepted worker input and request-specific answers wait durably
+while unavailable, once for their original key and in per-thread order. One
+`machine_action` pending notice is emitted per thread/absence. Current person,
+scope and configured authority are checked before dispatch. A queued answer
+names its original request and cannot answer a later question. Repeated held
+keys never become fresh input after recovery. Main start/delivery/idle/background
+and cleanup clocks exclude disconnection/catch-up; worker hook expiry continues.
 
 Gives input to a thread. A thread with an open question takes it as the answer; an asleep thread is woken with it. A closed or removed thread takes nothing and is not woken: `closed`, since 2.3.
 
@@ -259,6 +278,14 @@ Since 3.10. Asks a person in the scope to approve interrupting the running turn.
 Result: string
 
 ### Operation `Stop`
+
+Since 3.47 a stop accepted while unavailable records its original session,
+host run and turn and returns error code `action_held`: the stop is pending,
+and has stopped nothing. A repeated stop for that principal/run/turn creates
+no second action. Catch-up refuses a stop whose original turn ended. Uncertain
+stop dispatch is reported and never blindly repeated. Close, reopen, removal
+and terminal attachment refuse while their owning machine is unchecked.
+
 
 Interrupts the thread's running turn. Nothing happens when no turn runs.
 
@@ -794,9 +821,12 @@ One file the owner let through with `Trust`; since 3.28.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
-| `state` | string | required | machine availability; `ready` or `unavailable` |
-| `at` | time | required | observation time |
+| `state` | string | required | machine availability; `ready`, or since 3.47 `checking`, `away`, `catching_up`; older daemons may report `unavailable` |
+| `at` | time | required | observation time; since 3.47 the first failure time while unavailable |
 | `reason` | string | optional | why unavailable |
+
+| `last_known_state` | string | optional | underlying session state while unavailable, never a claim it is currently running; since 3.47 |
+| `last_known_at` | time | optional | when that underlying state was observed; since 3.47 |
 
 ### Type `ThreadInfo`
 
@@ -1400,6 +1430,35 @@ One entry of the event log. `hataori events` prints each event as this object, o
 ## Events
 
 The `data` of each event kind. Integers are the instance's own numbers for threads, sessions, turns and login outages.
+
+### Event `machine_availability`
+
+Since 3.47. A scoped observation of a configured machine, emitted on its
+thread's existing event stream. Required: `machine` string, `state` string,
+`since` integer (first failure Unix milliseconds, zero after recovery), and
+`reason` string. This is availability, not a session state transition.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `machine` | string | required | configured machine key |
+| `state` | string | required | observed availability state |
+| `since` | integer | required | first failure Unix milliseconds, zero after recovery |
+| `reason` | string | required | availability reason |
+
+### Event `machine_action`
+
+Since 3.47. Required fields: `action` string (`held`, `send`, `answer`, `stop`
+or `pending input` / `initial input`), `state` string (`pending`, `dispatched`, `refused`), and
+`reason` string. A pending notice is emitted once per thread/absence. A refusal
+is visible and never means a queued action reached another run/turn/request.
+A dispatched input is accepted for the normal receipt-based delivery path; it
+does not claim arbitrary command exactly-once execution.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `action` | string | required | action being held, dispatched or refused |
+| `state` | string | required | pending, dispatched or refused |
+| `reason` | string | required | bounded explanation of the action's outcome |
 
 ### Event `placement`
 

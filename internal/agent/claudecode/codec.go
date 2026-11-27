@@ -246,7 +246,7 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 		// the editor was consumed, including across another reconnect.
 		c.holdBox(in.ID)
 		if c.sent == nil {
-			c.sent = &sentInput{text: text, typed: typed, id: in.ID, pressed: true}
+			c.sent = &sentInput{text: text, typed: typed, id: in.ID, pressed: true, at: in.WrittenAt}
 		}
 		return Actions{}, nil
 	}
@@ -531,10 +531,12 @@ const pasteSettle = 400 * time.Millisecond
 
 // Tick acts on the codec's deadlines: Enter after a paste, input the CLI
 // never reported, and questions whose hook has passed its timeout.
-func (c *codec) Tick(now time.Time) Actions {
+func (c *codec) Tick(now time.Time) Actions { return c.TickClocks(now, now) }
+
+func (c *codec) TickClocks(active, wall time.Time) Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	a := merge(merge(merge(c.tickScreen(now), c.tickMCP(now)), c.tickInput(now)), c.tickRequests(now))
+	a := merge(merge(merge(c.tickScreen(active), c.tickMCP(active)), c.tickInput(active)), c.tickRequests(wall))
 	return c.number(merge(a, c.endWatch(false)))
 }
 

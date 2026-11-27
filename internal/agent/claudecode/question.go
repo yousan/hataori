@@ -69,6 +69,27 @@ func (c *codec) withdraw(id string) Actions {
 	return c.events(agent.Event{Kind: agent.RequestWithdrawn, Request: &agent.RequestInfo{ID: id}})
 }
 
+func (c *codec) ReconcileHooks(waiting []string) Actions {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	open := map[string]bool{}
+	for _, id := range waiting {
+		open[id] = true
+	}
+	var ids []string
+	for id := range c.requests {
+		if !open[id] {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	var a Actions
+	for _, id := range ids {
+		a = merge(a, c.withdraw(id))
+	}
+	return a
+}
+
 // ErrNotWaiting is returned by Answer for a call that no longer waits.
 var ErrNotWaiting = errors.New(Name + ": that question is no longer waiting")
 

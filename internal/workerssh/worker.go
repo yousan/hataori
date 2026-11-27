@@ -44,6 +44,18 @@ type generation struct {
 
 func (w *Worker) Status() Status { w.mu.Lock(); defer w.mu.Unlock(); return w.status }
 
+// Invalidate blocks dispatch after a failed application stream. The next
+// probe must verify identity, versions and inventory before readiness returns.
+func (w *Worker) Invalidate(cause Cause) {
+	w.mu.Lock()
+	w.publishLocked(w.current, false, cause)
+	w.mu.Unlock()
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
+}
+
 // WaitReady waits only when explicitly requested; Open itself never waits for
 // authentication/reconnect. Placement can inspect Status without blocking.
 func (w *Worker) WaitReady(ctx context.Context) error {

@@ -250,3 +250,18 @@ func TestQuestionWithdrawnWhenTheCLIGoesOn(t *testing.T) {
 		}
 	}
 }
+
+// A new hook after recovery keeps the host's wall deadline even when prior
+// absence moved the runner's active delivery clock back by an hour.
+func TestNewHookExpiryUsesWallClockAfterHistoricalPause(t *testing.T) {
+	c := newTestCodec()
+	c.hookTimeout = time.Minute
+	wall := time.Now()
+	c.Decode(agent.Hook, host.CallLine("new-after-recovery", true, wall, readCapture(t, "question/hooks/03-PreToolUse.json")))
+	if a := c.TickClocks(wall.Add(-time.Hour), wall.Add(59*time.Second)); len(a.Events) != 0 {
+		t.Fatalf("hook withdrawn early: %+v", a.Events)
+	}
+	if a := c.TickClocks(wall.Add(-time.Hour+time.Minute), wall.Add(time.Minute)); len(a.Events) != 1 || a.Events[0].Kind != agent.RequestWithdrawn {
+		t.Fatalf("historical pause delayed new hook expiry: %+v", a.Events)
+	}
+}
