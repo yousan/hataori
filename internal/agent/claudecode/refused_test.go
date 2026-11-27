@@ -67,8 +67,8 @@ func TestRefusedEnterIsPressedAgain(t *testing.T) {
 	w.input(t, c, "in-1", first)
 	w.refuse = true
 	evs, now := w.tick(c, time.Now(), 2*DefaultInputTimeout)
-	if len(evs) != 0 {
-		t.Fatalf("events while the Enter is refused: %+v", evs)
+	if len(evs) != 1 || evs[0].Kind != agent.InputWaiting || evs[0].Input != "in-1" {
+		t.Fatalf("waiting notice while the Enter is refused: %+v", evs)
 	}
 	w.input(t, c, "in-2", "the next")
 	w.want(t, first)

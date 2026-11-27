@@ -457,6 +457,7 @@ func stepAgent(s Snapshot, in Input, r *Result,
 }
 
 var agentKinds = map[agent.Kind]control.EventKind{
+	agent.InputWaiting:     "input_waiting",
 	agent.Text:             "text",
 	agent.ToolStarted:      "tool_started",
 	agent.ToolEnded:        "tool_ended",
@@ -472,6 +473,8 @@ var agentKinds = map[agent.Kind]control.EventKind{
 func agentOut(e agent.Event) Out {
 	d := map[string]any{}
 	switch e.Kind {
+	case agent.InputWaiting:
+		d["input"], d["reason"] = e.Input, string(e.Reason)
 	case agent.Text:
 		d["text"], d["final"] = e.Text, e.Final
 	case agent.ToolStarted, agent.ToolEnded:
