@@ -141,6 +141,11 @@ func (r *Resident) admissible(t workerproto.Target) bool {
 	if workerproto.CheckTarget(t, t) != nil {
 		return false
 	}
+	// A target is one immutable run, including after it ends. The receipt
+	// lookup handles an idempotent prepare; a new run needs a fresh target.
+	if _, exists := r.state.Runs[targetKey(t)]; exists {
+		return false
+	}
 	for _, run := range r.state.Runs {
 		if run.Target.Thread == t.Thread && run.State != "ended" && run.State != "gone" {
 			return false

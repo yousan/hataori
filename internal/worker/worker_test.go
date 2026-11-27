@@ -916,3 +916,64 @@ func TestInventoryAfterLostIntentReplyUsesPublicUnknownState(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareCannotReplaceRetainedTarget(t *testing.T) {
+	for _, final := range []string{"ended", "gone"} {
+		t.Run(final, func(t *testing.T) {
+			f := newFixture(t, false)
+			original := f.request("prepare", "retained-prepare", &f.target, workerproto.Prepare{})
+			f.receipt(original)
+			run := f.r.state.Runs[targetKey(f.target)]
+			identity := run.Identity
+			if final == "ended" {
+				// A same-identity final status is real host evidence, not a journal
+				// assertion invented by the peer.
+				f.workspace = "workspace-retained"
+				name := filepath.Join(f.root, "workspaces", f.workspace)
+				if err := os.Mkdir(name, 0700); err != nil {
+					t.Fatal(err)
+				}
+				info, err := os.Lstat(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				st := info.Sys().(*syscall.Stat_t)
+				f.r.state.Workspaces[targetKey(f.target)+"-"+f.workspace] = workspaceRecord{Target: f.target, Handle: f.workspace, Device: uint64(st.Dev), Inode: uint64(st.Ino)}
+				if err := f.r.save(); err != nil {
+					t.Fatal(err)
+				}
+				f.receipt(f.startRequest())
+				f.waitReady()
+				f.receipt(f.request("end_host", "end-retained", &f.target, workerproto.Empty{}))
+			} else {
+				// Simulate a previously recorded run absent after reboot. It still
+				// retains its target and cannot be relabelled as a different run.
+				run.State = "gone"
+				run.Boot = "previous-boot"
+				if err := f.r.save(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			refused(t, f.call(f.request("prepare", "new-prepare-key", &f.target, workerproto.Prepare{})), "wrong_target")
+			if f.r.state.Runs[targetKey(f.target)].Identity != identity || !f.r.ready {
+				t.Fatal("stale prepare replaced ownership or disabled resident")
+			}
+			if rec := f.receipt(original); rec.State != "complete" {
+				t.Fatalf("original prepare lost idempotency: %+v", rec)
+			}
+			if err := f.r.checkMarker(f.r.state.Runs[targetKey(f.target)]); err != nil {
+				t.Fatal(err)
+			}
+			f.r.Close()
+			f.open()
+			if !f.r.ready || f.r.state.Runs[targetKey(f.target)].Identity != identity {
+				t.Fatal("retained target did not survive restart")
+			}
+			fresh := f.target
+			fresh.Run = "fresh-retained-run"
+			if rec := f.receipt(f.request("prepare", "fresh-key", &fresh, workerproto.Prepare{})); rec.State != "complete" {
+				t.Fatal(rec)
+			}
+		})
+	}
+}
