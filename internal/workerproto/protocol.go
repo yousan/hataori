@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const Version = "1.2"
+const Version = "1.3"
 
 const (
 	MaxFrame = 1 << 20 // Includes the terminating newline.
@@ -64,6 +64,16 @@ type Connection struct {
 	binding Binding
 	version string
 	caps    map[string]bool
+}
+
+// CanPlace is negotiated, not inferred from health or an untrusted report.
+// Older residents ignore optional Start fields and cannot enforce admission.
+func (c *Connection) CanPlace() bool {
+	if c == nil {
+		return false
+	}
+	_, minor, ok := version(c.version)
+	return ok && minor >= 3 && c.caps["placement"]
 }
 
 func version(s string) (int, int, bool) {
@@ -279,6 +289,13 @@ func (c *Connection) Decode(data []byte, expected *Target) (Message, error) {
 	}
 	if err := validateBody(m); err != nil {
 		return Message{}, err
+	}
+	if m.Kind == "request" && m.Op == "start" {
+		var start Start
+		json.Unmarshal(m.Body, &start)
+		if start.Admission != nil && !c.CanPlace() {
+			return Message{}, refuse("unsupported_capability", "placement requires worker protocol 1.3 and its capability")
+		}
 	}
 	return m, nil
 }

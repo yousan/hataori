@@ -50,6 +50,8 @@ func directoryIdentity(info os.FileInfo) (uint64, uint64, bool) { return fileIde
 func (r *Resident) workspaceOperation(ctx context.Context, m workerproto.Message) *workerproto.Refusal {
 	target := *m.Target
 	switch m.Op {
+	case "remake_workspace":
+		return r.remakeWorkspace(ctx, m)
 	case "clone":
 		var b workerproto.Clone
 		json.Unmarshal(m.Body, &b)
@@ -273,7 +275,10 @@ func (r *Resident) recoverWorkspaces() error {
 			return errors.New("worker: invalid trash journal")
 		}
 		w, ok := r.state.Workspaces[workspaceKey(tr.Target, tr.Workspace)]
-		if !ok || w.Target != tr.Target || w.Device != tr.Device || w.Inode != tr.Inode {
+		// Terminal trash entries are history, never current workspace authority.
+		// A restored workspace can move to a new run, and a purged place can
+		// be remade with a new inode. Active trash still requires exact identity.
+		if tr.State != "restored" && tr.State != "purged" && (!ok || w.Target != tr.Target || w.Device != tr.Device || w.Inode != tr.Inode) {
 			return errors.New("worker: invalid trash workspace identity")
 		}
 		switch tr.State {
@@ -325,7 +330,7 @@ func (r *Resident) recoverFileOperation(rec *receiptRecord) error {
 	placed := r.placement(w)
 	effect := workerproto.Effect{Workspace: w.Handle}
 	switch rec.Request.Op {
-	case "clone":
+	case "clone", "remake_workspace":
 		if !placementExists(placed.Dir, w.Device, w.Inode) {
 			if err := r.maker().RecoverClone(context.Background(), p.Staging, placed); err != nil {
 				return err

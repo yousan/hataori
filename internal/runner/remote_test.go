@@ -25,6 +25,7 @@ import (
 	"github.com/yousan/hataori/internal/holder"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/machineio"
+	"github.com/yousan/hataori/internal/placement"
 	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/worker"
 	"github.com/yousan/hataori/internal/workerproto"
@@ -801,5 +802,249 @@ func TestRemoteRunnerRefusedHookGetsNewAttemptAfterRestart(t *testing.T) {
 		var states string
 		f.st.DB.QueryRow(`SELECT group_concat(operation||':'||state||':'||request) FROM session_machine_actions`).Scan(&states)
 		t.Fatalf("answer attempts: refused=%d complete=%d, actions=%s, events=%v", refused, complete, states, f.eventData("turn_ended"))
+	}
+}
+
+func TestPlacementCoreSelectsWorkerAndWaitsWithoutLocalFallback(t *testing.T) {
+	f, resident := remoteFixture(t, false)
+	ctx := context.Background()
+	f.core.Placement = &core.MachinePlacement{Machines: map[string]core.PlacementMachine{"build": {Limits: placement.Limits{MaxResident: 1}}}, Observe: func(context.Context, string, string) (placement.Observation, error) {
+		now := time.Now()
+		return placement.Observation{Ready: true, Reconciled: true, Known: true, Installed: true, LoggedIn: true, At: now, HealthAt: now, ValidFor: 10 * time.Second, Memory: 1 << 30, Disk: 1 << 30}, nil
+	}}
+	f.run.Admit = f.core.AdmitSession
+	remote := f.run.Remotes["build"]
+	remote.Admission = &workerproto.Admission{MaxResident: 1}
+	f.run.Remotes["build"] = remote
+	id, err := owner(f.core).Start(ctx, control.StartRequest{Machine: "build", Scope: "s", Thread: "placement-explicit", Key: "placement-explicit", Repo: "fixture", Input: control.Input{Text: "reply placed"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "placed worker result", 8*time.Second, func() bool { return withText(t, f.st, "text", "placed") == 1 })
+	info, err := owner(f.core).Thread(ctx, id, 0, 0)
+	if err != nil || info.Machine != "build" || info.PlacementPending {
+		t.Fatal(info, err)
+	}
+	request := control.StartRequest{Scope: "s", Thread: "placement-auto", Key: "placement-auto", Repo: "fixture", Input: control.Input{Text: "reply queued"}}
+	pending, err := owner(f.core).Start(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := owner(f.core).Start(ctx, request)
+	if err != nil || again != pending {
+		t.Fatal(again, pending, err)
+	}
+	info, err = owner(f.core).Thread(ctx, pending, 0, 0)
+	if err != nil || !info.PlacementPending || info.Machine != "" {
+		t.Fatal(info, err)
+	}
+	var runs int
+	if err := f.st.DB.QueryRow(`SELECT count(*) FROM session_machine_runs`).Scan(&runs); err != nil || runs != 1 {
+		t.Fatal(runs, err)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "work")); !os.IsNotExist(err) {
+		t.Fatal("worker placement touched main workspace", err)
+	}
+	remoteSession, err := f.run.remoteSession(ctx, int64(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "placed turn completed", 8*time.Second, f.has("turn_ended", 1))
+	closer := f.core.As(control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all | control.OpClose | control.OpReopen})
+	if err := closer.CloseThread(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "confirmed worker end", 8*time.Second, func() bool { l, err := remoteSession.Alive(ctx); return err == nil && l.Ended() })
+	reconcilePlacementFixture(t, f, resident)
+	if err := f.core.DispatchPlacements(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "oldest queued start on worker", 8*time.Second, func() bool { return withText(t, f.st, "text", "queued") == 1 })
+	info, err = owner(f.core).Thread(ctx, pending, 0, 0)
+	if err != nil || info.PlacementPending || info.Machine != "build" {
+		t.Fatal(info, err)
+	}
+	// Reopen keeps the old machine. With the queued thread occupying its
+	// only slot, the next wake waits there without another clone or host.
+	if _, err := closer.ReopenThread(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner(f.core).Send(ctx, id, "wake-full", control.Input{Text: "reply wake-after-room"}, control.Deliver); err != nil {
+		t.Fatal(err)
+	}
+	info, err = owner(f.core).Thread(ctx, id, 0, 0)
+	if err != nil || !info.PlacementPending || info.Machine != "build" {
+		t.Fatal(info, err)
+	}
+
+	if err := closer.CloseThread(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	pendingRemote, err := f.run.remoteSession(ctx, int64(pending))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "queued worker ended", 8*time.Second, func() bool { l, e := pendingRemote.Alive(ctx); return e == nil && l.Ended() })
+	reconcilePlacementFixture(t, f, resident)
+	if err := f.core.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "reopened worker after room", 8*time.Second, func() bool { return withText(t, f.st, "text", "wake-after-room") == 1 })
+	if slept, err := f.run.Sleep(ctx, id); err != nil || !slept {
+		t.Fatal("placed sleep", slept, err)
+	}
+	waitFor(t, "sleep worker ended", 8*time.Second, func() bool {
+		r, e := f.run.remoteSession(ctx, int64(id))
+		if e != nil {
+			return false
+		}
+		l, e := r.Alive(ctx)
+		return e == nil && l.Ended()
+	})
+	reconcilePlacementFixture(t, f, resident)
+	if _, err := closer.ReopenThread(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner(f.core).Send(ctx, pending, "refill", control.Input{Text: "reply refill"}, control.Deliver); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "refilled worker", 8*time.Second, func() bool { return withText(t, f.st, "text", "refill") == 1 })
+	if err := owner(f.core).Send(ctx, id, "sleep-wake-full", control.Input{Text: "reply sleep-wake-capacity"}, control.Deliver); err != nil {
+		t.Fatal(err)
+	}
+	info, err = owner(f.core).Thread(ctx, id, 0, 0)
+	if err != nil || !info.PlacementPending || info.Machine != "build" {
+		t.Fatal("sleep wake moved or ignored capacity", info, err)
+	}
+	// An unavailable original conversation causes a replacement only after
+	// room returns; every session still shares the original worker handle.
+	var conversation string
+	f.st.DB.QueryRow(`SELECT agent_session_id FROM sessions WHERE thread_id=? ORDER BY id DESC LIMIT 1`, int64(id)).Scan(&conversation)
+	if err := os.Remove(filepath.Join(f.run.Remotes["build"].Root, "conversations", conversation)); err != nil {
+		t.Fatal(err)
+	}
+	if err := closer.CloseThread(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	pendingRemote, err = f.run.remoteSession(ctx, int64(pending))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "refill ended", 8*time.Second, func() bool { l, e := pendingRemote.Alive(ctx); return e == nil && l.Ended() })
+	reconcilePlacementFixture(t, f, resident)
+	if err := f.core.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "placed replacement after capacity", 10*time.Second, func() bool { return withText(t, f.st, "text", "sleep-wake-capacity") == 1 })
+	var handles, machines int
+	if err := f.st.DB.QueryRow(`SELECT count(DISTINCT x.workspace),count(DISTINCT x.machine) FROM session_machine_runs x JOIN sessions s ON s.id=x.session_id WHERE s.thread_id=?`, int64(id)).Scan(&handles, &machines); err != nil || handles != 1 || machines != 1 {
+		t.Fatal("replacement relocated", handles, machines, err)
+	}
+
+}
+
+func reconcilePlacementFixture(t *testing.T, f *fixture, resident *worker.Resident) {
+	t.Helper()
+	ctx := context.Background()
+	remote := f.run.Remotes["build"]
+	conn, protocol, err := remote.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	request := workerproto.Message{Kind: "request", ID: "fixture-inventory", Binding: remote.Binding, Op: "inventory", Body: json.RawMessage(`{}`)}
+	data, err := workerproto.Encode(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	data, err = bufio.NewReader(conn).ReadBytes('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, err := protocol.Decode(data, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inv workerproto.Inventory
+	if err := json.Unmarshal(reply.Body, &inv); err != nil {
+		t.Fatal(err)
+	}
+	if !inv.Complete {
+		t.Fatal("fixture inventory incomplete")
+	}
+	var runs []store.MachineRunObservation
+	for _, h := range inv.Hosts {
+		runs = append(runs, store.MachineRunObservation{Thread: int64(h.Target.Thread), Session: h.Target.Session, Run: h.Target.Run, State: h.State})
+	}
+	if err := f.st.Update(ctx, func(tx *store.Tx) error { return tx.ObserveMachineRuns(ctx, "build", runs) }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPlacementLostWorkerStartReplyKeepsReservation(t *testing.T) {
+	for _, cancelLabel := range []bool{false, true} {
+		t.Run(fmt.Sprint("canceled-label-", cancelLabel), func(t *testing.T) {
+			f, _ := remoteFixture(t, false)
+			ctx := context.Background()
+			f.core.Placement = &core.MachinePlacement{Machines: map[string]core.PlacementMachine{"build": {Limits: placement.Limits{MaxResident: 1}}}, Observe: func(context.Context, string, string) (placement.Observation, error) {
+				now := time.Now()
+				return placement.Observation{Ready: true, Reconciled: true, Known: true, Installed: true, LoggedIn: true, At: now, HealthAt: now, ValidFor: 10 * time.Second, Memory: 1 << 30, Disk: 1 << 30}, nil
+			}}
+			f.run.Admit = f.core.AdmitSession
+			remote := f.run.Remotes["build"]
+			remote.Admission = &workerproto.Admission{MaxResident: 1}
+			open := remote.Open
+			var lost atomic.Bool
+			remote.Open = func(ctx context.Context) (net.Conn, *workerproto.Connection, error) {
+				c, p, err := open(ctx)
+				if err != nil {
+					return nil, nil, err
+				}
+				return &transformReply{Conn: c, reader: bufio.NewReaderSize(c, workerproto.MaxFrame), change: func(m workerproto.Message) workerproto.Message {
+					if m.Op == "start" && m.Kind == "reply" && lost.CompareAndSwap(false, true) {
+						m.Kind = "refusal"
+						m.Body = json.RawMessage(`{"code":"unavailable","message":"reply lost after start"}`)
+					}
+					return m
+				}}, p, nil
+			}
+			f.run.Remotes["build"] = remote
+			id, err := owner(f.core).Start(ctx, control.StartRequest{Machine: "build", Scope: "s", Thread: "lost-start", Key: "lost-start", Repo: "fixture", Input: control.Input{Text: "reply original-start"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := owner(f.core).Thread(ctx, id, 0, 0)
+			if err != nil || !info.PlacementPending || !lost.Load() {
+				t.Fatal(info, err, lost.Load())
+			}
+			reservations, err := f.st.MachineReservations(ctx)
+			if err != nil || len(reservations) != 1 {
+				t.Fatal(reservations, err)
+			}
+			if cancelLabel {
+				if _, err := f.st.DB.Exec(`UPDATE sessions SET io_error=? WHERE thread_id=?`, core.PlacementCanceledReason, int64(id)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := f.core.Recover(ctx); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "original start receipt recovery", 8*time.Second, func() bool { return withText(t, f.st, "text", "original-start") == 1 })
+			got := counts(t, f.st)
+			if got["turn_started"] != 1 || got["turn_ended"] != 1 {
+				t.Fatal("lost reply duplicated worker", got)
+			}
+			info, err = owner(f.core).Thread(ctx, id, 0, 0)
+			if err != nil || info.PlacementPending || info.IOPaused != "" || info.Machine != "build" {
+				t.Fatal(info, err)
+			}
+			var starts int
+			if err := f.st.DB.QueryRow(`SELECT count(*) FROM session_machine_actions WHERE operation='start'`).Scan(&starts); err != nil || starts != 1 {
+				t.Fatal("start intent was replaced after unknown reply", starts, err)
+			}
+		})
 	}
 }

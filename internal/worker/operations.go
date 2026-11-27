@@ -111,6 +111,30 @@ func (r *Resident) Dispatch(ctx context.Context, c *workerproto.Connection, data
 			return deny(refusal.Code, refusal.Message)
 		}
 		return finish(result)
+	case "resolve_repository":
+		var b workerproto.RepositoryReference
+		json.Unmarshal(m.Body, &b)
+		if _, ok := r.workspaceConfig.Repositories[b.Repository]; ok {
+			return finish(b)
+		}
+		found := ""
+		for key, value := range r.workspaceConfig.Repositories {
+			if value == b.Repository && (found == "" || key < found) {
+				found = key
+			}
+		}
+		if found != "" {
+			return finish(workerproto.RepositoryReference{Repository: found})
+		}
+		return deny("denied", "repository is not configured on this worker")
+	case "workspace_status":
+		var b workerproto.Workspace
+		json.Unmarshal(m.Body, &b)
+		status, refusal := r.workspaceStatus(*m.Target, b.Workspace)
+		if refusal != nil {
+			return deny(refusal.Code, refusal.Message)
+		}
+		return finish(status)
 	case "inspect":
 		var b workerproto.Workspace
 		json.Unmarshal(m.Body, &b)
@@ -135,7 +159,7 @@ func (r *Resident) Dispatch(ctx context.Context, c *workerproto.Connection, data
 			return deny("not_found", "operation receipt is not retained")
 		}
 		return finish(rec.Receipt)
-	case "prepare", "start", "end_host", "input", "answer", "clone", "fetch", "remove", "restore", "acknowledge", "purge", "upload", "bind_workspace":
+	case "prepare", "start", "end_host", "input", "answer", "clone", "fetch", "remove", "restore", "acknowledge", "purge", "upload", "bind_workspace", "remake_workspace":
 		// All supported effects have a durable receipt, even when a reply is lost.
 	default:
 		return deny("unsupported_operation", "operation is not implemented by this resident")
@@ -158,7 +182,7 @@ func (r *Resident) Dispatch(ctx context.Context, c *workerproto.Connection, data
 	switch m.Op {
 	case "bind_workspace":
 		refusal = r.bindWorkspace(m)
-	case "clone", "fetch", "remove", "restore", "acknowledge", "purge":
+	case "clone", "fetch", "remove", "restore", "acknowledge", "purge", "remake_workspace":
 		refusal = r.workspaceOperation(ctx, m)
 	case "upload":
 		refusal = r.upload(m)
@@ -356,6 +380,9 @@ func (r *Resident) start(ctx context.Context, m workerproto.Message) *workerprot
 	}
 	var b workerproto.Start
 	json.Unmarshal(m.Body, &b)
+	if refusal := r.checkAdmission(run.Target, b.Admission); refusal != nil {
+		return refusal
+	}
 	cfg, ok := r.configs[b.AgentConfig]
 	if !ok {
 		return failure("not_found", "agent configuration is not registered")
@@ -409,6 +436,10 @@ func (r *Resident) start(ctx context.Context, m workerproto.Message) *workerprot
 		run.State = "unknown"
 		r.ready = false
 		return r.uncertain(rec)
+	}
+	if refusal := r.checkAdmission(run.Target, b.Admission); refusal != nil {
+		run.State = "prepared"
+		return r.refuseFile(rec, refusal.Code, refusal.Message)
 	}
 	hostSpec := host.Spec{Identity: run.Identity, Argv: launch.Argv, Env: launch.Env, Dir: workspace, Terminal: launch.Terminal}
 	if _, err := host.Start(r.options.HostCommand, r.hostDir(run.Target), hostSpec); err != nil {

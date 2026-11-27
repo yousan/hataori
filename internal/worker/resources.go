@@ -20,3 +20,6 @@ func resourceTelemetry(root string, now time.Time) workerproto.Telemetry {
 	}
 	return workerproto.Telemetry{ObservedMS: now.UnixMilli(), ValidMS: 10000, Known: true, MemoryFree: memory, DiskFree: uint64(disk.Bavail) * uint64(disk.Bsize), Load: load}
 }
+
+// Resources reports local admission telemetry without reading agent data.
+func Resources(root string, now time.Time) workerproto.Telemetry { return resourceTelemetry(root, now) }

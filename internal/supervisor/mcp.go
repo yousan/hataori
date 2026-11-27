@@ -174,10 +174,11 @@ var tools = []tool{
 	{ToolInterrupt, "Ask a person in this channel to approve interrupting a thread that is running a turn. This returns at once and interrupts nothing by itself. Once approved, the thread's turn is stopped and it gets the reason as a message from the supervisor. A thread not running is refused with not busy; send instead.", object(map[string]any{"number": number, "reason": map[string]any{"type": "string", "description": "the reason to give the thread"}}, "number", "reason")},
 	{ToolStart, "Start a new thread in this channel, with its own workspace cloned from one of the channel's repositories: to do work, or to look something up that your tools do not show. Under the autonomy propose it is a proposal that a person approves first; under watch it is refused.",
 		object(map[string]any{
-			"repo":   map[string]any{"type": "string", "description": "the repository to clone"},
-			"text":   map[string]any{"type": "string", "description": "the first message; its first line becomes the title"},
-			"model":  map[string]any{"type": "string", "description": "the model; leave out for the channel's default"},
-			"effort": map[string]any{"type": "string", "description": "the effort; leave out for the channel's default", "enum": control.Efforts},
+			"repo":    map[string]any{"type": "string", "description": "the repository to clone"},
+			"machine": map[string]any{"type": "string", "description": "optional configured eligible machine key; refuses without fallback"},
+			"text":    map[string]any{"type": "string", "description": "the first message; its first line becomes the title"},
+			"model":   map[string]any{"type": "string", "description": "the model; leave out for the channel's default"},
+			"effort":  map[string]any{"type": "string", "description": "the effort; leave out for the channel's default", "enum": control.Efforts},
 			"research": map[string]any{"type": "boolean", "description": "true for a thread that only reads, to look something up: it starts without the repository's own settings and hooks, so that no dialog about them blocks it; " +
 				"never for a thread that changes anything"},
 		}, "repo", "text")},
@@ -328,15 +329,16 @@ func (m *MCP) connect() (control.API, error) {
 // the reason for the model.
 func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (string, error) {
 	var a struct {
-		Number *int64 `json:"number"`
-		Text   string `json:"text"`
-		Reason string `json:"reason"`
-		Repo   string `json:"repo"`
-		Model  string `json:"model"`
-		Effort string `json:"effort"`
-		State  string `json:"state"`
-		Ref    string `json:"ref"`
-		Commit string `json:"commit"`
+		Number  *int64 `json:"number"`
+		Text    string `json:"text"`
+		Reason  string `json:"reason"`
+		Repo    string `json:"repo"`
+		Machine string `json:"machine"`
+		Model   string `json:"model"`
+		Effort  string `json:"effort"`
+		State   string `json:"state"`
+		Ref     string `json:"ref"`
+		Commit  string `json:"commit"`
 
 		Minutes *int64 `json:"minutes"`
 		At      string `json:"at"`
@@ -436,7 +438,7 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 		if a.Repo == "" || strings.TrimSpace(a.Text) == "" {
 			return "", errors.New("bad arguments: repo and text are required")
 		}
-		id, err := api.Start(ctx, control.StartRequest{Key: newKey(), Scope: m.Scope, Repo: a.Repo,
+		id, err := api.Start(ctx, control.StartRequest{Machine: a.Machine, Key: newKey(), Scope: m.Scope, Repo: a.Repo,
 			Input: control.Input{Text: a.Text}, Model: a.Model, Effort: a.Effort, Research: a.Research})
 		if p := proposed(err); p != nil {
 			return fmt.Sprintf("Proposed as proposal %d: nothing is started until a person in this channel approves it in your thread. "+

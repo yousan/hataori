@@ -20,11 +20,12 @@ import (
 // send's text, or a start's repository, agent, model, effort and first
 // text. The model and the effort are those the proposal showed.
 type proposalCall struct {
-	Text   string `json:"text"`
-	Repo   string `json:"repo,omitempty"`
-	Agent  string `json:"agent,omitempty"`
-	Model  string `json:"model,omitempty"`
-	Effort string `json:"effort,omitempty"`
+	Machine string `json:"machine,omitempty"`
+	Text    string `json:"text"`
+	Repo    string `json:"repo,omitempty"`
+	Agent   string `json:"agent,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
 	// Research is the start's (control.StartRequest.Research), kept from a
 	// caller that may ask for it.
 	Research bool `json:"research,omitempty"`
@@ -59,9 +60,12 @@ func (a *api) proposeStart(ctx context.Context, r control.StartRequest, agent, m
 	if err := a.asksHere(ctx, "Start", r.Scope); err != nil {
 		return err
 	}
-	call := proposalCall{Text: r.Input.Text, Repo: r.Repo, Agent: agent, Model: model, Effort: effort, Research: r.Research}
+	call := proposalCall{Machine: r.Machine, Text: r.Input.Text, Repo: r.Repo, Agent: agent, Model: model, Effort: effort, Research: r.Research}
 	return a.propose(ctx, "start", r.Key, call, func(tx *store.Tx, d map[string]any) (control.ThreadID, string, error) {
 		d["repo"], d["agent"], d["model"], d["effort"] = r.Repo, agent, model, effort
+		if r.Machine != "" {
+			d["machine"] = r.Machine
+		}
 		if r.Research {
 			d["research"] = true // since protocol 3.34
 		}
@@ -342,7 +346,7 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 			}
 		}
 		var id control.ThreadID
-		id, err = sender.start(ctx, control.StartRequest{Key: key, Scope: scope, Repo: call.Repo, Agent: call.Agent,
+		id, err = sender.start(ctx, control.StartRequest{Machine: call.Machine, Key: key, Scope: scope, Repo: call.Repo, Agent: call.Agent,
 			Model: call.Model, Effort: call.Effort, Input: control.Input{Text: call.Text}, Research: call.Research}, control.KindOrdinary, nil)
 		if id != 0 {
 			// The thread is made; a launch that failed is the thread's own

@@ -3,11 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"path/filepath"
+	"sync"
 	"time"
 
+	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/instance"
+	"github.com/yousan/hataori/internal/placement"
 	"github.com/yousan/hataori/internal/runner"
 	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/workerproto"
@@ -74,6 +78,9 @@ func startMachineConnections(ctx context.Context, root string, cfg *instance.Con
 		if installation == "" {
 			continue
 		} // no implicit trust-on-first-contact
+		var viewMu sync.RWMutex
+		var view workerssh.Observation
+		var received time.Time
 		binding := workerproto.Binding{Main: main, Worker: installation}
 		w, err := pool.Worker(workerssh.Config{Destination: m.SSH, Root: m.Root, Binding: binding,
 			Expected: func(ctx context.Context) ([]workerproto.Target, error) { return machineTargets(ctx, st, m.Key) },
@@ -81,13 +88,20 @@ func startMachineConnections(ctx context.Context, root string, cfg *instance.Con
 				if err := st.BindMachineInstallation(ctx, m.Key, binding.Worker); err != nil {
 					return err
 				}
-				return st.Update(ctx, func(tx *store.Tx) error {
+				err := st.Update(ctx, func(tx *store.Tx) error {
 					t := o.Health.Telemetry
 					var load, memory, disk any
 					if workerproto.FreshTelemetry(t, time.Now().UnixMilli()) {
 						load, memory, disk = t.Load, t.MemoryFree, t.DiskFree
 					}
 					if _, err := tx.ExecContext(ctx, `INSERT INTO machine_health(machine,observed_at,boot,reconciled,load,free_memory_bytes,free_disk_bytes) VALUES(?,?,?,1,?,?,?) ON CONFLICT(machine) DO UPDATE SET observed_at=excluded.observed_at,boot=excluded.boot,reconciled=1,load=excluded.load,free_memory_bytes=excluded.free_memory_bytes,free_disk_bytes=excluded.free_disk_bytes`, m.Key, t.ObservedMS, o.Health.Boot, load, memory, disk); err != nil {
+						return err
+					}
+					runs := make([]store.MachineRunObservation, 0, len(o.Inventory.Hosts))
+					for _, host := range o.Inventory.Hosts {
+						runs = append(runs, store.MachineRunObservation{Thread: int64(host.Target.Thread), Session: host.Target.Session, Run: host.Target.Run, State: host.State})
+					}
+					if err := tx.ObserveMachineRuns(ctx, m.Key, runs); err != nil {
 						return err
 					}
 					for _, a := range o.Health.Agents {
@@ -101,17 +115,55 @@ func startMachineConnections(ctx context.Context, root string, cfg *instance.Con
 					}
 					return nil
 				})
+				if err != nil {
+					return err
+				}
+				viewMu.Lock()
+				view = o
+				received = time.Now()
+				viewMu.Unlock()
+				return nil
 			}})
 		if err != nil {
 			return nil, err
 		}
-		r.Remotes[m.Key] = runner.RemoteMachine{Binding: binding, Destination: m.SSH, Root: m.Root, Open: func(ctx context.Context) (net.Conn, *workerproto.Connection, error) {
-			s, err := w.Open(ctx)
-			if err != nil {
-				return nil, nil, err
-			}
-			return s, s.Protocol, nil
-		}}
+		r.Remotes[m.Key] = runner.RemoteMachine{Admission: &workerproto.Admission{MaxResident: m.MaxResident, MaxStarting: m.MaxStarting, MaxLoad: m.MaxLoad, MinFreeMemory: uint64(m.MinFreeMemoryBytes), MinFreeDisk: uint64(m.MinFreeDiskBytes)},
+			Status: func() control.MachineAvailability {
+				status := w.Status()
+				viewMu.RLock()
+				o, at := view, received
+				viewMu.RUnlock()
+				x := control.MachineAvailability{State: "unavailable", At: status.Since, Reason: "machine connection is unavailable"}
+				if status.Ready {
+					x.At = at
+					x.Reason = "placement capability or resource observation is unavailable"
+					if o.Placement && workerproto.FreshTelemetry(o.Health.Telemetry, time.Now().UnixMilli()) {
+						x.State = "ready"
+						x.Reason = ""
+					}
+				}
+				return x
+			}, Observe: func(ctx context.Context, name string) (placement.Observation, error) {
+				viewMu.RLock()
+				o, at := view, received
+				viewMu.RUnlock()
+				t := o.Health.Telemetry
+				x := placement.Observation{Ready: w.Status().Ready && o.Placement, Reconciled: o.Inventory.Complete && o.Inventory.Boot == o.Health.Boot, Known: t.Known && t.MemoryFree <= math.MaxInt64 && t.DiskFree <= math.MaxInt64, At: time.UnixMilli(t.ObservedMS), HealthAt: at, ValidFor: time.Duration(t.ValidMS) * time.Millisecond, Load: t.Load, Memory: int64(t.MemoryFree), Disk: int64(t.DiskFree)}
+				for _, a := range o.Health.Agents {
+					if a.Agent == name && a.Config == "default" {
+						x.Installed = a.Installed && a.Installation == "installed"
+						x.LoggedIn = a.Login == "logged_in"
+						break
+					}
+				}
+				return x, nil
+			}, Binding: binding, Destination: m.SSH, Root: m.Root, Open: func(ctx context.Context) (net.Conn, *workerproto.Connection, error) {
+				s, err := w.Open(ctx)
+				if err != nil {
+					return nil, nil, err
+				}
+				return s, s.Protocol, nil
+			}}
 	}
 	good = true
 	return pool, nil

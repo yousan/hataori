@@ -37,6 +37,24 @@ func TestWorkerAttachmentRefusesOldDaemonBeforeSending(t *testing.T) {
 	}
 }
 
+func TestExplicitMachineRefusesOldDaemonBeforeSending(t *testing.T) {
+	var sent atomic.Bool
+	path := fakeDaemon(t, "3.45", func(message) []string { sent.Store(true); return nil })
+	c, err := dialPath(path, Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := c.Start(ctx, control.StartRequest{Machine: "build", Scope: "scope", Key: "key"}); err == nil || !strings.Contains(err.Error(), "3.46") {
+		t.Fatal(err)
+	}
+	if sent.Load() {
+		t.Fatal("explicit placement was sent to a daemon that would ignore it")
+	}
+}
+
 // Major versions must be equal; minor versions may differ.
 func TestVersions(t *testing.T) {
 	root := t.TempDir()

@@ -30,7 +30,7 @@ func SocketPath(root string) string {
 
 func (r *Resident) Hello() workerproto.Hello {
 	return workerproto.Hello{Version: workerproto.Version, Binding: r.binding,
-		Capabilities: []string{"health", "host", "receipts", "lifecycle", "workspace", "transfer", "runner", "replay", "terminal"}, Required: []string{"receipts", "lifecycle"}}
+		Capabilities: []string{"health", "host", "receipts", "lifecycle", "workspace", "transfer", "runner", "replay", "terminal", "placement"}, Required: []string{"receipts", "lifecycle"}}
 }
 
 func (r *Resident) Listen() (string, error) {

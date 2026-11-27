@@ -1990,6 +1990,31 @@ independent owner connection. Existing `Attachment.Socket` remains local.
 scope authority. The public protocol versions these additive declarations
 separately from the worker protocol.
 
+`StartRequest.Machine` optionally names an exact machine. `ThreadInfo` adds
+`PlacementPending`, `PlacementReason` and scoped `MachineAvailability`
+(`State`, `At`, `Reason`). The `placement` event reports pending/selected/canceled
+placement. Supervisor proposals preserve the optional requested machine.
+
+`Core.MachinePlacement` combines configured limits with fresh observations and
+a callback rebuilding accepted caller provenance from current grants.
+`AdmitSession` reserves transactionally before workspace/host effects;
+`DispatchPlacements` rechecks durable unplaced starts oldest first. Runner's
+`Admit` callback also guards wake/replacement and the last local launch point.
+`FirstInput.AcceptedOperation` retains the original Start/Send/Attach operation
+for current-grant recovery checks. `PlacementEnded` requires positive local
+holder proof, including superseded runs; `PlacementRecovered` recognizes an
+original phase-two host before applying new-start resource admission. Remote
+release uses bound inventory. A canceled dispatch retains a distinct durable
+launch marker excluded from both recovery and reconnect, so later restarts
+cannot deliver input whose original authority was revoked.
+`Runner.RevalidateLaunch` calls `Core.RevalidatePlacementLaunch` before
+reconnecting creating sessions with retained first input, separately from
+resource admission. Placement activation persists, so removing the last worker
+or limit cannot disable accepted-input authorization after a restart. A canceled
+intent stays canceled when its original permission is later restored.
+Optional `WorkerWorkspaces` routes removal, reopen and trash acknowledgement
+to typed resident operations; opaque worker handles are never main paths.
+
 ### Control API
 
 ```go

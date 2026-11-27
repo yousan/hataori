@@ -1,8 +1,8 @@
 # Worker resident
 
-The #959 resident is a foundation of #956's first-worker gate. It is not yet a
-remotely usable worker: SSH management (#960), workspace registration (#961),
-remote runner decoding and main-side placement are separate work. It never
+The resident, SSH transport, workspace registration, remote runner and durable
+placement through #963 are foundations of #956's first-worker gate. Away
+actions (#964) and the combined product gate (#965) follow. It never
 loads the main's configuration, starts a bot or accepts a control-socket hello.
 No deployment or service-manager operation is part of the implementation.
 
@@ -173,7 +173,8 @@ Per-configuration probes distinguish installed, missing, logged in, logged out
 and unknown. They have a two-second timeout, with a four-second total health
 budget. Resource samples expire after ten seconds (wire maximum sixty); unknown,
 future or stale data never admits a start. Start also requires nonzero free
-memory and disk; main placement policy adds its configured limits later. Linux
+memory and disk. Main placement and the resident recheck configured admission
+limits before a new host starts (worker protocol 1.3). Linux
 uses native memory/load and filesystem free-space observations. Its `/proc`
 read is only the OS boot UUID, never process identity or ownership. Darwin uses
 native boot time, but its resource sampler currently reports unknown, so real

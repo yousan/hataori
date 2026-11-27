@@ -1,11 +1,11 @@
 # Worker protocol
 
-Status: worker protocol and runner integration through #962, part of #956. This document specifies
-worker protocol **1.2**. It is independent of the control protocol described in
+Status: worker protocol and runner integration through #963, part of #956. This document specifies
+worker protocol **1.3**. It is independent of the control protocol described in
 `protocol.md`; a control socket and an unversioned host socket are never worker
 endpoints. The resident is described in `worker-resident.md`. SSH transport and
-the machine-bound runner are implemented; public placement and away queues
-remain #963/#964, before the first-worker guide and product gate in #965.
+the machine-bound runner are implemented; durable placement is implemented; away queues
+remain #964, before the first-worker guide and product gate in #965.
 
 ## Compatibility and golden files
 
@@ -97,7 +97,7 @@ versions and an `error` object. Only fixed, safe explanations may be returned.
 
 The exported structs in `internal/workerproto/bodies.go` define the JSON field
 names and types. All bodies are objects, including `Empty` (`{}`). The table is
-exhaustive for 1.2; an unlisted operation refuses. **S** means a registered
+exhaustive for 1.3; an unlisted operation refuses. **S** means a registered
 session/run is required, **D** means durable acceptance and a receipt reply.
 
 | Operation | Capability | Scope | Request body | Reply body |
@@ -107,6 +107,9 @@ session/run is required, **D** means durable acceptance and a receipt reply.
 | `probe` | health | connection | AgentConfig | AgentHealth |
 | `prepare` | host | S,D | Prepare | Receipt |
 | `start` | host | S,D | Start | Receipt |
+| `resolve_repository` (since 1.3) | placement | S | RepositoryReference | RepositoryReference |
+| `workspace_status` (since 1.3) | placement | S | Workspace | WorkspaceStatus |
+| `remake_workspace` (since 1.3) | placement | S,D | Workspace | Receipt |
 | `describe` (since 1.2) | runner | S | Empty | RunMetadata |
 | `bind_workspace` (since 1.2) | runner | S,D | BindWorkspace | Receipt |
 | `stop` | host | S,D | Stop | Receipt |
@@ -335,3 +338,24 @@ after an effect whose acknowledgment was lost. Only a durable `refused` receipt
 or a local failure proven to precede sending permits a safe retry. Unknown
 input keeps the main's written marker and awaits the agent report or a visible
 `not delivered` outcome.
+
+## Version 1.3 additions
+
+The 1.0–1.2 corpora remain immutable. Negotiated minor 1.3 and capability
+`placement` are required before sending `Start.admission` or the new operations.
+`Admission` has optional `max_resident`, `max_starting`, `max_load`,
+`min_free_memory`, `min_free_disk` (bytes) (zero disables that limit).
+The resident rechecks fresh known normalized load, memory and disk and counts
+prepared/starting/unknown/live runs immediately before host start. A confirmed
+refusal authorizes a fresh attempt; an unknown receipt retains its original key
+and request and never authorizes another host.
+
+`RepositoryReference` contains required `repository`: an exact registered key
+or address, resolved only against resident configuration. `WorkspaceStatus`
+contains required `workspace`, `state` (`present`, `trashed`, `purged`) and
+optional `trash`. It requires registered identity/retained-trash proof; absence
+alone never proves purge. `remake_workspace` requires confirmed purged state,
+ended/gone/prepared run ownership and an empty original place. It journals the
+new identity before publication, refuses any occupied entry and keeps the same
+opaque handle. Terminal restored/purged trash records remain history after a
+workspace transfers to another run; they grant no current removal authority.

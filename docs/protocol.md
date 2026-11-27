@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.45**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.46**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -188,6 +188,7 @@ Since 3.34 a supervisor may ask for a thread that only reads, with `research`: t
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
+| `machine` | string | optional | exact configured machine key; ineligible selection refuses without fallback; since 3.46 |
 | `key` | string | required | makes the call safe to repeat |
 | `scope` | string | required | the scope; for chat, a channel |
 | `thread` | string | required | the conversation of the first link, in the scope's own channel, of the scope's owner; empty to let the scope's owner open one; since 3.0 it names a link, before it the thread's key |
@@ -201,6 +202,15 @@ Since 3.34 a supervisor may ask for a thread that only reads, with `research`: t
 Result: integer
 
 The new thread's number; since 3.0, before it a `{scope, key}` object.
+
+Since 3.46, a client naming `machine` checks protocol 3.46 before sending;
+an older daemon could otherwise ignore it. Automatic placement without room
+accepts one durable pending thread and its original link/input. Repeated keys
+return that thread; oldest accepted starts are reconsidered first. `Close`
+cancels an unplaced start without creating a workspace. Placement dispatch
+rechecks current scope, person and configuration. A chosen machine is fixed
+for wake, replacement, removal and reopen; no fallback relocates it. Supervisor
+proposals retain `machine` and recheck placement when approved.
 
 ### Operation `Send`
 
@@ -780,11 +790,22 @@ One file the owner let through with `Trust`; since 3.28.
 | `by` | string | required | the person who trusted it |
 | `at` | time | required | when |
 
+### Type `MachineAvailability`
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `state` | string | required | machine availability; `ready` or `unavailable` |
+| `at` | time | required | observation time |
+| `reason` | string | optional | why unavailable |
+
 ### Type `ThreadInfo`
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `machine` | string | optional | the configured machine key, or absent for an older daemon; not an SSH address; since 3.44 |
+| `placement_pending` | boolean | optional | unplaced or waiting for admission on its fixed machine; since 3.46 |
+| `placement_reason` | string | optional | why placement waits; since 3.46 |
+| `availability` | `MachineAvailability` | optional | configured machine status: required `state`, `at` time, optional `reason`; no worker address or root; since 3.46 |
 | `io_paused` | string | optional | why retained output cannot currently be read or rebuilt; offsets and resulting events do not advance; since 3.44 |
 | `id` | integer | required | the thread's number, unique in the instance; since 3.0, before it a `{scope, key}` object beside `number` |
 | `scope` | string | required | the scope it belongs to; since 3.0 |
@@ -814,6 +835,9 @@ The fields of `ThreadInfo`, and:
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
+| `placement_pending` | boolean | optional | as in ThreadInfo; since 3.46 |
+| `placement_reason` | string | optional | as in ThreadInfo; since 3.46 |
+| `availability` | `MachineAvailability` | optional | as in ThreadInfo; since 3.46 |
 | `machine` | string | optional | the configured machine key, or absent for an older daemon; not an SSH address; since 3.44 |
 | `io_paused` | string | optional | why retained output cannot currently be read or rebuilt; offsets and resulting events do not advance; since 3.44 |
 | `id` | integer | required | as in `ThreadInfo` |
@@ -1377,6 +1401,19 @@ One entry of the event log. `hataori events` prints each event as this object, o
 
 The `data` of each event kind. Integers are the instance's own numbers for threads, sessions, turns and login outages.
 
+### Event `placement`
+
+Since 3.46, reports accepted automatic waiting, fixed-machine selection or
+cancellation. Required fields: `machine` (empty while unplaced/canceled),
+`pending` (boolean), `reason` (empty after selection). It belongs to the thread
+and follows its existing scope and conversation filters.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `machine` | string | required | chosen key, empty while unplaced or canceled |
+| `pending` | boolean | required | whether placement is waiting |
+| `reason` | string | required | waiting/cancellation reason, empty after selection |
+
 ### Event `thread_created`
 
 | Field | Type | Presence | Meaning |
@@ -1620,10 +1657,13 @@ The decision in the asker's thread, since 3.10.
 
 A supervisor's `Start` or `Send`, stored as a proposal in its own thread instead of being made, since 3.26.
 
+Optional `machine` retains an explicit start selection since 3.46.
+
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `request` | string | required | what `Answer` names |
 | `number` | integer | required | the proposal's number, as `proposed` gave it |
+| `machine` | string | optional | requested machine for a start; since 3.46 |
 | `action` | string | required | `send` or `start` |
 | `target` | integer | optional | for `send`, the thread |
 | `question` | string | optional | for `send` to a thread waiting on a question, the request it answers, as in `request` |
