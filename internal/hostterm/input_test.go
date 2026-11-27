@@ -327,7 +327,9 @@ func TestTypingIntoARealPane(t *testing.T) {
 		return strings.TrimSpace(out)
 	}
 	before := size()
-	if before != "100x30 0" {
+	// A detached 3.2a first window can ignore new-session's dimensions.
+	// Input must preserve the actual dimensions and never attach a client.
+	if !strings.HasSuffix(before, " 0") {
 		t.Fatalf("before: %s", before)
 	}
 
