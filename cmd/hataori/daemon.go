@@ -254,7 +254,9 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 			c.LocalAgents = machine.Agents
 		}
 	}
-	configurePlacement(abs, cfg, c, r, grants, adapters)
+	if err := configurePlacement(ctx, abs, cfg, c, r, grants, adapters); err != nil {
+		return err
+	}
 	// Also for threads a supervisor started that the config no longer names.
 	c.SupervisorOf = supervisor.StartedBy
 	for _, s := range cfg.Scopes {

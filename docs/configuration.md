@@ -151,8 +151,10 @@ automatic no-capacity starts wait durably and dispatch oldest first. A chosen
 machine never changes for sleep/wake, replacement, removal or reopen.
 
 The implicit single `local` with no resource/slot limits preserves existing
-single-machine behavior. Configuring another machine or a local limit enables
-admission. Unknown resource telemetry refuses new admission (including the
+single-machine behavior on roots that never enabled placement. Configuring
+another machine or a local limit durably enables admission and current-grant
+recovery checks. Removing the last worker or limit does not disable those
+checks for already accepted work. A mode-read failure refuses startup. Unknown resource telemetry refuses new admission (including the
 currently unsupported Darwin worker memory/load measurements); this is not a
 claim of macOS worker runtime support.
 

@@ -2007,6 +2007,11 @@ original phase-two host before applying new-start resource admission. Remote
 release uses bound inventory. A canceled dispatch retains a distinct durable
 launch marker excluded from both recovery and reconnect, so later restarts
 cannot deliver input whose original authority was revoked.
+`Runner.RevalidateLaunch` calls `Core.RevalidatePlacementLaunch` before
+reconnecting creating sessions with retained first input, separately from
+resource admission. Placement activation persists, so removing the last worker
+or limit cannot disable accepted-input authorization after a restart. A canceled
+intent stays canceled when its original permission is later restored.
 Optional `WorkerWorkspaces` routes removal, reopen and trash acknowledgement
 to typed resident operations; opaque worker handles are never main paths.
 

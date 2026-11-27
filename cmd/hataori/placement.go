@@ -20,14 +20,19 @@ import (
 	"github.com/yousan/hataori/internal/worker"
 )
 
-func configurePlacement(root string, cfg *instance.Config, c *core.Core, r *runner.Runner, grants []plugin.Grant, adapters map[string]agent.Adapter) {
+func configurePlacement(ctx context.Context, root string, cfg *instance.Config, c *core.Core, r *runner.Runner, grants []plugin.Grant, adapters map[string]agent.Adapter) error {
 	enabled := len(cfg.Machines) > 1
 	for _, m := range cfg.Machines {
 		enabled = enabled || m.MaxResident > 0 || m.MaxStarting > 0 || m.MaxLoad > 0 || m.MinFreeMemoryBytes > 0 || m.MinFreeDiskBytes > 0
 	}
+	var err error
+	enabled, err = c.Store.PlacementEnabled(ctx, enabled)
+	if err != nil {
+		return fmt.Errorf("placement mode: %w", err)
+	}
 	if !enabled {
-		return
-	} // implicit local retains existing single-machine behavior
+		return nil
+	} // never-enabled implicit local retains existing single-machine behavior
 	p := &core.MachinePlacement{Machines: map[string]core.PlacementMachine{}}
 	for _, m := range cfg.Machines {
 		p.Machines[m.Key] = core.PlacementMachine{Agents: slices.Clone(m.Agents), Limits: placement.Limits{MaxResident: m.MaxResident, MaxStarting: m.MaxStarting, MaxLoad: m.MaxLoad, MinFreeMemoryBytes: m.MinFreeMemoryBytes, MinFreeDiskBytes: m.MinFreeDiskBytes}}
@@ -129,4 +134,6 @@ func configurePlacement(root string, cfg *instance.Config, c *core.Core, r *runn
 	}
 	c.Placement = p
 	r.Admit = c.AdmitSession
+	r.RevalidateLaunch = c.RevalidatePlacementLaunch
+	return nil
 }

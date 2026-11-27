@@ -25,13 +25,16 @@ Focused evidence before CI:
   replacement without changing machine/workspace. A lost successful start reply
   recovers its original receipt and produces one turn with one start intent.
 - Revoked dispatch retains a canceled marker across two actual runner restarts;
-  the original live host is owned but its unsent input is never followed.
+  the original live host is owned but its unsent input is never followed,
+  including a completed launch whose first follower never started. Restored
+  permission cannot revive a canceled intent. Removing the last configured limit
+  preserves this authorization mode; never-enabled local defaults stay intact.
 - Local unknown prior holders block replacement/release. Phase-two recovery
   recognizes the original host independently of fresh new-start resource gates.
 - Worker fixtures cover every admission limit, exact registered repository
   resolution, occupied-place refusal, purged remake, restore/transfer/restart and
   repeated purge/remake. Existing removal proof and purge crash checks pass.
-- `negative-guards.json` records eight test failures with individual guards
+- `negative-guards.json` records ten test failures with individual guards
   removed. `negative_guards.py` restores every candidate in `finally`.
 - Serial focused checks pass for placement, core, runner, worker, wire, chat,
   supervisor, store and workerproto. Protocol documentation/golden checks,

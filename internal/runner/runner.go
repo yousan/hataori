@@ -46,8 +46,9 @@ import (
 
 // Runner runs the sessions of one instance. It implements core.Runner.
 type Runner struct {
-	Admit       func(context.Context, int64) error
-	resumeLocks sync.Map
+	Admit            func(context.Context, int64) error
+	RevalidateLaunch func(context.Context, int64) (bool, error)
+	resumeLocks      sync.Map
 
 	// heldMu, by state directory, serialises the start, the stop and the
 	// letting go of a held window (startHeld, endHeld); heldSeen is the
@@ -504,7 +505,7 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		return agent.Spec{}, err
 	}
 	r.at("after host start")
-	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET host_pid = ?, launch = 0, io_error=CASE WHEN io_error=? THEN '' ELSE io_error END WHERE id = ?`, w.Process, core.ErrPlacementWait.Error(), id); err != nil {
+	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET host_pid = ?, launch = 0, io_error=CASE WHEN io_error IN (?,?) THEN '' ELSE io_error END WHERE id = ?`, w.Process, core.ErrPlacementWait.Error(), core.PlacementCanceledReason, id); err != nil {
 		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
 	return spec, nil
@@ -981,6 +982,15 @@ func (r *Runner) Reconnect(ctx context.Context) error {
 	}
 	rows.Close()
 	for _, x := range found {
+		if r.RevalidateLaunch != nil {
+			allowed, err := r.RevalidateLaunch(ctx, x.id)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				continue
+			}
+		}
 		var s storedSpec
 		if err := json.Unmarshal([]byte(x.spec), &s); err != nil {
 			r.Log.Error("session spec unreadable", "session", x.id, "err", err)

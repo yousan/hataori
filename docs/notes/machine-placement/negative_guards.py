@@ -10,6 +10,8 @@ cases = [
  ("original phase2 host recovery", "internal/runner/machines.go", "return l.State == holder.Running || l.Ended(), nil", "_ = l; return false, nil", "./internal/runner", "^TestPlacementLocalRecoveryUsesOriginalHostBeforeNewAdmission$"),
  ("terminal trash history", "internal/worker/workspace_ops.go", 'tr.State != "restored" && tr.State != "purged" && (!ok || w.Target != tr.Target || w.Device != tr.Device || w.Inode != tr.Inode)', '(!ok || w.Target != tr.Target || w.Device != tr.Device || w.Inode != tr.Inode)', "./internal/worker", "^TestPlacementRestoredWorkspaceTransfersAndRestarts$"),
  ("canceled dispatch survives restarts", "internal/core/placement.go", "const PlacementLaunchCanceled = 3", "const PlacementLaunchCanceled = 0", "./internal/runner", "^TestPlacementRevocationStaysCanceledAcrossTwoRestarts$"),
+ ("durable placement mode", "internal/store/placement_migration.go", "return enabled, err", "return configured, err", "./cmd/hataori", "^TestPlacementModeSurvivesRemovingLastLimitAndRevocation$"),
+ ("reconnect launch authority", "internal/runner/runner.go", "if r.RevalidateLaunch != nil {", "if false && r.RevalidateLaunch != nil {", "./internal/runner", "^TestPlacementRevocationStaysCanceledAcrossTwoRestarts/phase-0$"),
 ]
 if len(sys.argv)>1:
  cases=[c for c in cases if c[0] in sys.argv[1:]]

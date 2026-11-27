@@ -985,57 +985,66 @@ func reconcilePlacementFixture(t *testing.T, f *fixture, resident *worker.Reside
 }
 
 func TestPlacementLostWorkerStartReplyKeepsReservation(t *testing.T) {
-	f, _ := remoteFixture(t, false)
-	ctx := context.Background()
-	f.core.Placement = &core.MachinePlacement{Machines: map[string]core.PlacementMachine{"build": {Limits: placement.Limits{MaxResident: 1}}}, Observe: func(context.Context, string, string) (placement.Observation, error) {
-		now := time.Now()
-		return placement.Observation{Ready: true, Reconciled: true, Known: true, Installed: true, LoggedIn: true, At: now, HealthAt: now, ValidFor: 10 * time.Second, Memory: 1 << 30, Disk: 1 << 30}, nil
-	}}
-	f.run.Admit = f.core.AdmitSession
-	remote := f.run.Remotes["build"]
-	remote.Admission = &workerproto.Admission{MaxResident: 1}
-	open := remote.Open
-	var lost atomic.Bool
-	remote.Open = func(ctx context.Context) (net.Conn, *workerproto.Connection, error) {
-		c, p, err := open(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		return &transformReply{Conn: c, reader: bufio.NewReaderSize(c, workerproto.MaxFrame), change: func(m workerproto.Message) workerproto.Message {
-			if m.Op == "start" && m.Kind == "reply" && lost.CompareAndSwap(false, true) {
-				m.Kind = "refusal"
-				m.Body = json.RawMessage(`{"code":"unavailable","message":"reply lost after start"}`)
+	for _, cancelLabel := range []bool{false, true} {
+		t.Run(fmt.Sprint("canceled-label-", cancelLabel), func(t *testing.T) {
+			f, _ := remoteFixture(t, false)
+			ctx := context.Background()
+			f.core.Placement = &core.MachinePlacement{Machines: map[string]core.PlacementMachine{"build": {Limits: placement.Limits{MaxResident: 1}}}, Observe: func(context.Context, string, string) (placement.Observation, error) {
+				now := time.Now()
+				return placement.Observation{Ready: true, Reconciled: true, Known: true, Installed: true, LoggedIn: true, At: now, HealthAt: now, ValidFor: 10 * time.Second, Memory: 1 << 30, Disk: 1 << 30}, nil
+			}}
+			f.run.Admit = f.core.AdmitSession
+			remote := f.run.Remotes["build"]
+			remote.Admission = &workerproto.Admission{MaxResident: 1}
+			open := remote.Open
+			var lost atomic.Bool
+			remote.Open = func(ctx context.Context) (net.Conn, *workerproto.Connection, error) {
+				c, p, err := open(ctx)
+				if err != nil {
+					return nil, nil, err
+				}
+				return &transformReply{Conn: c, reader: bufio.NewReaderSize(c, workerproto.MaxFrame), change: func(m workerproto.Message) workerproto.Message {
+					if m.Op == "start" && m.Kind == "reply" && lost.CompareAndSwap(false, true) {
+						m.Kind = "refusal"
+						m.Body = json.RawMessage(`{"code":"unavailable","message":"reply lost after start"}`)
+					}
+					return m
+				}}, p, nil
 			}
-			return m
-		}}, p, nil
-	}
-	f.run.Remotes["build"] = remote
-	id, err := owner(f.core).Start(ctx, control.StartRequest{Machine: "build", Scope: "s", Thread: "lost-start", Key: "lost-start", Repo: "fixture", Input: control.Input{Text: "reply original-start"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, err := owner(f.core).Thread(ctx, id, 0, 0)
-	if err != nil || !info.PlacementPending || !lost.Load() {
-		t.Fatal(info, err, lost.Load())
-	}
-	reservations, err := f.st.MachineReservations(ctx)
-	if err != nil || len(reservations) != 1 {
-		t.Fatal(reservations, err)
-	}
-	if err := f.core.Recover(ctx); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, "original start receipt recovery", 8*time.Second, func() bool { return withText(t, f.st, "text", "original-start") == 1 })
-	got := counts(t, f.st)
-	if got["turn_started"] != 1 || got["turn_ended"] != 1 {
-		t.Fatal("lost reply duplicated worker", got)
-	}
-	info, err = owner(f.core).Thread(ctx, id, 0, 0)
-	if err != nil || info.PlacementPending || info.IOPaused != "" || info.Machine != "build" {
-		t.Fatal(info, err)
-	}
-	var starts int
-	if err := f.st.DB.QueryRow(`SELECT count(*) FROM session_machine_actions WHERE operation='start'`).Scan(&starts); err != nil || starts != 1 {
-		t.Fatal("start intent was replaced after unknown reply", starts, err)
+			f.run.Remotes["build"] = remote
+			id, err := owner(f.core).Start(ctx, control.StartRequest{Machine: "build", Scope: "s", Thread: "lost-start", Key: "lost-start", Repo: "fixture", Input: control.Input{Text: "reply original-start"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := owner(f.core).Thread(ctx, id, 0, 0)
+			if err != nil || !info.PlacementPending || !lost.Load() {
+				t.Fatal(info, err, lost.Load())
+			}
+			reservations, err := f.st.MachineReservations(ctx)
+			if err != nil || len(reservations) != 1 {
+				t.Fatal(reservations, err)
+			}
+			if cancelLabel {
+				if _, err := f.st.DB.Exec(`UPDATE sessions SET io_error=? WHERE thread_id=?`, core.PlacementCanceledReason, int64(id)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := f.core.Recover(ctx); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "original start receipt recovery", 8*time.Second, func() bool { return withText(t, f.st, "text", "original-start") == 1 })
+			got := counts(t, f.st)
+			if got["turn_started"] != 1 || got["turn_ended"] != 1 {
+				t.Fatal("lost reply duplicated worker", got)
+			}
+			info, err = owner(f.core).Thread(ctx, id, 0, 0)
+			if err != nil || info.PlacementPending || info.IOPaused != "" || info.Machine != "build" {
+				t.Fatal(info, err)
+			}
+			var starts int
+			if err := f.st.DB.QueryRow(`SELECT count(*) FROM session_machine_actions WHERE operation='start'`).Scan(&starts); err != nil || starts != 1 {
+				t.Fatal("start intent was replaced after unknown reply", starts, err)
+			}
+		})
 	}
 }

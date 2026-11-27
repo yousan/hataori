@@ -38,6 +38,8 @@ type PlacementMachine struct {
 // The host and reservation remain owned until positive end reconciliation.
 const PlacementLaunchCanceled = 3
 
+const PlacementCanceledReason = "launch canceled: authorization or scope configuration changed"
+
 var ErrPlacementWait = errors.New("waiting for room on the recorded machine")
 
 // waitForMachine retains both the committed launch and its reservation. An
@@ -430,4 +432,31 @@ func (c *Core) uncertainLocalLaunch(ctx context.Context, sid int64) bool {
 	var phase int
 	err := c.Store.DB.QueryRowContext(ctx, `SELECT launch FROM sessions WHERE id=?`, sid).Scan(&phase)
 	return err != nil || phase == 2
+}
+
+// RevalidatePlacementLaunch runs before either recovering an unfinished launch
+// or reconnecting a completed launch with unsent first input. Resource admission
+// is separate: reconnecting an already owned host consumes no new room.
+func (c *Core) RevalidatePlacementLaunch(ctx context.Context, sid int64) (bool, error) {
+	if c.Placement == nil {
+		return true, nil
+	}
+	var scope, repo, raw, state string
+	var confined bool
+	if err := c.Store.DB.QueryRowContext(ctx, `SELECT t.scope,t.repo,t.confined,s.first_input,s.state FROM sessions s JOIN threads t ON t.id=s.thread_id WHERE s.id=?`, sid).Scan(&scope, &repo, &confined, &raw, &state); err != nil {
+		return false, err
+	}
+	if confined || state != "creating" || raw == "" {
+		return true, nil
+	}
+	var first FirstInput
+	if err := json.Unmarshal([]byte(raw), &first); err != nil {
+		return false, err
+	}
+	sc, configured := c.Scopes[scope]
+	if configured && sc.Enabled && c.recoveryPlacementAuthority(ctx, scope, repo, first) == nil {
+		return true, nil
+	}
+	_, err := c.Store.DB.ExecContext(ctx, `UPDATE sessions SET launch=?,io_error=? WHERE id=? AND state='creating'`, PlacementLaunchCanceled, PlacementCanceledReason, sid)
+	return false, err
 }

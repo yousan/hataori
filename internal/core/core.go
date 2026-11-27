@@ -2019,15 +2019,11 @@ func (c *Core) Recover(ctx context.Context) error {
 	rows.Close()
 	for _, x := range found {
 		if c.Placement != nil && !x.l.Confined {
-			sc, ok := c.Scopes[x.scope]
-			authErr := c.recoveryPlacementAuthority(ctx, x.scope, x.repo, x.f)
-			if !ok || !sc.Enabled || authErr != nil {
-				// Do not declare a possibly live remote host ended. Revocation
-				// cancels dispatch; ownership/reservations remain for explicit
-				// owner reconciliation, never automatic input replay.
-				if _, err := c.Store.DB.ExecContext(ctx, `UPDATE sessions SET launch=?,io_error=? WHERE id=?`, PlacementLaunchCanceled, "launch canceled: authorization or scope configuration changed", x.l.Session); err != nil {
-					return err
-				}
+			allowed, err := c.RevalidatePlacementLaunch(ctx, x.l.Session)
+			if err != nil {
+				return err
+			}
+			if !allowed {
 				continue
 			}
 		}

@@ -67,19 +67,6 @@
     ]
   },
   {
-    "guard": "canceled dispatch survives restarts",
-    "command": "go test -p 1 ./internal/runner -run ^TestPlacementRevocationStaysCanceledAcrossTwoRestarts$ -parallel 1 -count=1",
-    "expected_failure": true,
-    "exit_code": 1,
-    "evidence": [
-      "--- FAIL: TestPlacementRevocationStaysCanceledAcrossTwoRestarts (0.14s)",
-      "placement_test.go:149: second restart followed canceled first input 1",
-      "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.149s",
-      "FAIL"
-    ]
-  },
-  {
     "guard": "earlier local holder proof",
     "command": "go test -p 1 ./internal/runner -run ^TestPlacementLocalPriorUnknownBlocksReplacementAndRelease$ -parallel 1 -count=1",
     "expected_failure": true,
@@ -102,6 +89,48 @@
       "placement_test.go:90: original completed host blocked by current resource use waiting for room on the recorded machine: local: machine is not ready",
       "FAIL",
       "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.155s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "canceled dispatch survives restarts",
+    "command": "go test -p 1 ./internal/runner -run ^TestPlacementRevocationStaysCanceledAcrossTwoRestarts$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementRevocationStaysCanceledAcrossTwoRestarts (0.36s)",
+      "--- FAIL: TestPlacementRevocationStaysCanceledAcrossTwoRestarts/phase-0 (0.17s)",
+      "placement_test.go:172: second restart followed canceled first input 1",
+      "--- FAIL: TestPlacementRevocationStaysCanceledAcrossTwoRestarts/phase-2 (0.19s)",
+      "placement_test.go:172: second restart followed canceled first input 1",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "durable placement mode",
+    "command": "go test -p 1 ./cmd/hataori -run ^TestPlacementModeSurvivesRemovingLastLimitAndRevocation$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementModeSurvivesRemovingLastLimitAndRevocation (0.38s)",
+      "--- FAIL: TestPlacementModeSurvivesRemovingLastLimitAndRevocation/0 (0.14s)",
+      "placement_test.go:65: removing last limit disabled durable authorization",
+      "--- FAIL: TestPlacementModeSurvivesRemovingLastLimitAndRevocation/1 (0.12s)",
+      "placement_test.go:65: removing last limit disabled durable authorization",
+      "--- FAIL: TestPlacementModeSurvivesRemovingLastLimitAndRevocation/2 (0.12s)"
+    ]
+  },
+  {
+    "guard": "reconnect launch authority",
+    "command": "go test -p 1 ./internal/runner -run ^TestPlacementRevocationStaysCanceledAcrossTwoRestarts/phase-0$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementRevocationStaysCanceledAcrossTwoRestarts (0.18s)",
+      "--- FAIL: TestPlacementRevocationStaysCanceledAcrossTwoRestarts/phase-0 (0.18s)",
+      "placement_test.go:158: revocation did not retain canceled dispatch 0 <nil>",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.186s",
       "FAIL"
     ]
   }

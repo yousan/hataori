@@ -260,7 +260,7 @@ func (r *Runner) launchRemote(ctx context.Context, id int64, name string, spec a
 	fb, _ := json.Marshal(first)
 	sb, _ := json.Marshal(storedSpec{Agent: name, Spec: spec})
 	err = r.Store.Update(ctx, func(tx *store.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET spec=?,first_input=?,launch=0,host_pid=0,io_error=CASE WHEN io_error=? THEN '' ELSE io_error END WHERE id=?`, string(sb), string(fb), core.ErrPlacementWait.Error(), id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET spec=?,first_input=?,launch=0,host_pid=0,io_error=CASE WHEN io_error IN (?,?) THEN '' ELSE io_error END WHERE id=?`, string(sb), string(fb), core.ErrPlacementWait.Error(), core.PlacementCanceledReason, id); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `UPDATE session_machine_runs SET phase='running' WHERE session_id=? AND run=?`, id, remote.Target.Run)
