@@ -1521,12 +1521,18 @@ func TestStartInASessionWithAPersonsWindow(t *testing.T) {
 	if l, _ := h.Alive(t.Context(), w); l.State != holder.Running {
 		t.Errorf("Alive: %+v", l)
 	}
-	split := s.run("split-window", "-d", "-t", r.Pane, "-P", "-F", "#{pane_id}", "exec sleep 1")
+	release := filepath.Join(s.dir, "release-split")
+	split := s.run("split-window", "-d", "-t", r.Pane, "-P", "-F", "#{pane_id}", "while [ ! -f "+quote(release)+" ]; do sleep 0.02; done")
+	// Deliberately observe after the old one-second lifetime has elapsed.
+	time.Sleep(1200 * time.Millisecond)
 	if err := h.Record(t.Context(), w); err != nil {
 		t.Error(err)
 	}
 	if s.panes()[split] == "" {
 		t.Error("the person's split went")
+	}
+	if err := os.WriteFile(release, []byte("end"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	// Its window does not outlive their program.
 	for deadline := time.Now().Add(10 * time.Second); s.panes()[split] != "" && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
