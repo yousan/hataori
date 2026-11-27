@@ -8,7 +8,35 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # A PR identifies its source branch, including PRs from forks. Every
+  # non-PR run gets its own group, so even pending main/tag runs survive.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        id: filter
+        with:
+          # PRs use their complete diff; pushes use the entire pushed range.
+          base: ${{ github.event.before || github.ref }}
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '!**/*.{md,markdown,MD,MARKDOWN}'
+              - '!docs/**'
+              - '!site/**'
+              - '!LICENSE'
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -45,6 +73,9 @@ jobs:
 
   # The same code runs on macOS (design, section 6.4).
   test-macos:
+    needs: changes
+    # Keep the check name present even when no macOS runner is needed.
+    if: needs.changes.outputs.code == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
