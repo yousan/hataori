@@ -90,7 +90,13 @@ func TestAStartDoesNotSignalAnUnprovenLeftoverGroup(t *testing.T) {
 func TestALeftoverPlaceholderKeptOnExitIsCleared(t *testing.T) {
 	s := newServer(t)
 	h := s.starter()
-	_, _, dir := s.started(h, placeholder)
+	dir := filepath.Join(s.dir, "7")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Use the exact placeholder; s.started appends an agent ownership marker.
+	s.run("new-session", "-d", "-s", h.Prefix+"7", placeholder)
+	s.run("set-option", "-w", "-t", "="+h.Prefix+"7:", "remain-on-exit", "on")
 	w, err := h.Start(t.Context(), dir, sleeper)
 	if err != nil {
 		t.Fatal(err)
