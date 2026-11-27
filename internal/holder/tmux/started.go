@@ -212,7 +212,7 @@ func (h *Holder) setUp(r ref) (keep, run string) {
 	keep = strings.Join([]string{
 		"set-option -w -t " + r.Pane + " remain-on-exit on",
 		onPane,
-		"pipe-pane -O -t " + r.Pane + " " + quote("exec "+quote(h.Hataori)+" pipe "+quote(r.Dir)),
+		"pipe-pane -O -t " + r.Pane + " " + quote(pipeCommand(h.Hataori, r.Dir)),
 	}, " ; ")
 	return keep, strings.Join([]string{
 		"respawn-pane -k -t " + r.Pane + " " + quote("exec "+quote(h.Hataori)+" exec "+quote(r.Dir)),
@@ -220,6 +220,18 @@ func (h *Holder) setUp(r ref) (keep, run string) {
 		"set-option -w -u -t " + r.Pane + " remain-on-exit",
 		onPane,
 	}, " ; ")
+}
+
+// pipeCommand is shell-quoted first, then escaped for pipe-pane's extra
+// format_expand_time pass. Shell quoting alone protects neither # nor %.
+func pipeCommand(program, stateDir string) string {
+	word := func(s string) string {
+		// tmux preserves runs of # before [ as style markers. Adjacent
+		// empty shell quotes separate them for tmux and rejoin the path
+		// for the shell, so the normal ## escape works on every version.
+		return strings.NewReplacer("#", "##", "%", "%%", "[", "''[").Replace(quote(s))
+	}
+	return "exec " + word(program) + " pipe " + word(stateDir)
 }
 
 // serverCmd runs a tmux command on the server Server names, or the default
@@ -373,7 +385,8 @@ func runsExec(started, stateDir string) bool {
 
 // startedAlive is Alive for a window hataori started: Running while the
 // pane's process runs; Exited, with how it ended, once the pane is dead or
-// its end was recorded; Gone when the pane or its server went with nothing
+// its end was recorded; a closed terminal alone is no process exit. Gone
+// when the pane or its server went with nothing
 // recorded, as when the server was killed; Unknown when tmux cannot tell.
 func (h *Holder) startedAlive(ctx context.Context, r ref, process int) holder.Liveness {
 	p, err := h.findEnded(ctx, r, process)
@@ -386,10 +399,47 @@ func (h *Holder) startedAlive(ctx context.Context, r ref, process int) holder.Li
 	case err != nil:
 		return holder.Liveness{State: holder.Unknown}
 	case p.dead:
+		// Older tmux marks a pane dead when its terminal closes, even
+		// while its unreaped child keeps running without that terminal.
+		live, err := h.unreapedLeader(ctx, r, cmp.Or(p.pid, execPid(r), process))
+		if err != nil {
+			return holder.Liveness{State: holder.Unknown}
+		}
+		if live {
+			return holder.Liveness{State: holder.Running}
+		}
 		st := statusOf(p)
 		return holder.Liveness{State: holder.Exited, Status: &st}
 	}
 	return holder.Liveness{State: holder.Running}
+}
+
+// unreapedLeader reports the actual agent process, not the terminal or
+// children it left behind. A number reused after tmux read the end is no
+// longer evidence of this agent. Failure to inspect it remains unknown.
+func (h *Holder) unreapedLeader(ctx context.Context, r ref, pid int) (bool, error) {
+	if pid <= 1 {
+		return false, errors.New("tmux: dead pane has no known agent process")
+	}
+	end, err := h.endOf(ctx, r, pid)
+	if err != nil {
+		return false, err
+	}
+	if end.read {
+		return false, nil
+	}
+	ps, err := processes(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !slices.ContainsFunc(ps, func(p member) bool {
+		return p.pid == pid && p.parent == r.Server && !p.zombie
+	}) {
+		return false, nil
+	}
+	// Reuse the ownership checks for old tmux versions that cannot report
+	// every signal death: another pane or a newer child is not this leader.
+	return h.agentsGroup(ctx, r, pid)
 }
 
 // Record writes how the agent of a window hataori started ended, from the

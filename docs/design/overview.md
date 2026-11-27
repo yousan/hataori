@@ -1967,6 +1967,29 @@ All numbers are `yousan/c-lord` issues.
 
 Declared in `internal/control`, `internal/surface` and `internal/agent`; the packages hold the types this appendix leaves out. Names will move during phase 1; the split between the three packages should not. A pull request that changes one of the packages changes this appendix with it.
 
+### Machine session I/O
+
+`internal/machineio.Session` binds reads, metadata, pipes, hook replies and host
+lifecycle to a machine and run. Local sessions retain the own holder and tmux
+adapter paths; worker sessions never resolve reported paths or PIDs on main.
+`FollowSources` is an optional agent adapter contract: it extracts followed
+files from the resident's actual session output, without I/O. The resident
+registers opaque handles and retains bounded reconstruction data for the run.
+The pure codec and session state machine remain on main. Missing history,
+changed identities and read failures pause with `ThreadInfo.IOPaused`.
+
+`agent.InputRefuser.RefuseInput(ids, reason)` retires confirmed-unsent inputs
+without ending another running turn; remote codecs implement it for bounded
+transport rejection, including steering inputs.
+
+The optional control interface `WorkerAttacher` declares
+`AttachWorker(context.Context, ThreadID) (WorkerAttachment, error)`. It has the
+owner/scope checks of local attach and gives one configured, pinned target to an
+independent owner connection. Existing `Attachment.Socket` remains local.
+`ThreadInfo.Machine` is a configured key; neither it nor worker output grants
+scope authority. The public protocol versions these additive declarations
+separately from the worker protocol.
+
 ### Control API
 
 ```go

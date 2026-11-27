@@ -85,6 +85,14 @@ type WorkerAdapters interface {
 	ForWorker() Adapter
 }
 
+// FollowSources identifies files actually named by one line from this
+// session's agent. The resident calls it on its own retained output, never on
+// a path supplied by the main. It grants only read handles for this run.
+// Implementations do no I/O and use the same captured format as their codec.
+type FollowSources interface {
+	FollowSources(Source, []byte) []string
+}
+
 // Health is the result of Probe.
 type Health struct {
 	Installed bool
@@ -166,6 +174,14 @@ type Codec interface {
 	// Tick tells the codec the time, so that it can act on its deadlines
 	// without a clock of its own. The caller calls it every second or so.
 	Tick(now time.Time) Actions
+}
+
+// InputRefuser releases a codec's attempted inputs when the machine proves
+// that their encoded actions cannot be sent. Remote codecs implement it so a
+// transport limit fails those inputs visibly without waiting for a response
+// that can never arrive, or ending an unrelated running turn.
+type InputRefuser interface {
+	RefuseInput(ids []string, reason Reason) Actions
 }
 
 // Actions is what the caller of a Codec does next.

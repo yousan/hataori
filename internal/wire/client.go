@@ -589,3 +589,11 @@ func (c *Client) AttachTerminal(ctx context.Context, id control.ThreadID) (contr
 	err := c.call(ctx, "AttachTerminal", attachTerminalArgs{ID: id}, &out)
 	return out, err
 }
+
+// AttachWorker refuses before sending to a daemon that predates worker
+// attachments. AttachTerminal retains its local-socket guarantee.
+func (c *Client) AttachWorker(ctx context.Context, id control.ThreadID) (control.WorkerAttachment, error) {
+	var out control.WorkerAttachment
+	err := c.callSince(ctx, "3.44", "worker attachment", "AttachWorker", attachTerminalArgs{ID: id}, &out)
+	return out, err
+}

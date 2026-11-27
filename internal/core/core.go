@@ -916,14 +916,17 @@ const terminalsTimeout = time.Second
 func (a *api) summary(ctx context.Context, t *control.ThreadInfo) (int64, error) {
 	db := a.c.Store.DB
 	var sid int64
-	err := db.QueryRowContext(ctx, `SELECT s.id, s.agent, s.model, s.effort,
+	err := db.QueryRowContext(ctx, `SELECT s.id, s.agent, s.model, s.effort,s.io_error,
 		(SELECT count(*) FROM turns u JOIN sessions v ON v.id = u.session_id WHERE v.thread_id = s.thread_id)
-		FROM sessions s WHERE s.thread_id = ? ORDER BY s.id DESC LIMIT 1`, int64(t.ID)).Scan(&sid, &t.Agent, &t.Model, &t.Effort, &t.Turns)
+		FROM sessions s WHERE s.thread_id = ? ORDER BY s.id DESC LIMIT 1`, int64(t.ID)).Scan(&sid, &t.Agent, &t.Model, &t.Effort, &t.IOPaused, &t.Turns)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("core: thread summary: %w", err)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		sid = 0
+	}
+	if err := db.QueryRowContext(ctx, `SELECT coalesce(machine,'') FROM threads WHERE id=?`, int64(t.ID)).Scan(&t.Machine); err != nil {
+		return 0, err
 	}
 	var (
 		turn, used, size sql.NullInt64
@@ -1933,6 +1936,9 @@ func (a *api) Workspace(ctx context.Context, id control.ThreadID) (control.Works
 	if _, err := a.checkThread(ctx, control.OpRead, "Workspace", id); err != nil {
 		return control.WorkspaceState{}, err
 	}
+	if err := a.c.requireLocalWorkspace(ctx, id); err != nil {
+		return control.WorkspaceState{}, err
+	}
 	dir, err := a.c.workspaceDir(ctx, id)
 	if err != nil {
 		return control.WorkspaceState{}, err
@@ -2027,7 +2033,21 @@ func (c *Core) workspaceDir(ctx context.Context, id control.ThreadID) (string, e
 // WorkspaceDir is the directory of the thread's workspace, as stored with
 // the thread; an error when it has none yet.
 func (c *Core) WorkspaceDir(ctx context.Context, id control.ThreadID) (string, error) {
+	if err := c.requireLocalWorkspace(ctx, id); err != nil {
+		return "", err
+	}
 	return c.workspaceDir(ctx, id)
+}
+
+func (c *Core) requireLocalWorkspace(ctx context.Context, id control.ThreadID) error {
+	var machine string
+	if err := c.Store.DB.QueryRowContext(ctx, `SELECT machine FROM threads WHERE id=?`, int64(id)).Scan(&machine); err != nil {
+		return err
+	}
+	if machine != store.LocalMachine {
+		return fmt.Errorf("core: this operation requires a local workspace; thread %v belongs to worker %s", id, machine)
+	}
+	return nil
 }
 
 // started returns the thread a Start key created, if it was used before.
@@ -2801,24 +2821,35 @@ const attachTimeout = 90 * time.Second
 // owner only, and only with OpAttach. A thread that is closed, removed or
 // failed, and an agent known to have no terminal, are refused before
 // anything changes. An asleep thread is woken with no input first.
-func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.Attachment, error) {
-	const name = "AttachTerminal"
+func (a *api) attachmentSession(ctx context.Context, id control.ThreadID, name string, remote bool) (int64, error) {
 	scope, err := a.checkThread(ctx, control.OpAttach, name, id)
 	if err != nil {
-		return control.Attachment{}, err
+		return 0, err
 	}
 	if owner := a.c.People.Owner(); owner == "" || a.caller.Principal != control.Principal(owner) {
-		return control.Attachment{}, a.refused(name, scope, "only the owner may attach a terminal")
+		return 0, a.refused(name, scope, "only the owner may attach a terminal")
+	}
+	var machine string
+	if err := a.c.Store.DB.QueryRowContext(ctx, `SELECT machine FROM threads WHERE id=?`, int64(id)).Scan(&machine); err != nil {
+		return 0, err
+	}
+	if (machine != store.LocalMachine) != remote {
+		return 0, fmt.Errorf("core: %s requires the matching local or worker attachment operation: %w", name, session.ErrRefused)
 	}
 	// What is typed there starts turns, as a Send would.
 	if err := a.left(name, scope); err != nil {
-		return control.Attachment{}, err
+		return 0, err
 	}
 	var (
 		sid    int64
 		number = int64(id)
 		wake   bool
 	)
+	checked, _, err := a.c.current(ctx, a.c.Store.DB, id)
+	if err != nil {
+		return 0, err
+	}
+	onPipes := a.c.Runner.OnPipes(checked)
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		wake = false
 		var (
@@ -2834,7 +2865,10 @@ func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.
 		case control.Failed:
 			return fmt.Errorf("core: attach to thread %d: its session failed and has no agent running: %w", number, session.ErrRefused)
 		}
-		if a.c.Runner.OnPipes(sid) {
+		if sid != checked {
+			return fmt.Errorf("core: attachment session changed; request it again: %w", session.ErrRefused)
+		}
+		if onPipes {
 			return fmt.Errorf("core: attach to thread %d: %w: %w", number, ErrNoTerminal, session.ErrRefused)
 		}
 		if state != control.Asleep {
@@ -2867,22 +2901,43 @@ func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.
 		return nil
 	})
 	if err != nil {
-		return control.Attachment{}, err
+		return 0, err
 	}
 	if wake {
 		if err := a.c.Runner.Wake(ctx, sid, a.caller.Principal); err != nil {
 			if ferr := a.c.Machine.Apply(ctx, sid, session.Input{Kind: session.Exit, Reason: "resume: " + err.Error()}); ferr != nil {
 				a.c.Log.Error("recording a failed resume", "session", sid, "err", ferr)
 			}
-			return control.Attachment{}, fmt.Errorf("core: attach to thread %d: resume: %w", number, err)
+			return 0, fmt.Errorf("core: attach to thread %d: resume: %w", number, err)
 		}
+	}
+	return sid, nil
+}
+
+func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.Attachment, error) {
+	sid, err := a.attachmentSession(ctx, id, "AttachTerminal", false)
+	if err != nil {
+		return control.Attachment{}, err
 	}
 	wctx, cancel := context.WithTimeout(ctx, attachTimeout)
 	defer cancel()
 	sock, err := a.c.Runner.AttachSocket(wctx, sid)
 	if err != nil {
-		return control.Attachment{}, fmt.Errorf("core: attach to thread %d: %w", number, err)
+		return control.Attachment{}, err
 	}
-	a.c.Log.Info("a terminal attaches", "scope", scope, "thread", number, "person", string(a.caller.Principal))
-	return control.Attachment{Socket: sock, Number: number}, nil
+	return control.Attachment{Socket: sock, Number: int64(id)}, nil
+}
+
+func (a *api) AttachWorker(ctx context.Context, id control.ThreadID) (control.WorkerAttachment, error) {
+	sid, err := a.attachmentSession(ctx, id, "AttachWorker", true)
+	if err != nil {
+		return control.WorkerAttachment{}, err
+	}
+	runner, ok := a.c.Runner.(interface {
+		WorkerAttachment(context.Context, int64) (control.WorkerAttachment, error)
+	})
+	if !ok {
+		return control.WorkerAttachment{}, fmt.Errorf("core: worker attachment is unavailable: %w", session.ErrRefused)
+	}
+	return runner.WorkerAttachment(ctx, sid)
 }

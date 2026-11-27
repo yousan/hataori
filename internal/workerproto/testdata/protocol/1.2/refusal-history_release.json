@@ -1,0 +1,1 @@
+{"kind":"refusal","id":"request-history_release","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"history_release","key":"key-history_release","body":{"code":"not_ready","message":"reconciliation is not complete"}}

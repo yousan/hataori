@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"github.com/yousan/hataori/internal/registry"
+	"github.com/yousan/hataori/internal/workerproto"
 )
 
 // LocalMachine is the main machine, reserved against SSH rebinding.
@@ -20,6 +21,7 @@ type Machine struct {
 	Key                string
 	SSH                string
 	Root               string   // absolute POSIX path on the worker, never resolved on main
+	Installation       string   // explicit first-contact registration; later contacts use its pinned identity
 	Agents             []string // nil: all configured adapters; empty: none
 	MaxResident        int
 	MaxStarting        int
@@ -32,6 +34,7 @@ type fileMachine struct {
 	Key                string   `json:"key"`
 	SSH                string   `json:"ssh"`
 	Root               string   `json:"root"`
+	Installation       string   `json:"installation"`
 	Agents             []string `json:"agents"`
 	MaxResident        *int     `json:"max_resident"`
 	MaxStarting        *int     `json:"max_starting"`
@@ -54,8 +57,12 @@ func machineConfig(fs []fileMachine, adapters map[string][]byte) ([]Machine, err
 		}
 		seen[f.Key] = true
 		m := Machine{Key: f.Key, SSH: strings.TrimSpace(f.SSH), Root: strings.TrimSpace(f.Root), Agents: slices.Clone(f.Agents)}
+		m.Installation = f.Installation
+		if m.Installation != "" && !workerproto.ValidID(m.Installation) {
+			return nil, fmt.Errorf("config: %s.installation: invalid worker identity", key)
+		}
 		if m.Key == LocalMachine {
-			if m.SSH != "" || m.Root != "" {
+			if m.SSH != "" || m.Root != "" || m.Installation != "" {
 				return nil, fmt.Errorf("config: key %q: local is reserved; ssh and root must be absent", key+".key")
 			}
 		} else {
