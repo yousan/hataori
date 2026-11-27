@@ -47,7 +47,7 @@ jobs:
         run: |
           set -eu
           if ! pkg-config --exists libevent ncurses || ! command -v bison >/dev/null; then
-            sudo apt-get update
+            sudo apt-get -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" -o Dir::Etc::sourceparts="-" update
             sudo apt-get install -y libevent-dev libncurses-dev bison
           fi
           curl -fsSL "https://github.com/tmux/tmux/releases/download/$TMUX_VERSION/tmux-$TMUX_VERSION.tar.gz" -o "$RUNNER_TEMP/tmux.tar.gz"
