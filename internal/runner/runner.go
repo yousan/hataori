@@ -1359,6 +1359,9 @@ func (r *Runner) handOver(lv *live, pending int64, answer bool, f func() (agent.
 		if err := r.RevalidatePending(context.Background(), lv.id, pending); err != nil {
 			data, _ := json.Marshal(map[string]any{"action": "pending input", "state": "refused", "reason": "authorization or scope changed; queued delivery was withdrawn"})
 			recordErr := r.Store.Update(context.Background(), func(tx *store.Tx) error {
+				if answer {
+					return r.refusePendingAnswerTx(context.Background(), tx, lv.id, pending, "authorization or scope changed; queued answer was withdrawn")
+				}
 				var id control.ThreadID
 				if e := tx.QueryRowContext(context.Background(), `SELECT thread_id FROM sessions WHERE id=?`, lv.id).Scan(&id); e != nil {
 					return e
@@ -1385,7 +1388,11 @@ func (r *Runner) handOver(lv *live, pending int64, answer bool, f func() (agent.
 	}
 	a, err := f()
 	if err != nil && answer {
-		return errors.Join(err, r.refusePendingAnswer(lv.id, pending))
+		recordErr := r.refusePendingAnswer(lv.id, pending)
+		if recordErr == nil {
+			recordErr = r.Store.DB.QueryRow(`SELECT last_seq FROM sessions WHERE id=?`, lv.id).Scan(&lv.seq)
+		}
+		return errors.Join(err, recordErr)
 	}
 	if err == nil {
 		if answer {

@@ -509,6 +509,10 @@ func (r *Runner) machineEffect(ctx context.Context, id int64, remote *machineio.
 	if err != nil {
 		return &holder.NotSent{Err: err}
 	}
+	var action int64
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT id FROM session_machine_actions WHERE session_id=? AND run=? AND operation=? AND key=?`, id, remote.Target.Run, m.Op, m.Key).Scan(&action); err != nil {
+		return &holder.NotSent{Err: err}
+	}
 	_, err = remote.Effect(ctx, m)
 	state := "complete"
 	if err != nil {
@@ -517,6 +521,13 @@ func (r *Runner) machineEffect(ctx context.Context, id int64, remote *machineio.
 		if errors.As(err, &no) {
 			state = "refused"
 		}
+	}
+	if state == "refused" && len(inputs) > 0 {
+		resolution := r.recordActionResolution(&live{id: id}, action, string(inputJSON), state)
+		if errors.Is(resolution, core.ErrMachineUnchecked) {
+			resolution = nil
+		}
+		return errors.Join(err, resolution)
 	}
 	if _, e := r.Store.DB.ExecContext(ctx, `UPDATE session_machine_actions SET state=? WHERE session_id=? AND run=? AND operation=? AND key=?`, state, id, remote.Target.Run, m.Op, m.Key); e != nil {
 		return errors.Join(err, e)

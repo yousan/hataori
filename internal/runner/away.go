@@ -13,6 +13,7 @@ import (
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/machineio"
+	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 )
 
@@ -280,17 +281,35 @@ func (r *Runner) refusePendingAnswer(sid, pending int64) error {
 	return r.Store.Update(ctx, func(tx *store.Tx) error { return r.refusePendingAnswerTx(ctx, tx, sid, pending) })
 }
 
-func (r *Runner) refusePendingAnswerTx(ctx context.Context, tx *store.Tx, sid, pending int64) error {
-	var held int64
+func (r *Runner) refusePendingAnswerTx(ctx context.Context, tx *store.Tx, sid, pending int64, reasons ...string) error {
+	var held, turn int64
 	var id control.ThreadID
-	err := tx.QueryRowContext(ctx, `SELECT p.held_action,s.thread_id FROM pending_inputs p JOIN sessions s ON s.id=p.session_id WHERE p.id=? AND p.session_id=?`, pending, sid).Scan(&held, &id)
+	err := tx.QueryRowContext(ctx, `SELECT p.held_action,p.caller_turn,s.thread_id FROM pending_inputs p JOIN sessions s ON s.id=p.session_id WHERE p.id=? AND p.session_id=?`, pending, sid).Scan(&held, &turn, &id)
 	if err == sql.ErrNoRows {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	if turn != 0 {
+		var current int64
+		if err := tx.QueryRowContext(ctx, `SELECT coalesce(max(id),0) FROM turns WHERE session_id=? AND ended_at IS NULL`, sid).Scan(&current); err != nil {
+			return err
+		}
+		if current == turn {
+			var seq uint64
+			if err := tx.QueryRowContext(ctx, `SELECT last_seq+1 FROM sessions WHERE id=?`, sid).Scan(&seq); err != nil {
+				return err
+			}
+			if err := r.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.AgentEvent, Agent: agent.Event{Kind: agent.TurnEnded, Seq: seq, Status: agent.Failed, Reason: agent.NotDelivered}}); err != nil {
+				return err
+			}
+		}
+	}
 	reason := "the original request no longer accepts this answer; no replacement request was answered"
+	if len(reasons) > 0 {
+		reason = reasons[0]
+	}
 	if held != 0 {
 		if _, err := tx.ExecContext(ctx, `UPDATE machine_held_actions SET state='refused',reason=? WHERE id=?`, reason, held); err != nil {
 			return err
@@ -346,6 +365,9 @@ func (r *Runner) recordActionResolution(lv *live, action int64, raw, state strin
 		return r.setWrittenTx(ctx, tx, lv, unsent, false, nil)
 	})
 	if err != nil {
+		return err
+	}
+	if err := r.Store.DB.QueryRow(`SELECT last_seq FROM sessions WHERE id=?`, lv.id).Scan(&lv.seq); err != nil {
 		return err
 	}
 	if len(unsent) > 0 {

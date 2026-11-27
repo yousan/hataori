@@ -353,3 +353,20 @@ func TestAwayAPIAvailabilityPreservesHistoricalTimestamp(t *testing.T) {
 		t.Fatalf("availability overlay lost history: %+v", a)
 	}
 }
+
+func TestAwayAnswerAcceptanceBindsItsNewCallerTurn(t *testing.T) {
+	f, id, sid, _ := awayFixture(t)
+	f.agentEvent(t, sid, 2, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "q1", Text: "which?"}})
+	awayReady(t, f, sid)
+	if err := f.owner.Answer(context.Background(), session.RequestHandle(sid, "q1"), control.Answer{Text: "answer"}); err != nil {
+		t.Fatal(err)
+	}
+	var bound, current int64
+	if err := f.core.Store.DB.QueryRow(`SELECT caller_turn FROM pending_inputs WHERE session_id=? AND request='q1'`, sid).Scan(&bound); err != nil {
+		t.Fatal(err)
+	}
+	f.core.Store.DB.QueryRow(`SELECT max(id) FROM turns WHERE session_id=? AND ended_at IS NULL`, sid).Scan(&current)
+	if bound == 0 || bound != current || f.threadState(t, id) != control.Running {
+		t.Fatalf("answer lost caller-turn binding: %d %d", bound, current)
+	}
+}

@@ -672,3 +672,86 @@ func TestAwayStartAndBackgroundKeepRemainingActiveTime(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAwayImmediateNoWriteRefusalIsAtomic(t *testing.T) {
+	f := placementRecordFixture(t)
+	for _, q := range []string{
+		`INSERT INTO threads(id,scope,key,started_by,state,created_at,updated_at,machine) VALUES(1,'s','immediate-refusal','owner','running',1,1,'local')`,
+		`INSERT INTO sessions(id,thread_id,agent,state,created_at,updated_at) VALUES(1,1,'fake','running',1,1)`,
+		`INSERT INTO pending_inputs(id,session_id,request,data,context,written) VALUES(1,1,'','{}','',2)`,
+		`CREATE TRIGGER reject_immediate_unmark BEFORE UPDATE OF written ON pending_inputs WHEN NEW.written=0 BEGIN SELECT RAISE(ABORT,'isolated commit boundary'); END`,
+	} {
+		if _, err := f.st.DB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	remote := &machineio.Remote{Binding: workerproto.Binding{Main: "main", Worker: "worker"}, Target: workerproto.Target{Thread: 1, Session: "s-1", Run: "run"}, Open: func(context.Context) (net.Conn, *workerproto.Connection, error) {
+		return nil, nil, errors.New("isolated definitely-unsent connection refusal")
+	}}
+	m, err := remote.Request("input", "effect", workerproto.Input{Turn: "turn", Data: []byte("unsent")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.machineEffect(context.Background(), 1, remote, m, "1"); err == nil {
+		t.Fatal("fixture refusal missing")
+	}
+	var state string
+	var written int
+	f.st.DB.QueryRow(`SELECT state FROM session_machine_actions`).Scan(&state)
+	f.st.DB.QueryRow(`SELECT written FROM pending_inputs WHERE id=1`).Scan(&written)
+	if state != "pending" || written != 2 {
+		t.Fatalf("immediate refusal partially committed: %s %d", state, written)
+	}
+	if _, err := f.st.DB.Exec(`DROP TRIGGER reject_immediate_unmark`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.run.machineEffect(context.Background(), 1, remote, m, "1"); err == nil {
+		t.Fatal("definite refusal hidden")
+	}
+	f.st.DB.QueryRow(`SELECT state FROM session_machine_actions`).Scan(&state)
+	f.st.DB.QueryRow(`SELECT written FROM pending_inputs WHERE id=1`).Scan(&written)
+	if state != "refused" || written != 0 {
+		t.Fatalf("immediate refusal resolution incomplete: %s %d", state, written)
+	}
+}
+
+func TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn(t *testing.T) {
+	for _, mode := range []string{"codec expired", "authority revoked", "different turn"} {
+		t.Run(mode, func(t *testing.T) {
+			f := placementRecordFixture(t)
+			for _, q := range []string{
+				`INSERT INTO threads(id,scope,key,started_by,state,created_at,updated_at,machine) VALUES(1,'s','bound-answer','owner','running',1,1,'local')`,
+				`INSERT INTO sessions(id,thread_id,agent,state,last_seq,created_at,updated_at) VALUES(1,1,'fake','running',5,1,1)`,
+				`INSERT INTO turns(id,session_id,started_by,principal,started_at) VALUES(1,1,'person','owner',1)`,
+				`INSERT INTO pending_inputs(id,session_id,request,data,context,caller_turn) VALUES(1,1,'q1','{}','',1)`,
+			} {
+				if _, err := f.st.DB.Exec(q); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "different turn" {
+				if _, err := f.st.DB.Exec(`UPDATE turns SET ended_at=2 WHERE id=1; INSERT INTO turns(id,session_id,started_by,started_at) VALUES(2,1,'terminal',3)`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "authority revoked" {
+				f.run.RevalidatePending = func(context.Context, int64, int64) error { return core.ErrForbidden }
+			}
+			lv := &live{id: 1, seq: 5}
+			if err := f.run.handOver(lv, 1, true, func() (agent.Actions, error) { return agent.Actions{}, errors.New("expired request") }); err == nil {
+				t.Fatal("answer refusal hidden")
+			}
+			var open int64
+			f.st.DB.QueryRow(`SELECT coalesce(max(id),0) FROM turns WHERE session_id=1 AND ended_at IS NULL`).Scan(&open)
+			if mode == "different turn" {
+				if open != 2 || lv.seq != 5 {
+					t.Fatalf("unrelated turn ended: %d seq=%d", open, lv.seq)
+				}
+			} else {
+				if open != 0 || lv.seq != 6 || counts(t, f.st)["turn_ended"] != 1 {
+					t.Fatalf("refused answer left synthetic running turn: %d seq=%d", open, lv.seq)
+				}
+			}
+		})
+	}
+}

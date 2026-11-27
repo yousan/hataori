@@ -13,6 +13,7 @@ var awayMigration = Migration{Name: "machine absence and held actions", Up: exec
 	`ALTER TABLE pending_inputs ADD COLUMN authority TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE pending_inputs ADD COLUMN written_at INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE pending_inputs ADD COLUMN held_action INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE pending_inputs ADD COLUMN caller_turn INTEGER NOT NULL DEFAULT 0`,
 	`CREATE TABLE machine_availability(machine TEXT PRIMARY KEY REFERENCES machines(key), state TEXT NOT NULL, token TEXT NOT NULL, first_failure INTEGER NOT NULL, reason TEXT NOT NULL, epoch INTEGER NOT NULL, observed_at INTEGER NOT NULL)`,
 	`CREATE TABLE machine_catchup(session_id INTEGER PRIMARY KEY REFERENCES sessions(id), token TEXT NOT NULL)`,
 	`CREATE TABLE session_pauses(id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL REFERENCES sessions(id), began_at INTEGER NOT NULL, ended_at INTEGER)`,

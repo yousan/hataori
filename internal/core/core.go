@@ -255,7 +255,13 @@ type FirstInput struct {
 // earlier is what an input's text is given to the agent after (owed).
 func pend(ctx context.Context, tx *store.Tx, sid int64, req string, v any, earlier string) (int64, error) {
 	b, _ := json.Marshal(v)
-	res, err := tx.ExecContext(ctx, `INSERT INTO pending_inputs (session_id, request, data, context) VALUES (?, ?, ?, ?)`, sid, req, string(b), earlier)
+	var turn int64
+	if req != "" {
+		if err := tx.QueryRowContext(ctx, `SELECT coalesce(max(id),0) FROM turns WHERE session_id=? AND ended_at IS NULL`, sid).Scan(&turn); err != nil {
+			return 0, err
+		}
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO pending_inputs (session_id, request, data, context,caller_turn) VALUES (?, ?, ?, ?,?)`, sid, req, string(b), earlier, turn)
 	if err != nil {
 		return 0, fmt.Errorf("core: pending input: %w", err)
 	}

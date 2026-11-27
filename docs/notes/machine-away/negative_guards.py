@@ -24,6 +24,10 @@ cases = [
 
  ("receipt and input marker atomic commit", "internal/runner/away.go", 'var unsent []string\n\tctx := context.Background()\n\terr := r.Store.Update', 'var unsent []string\n\tctx := context.Background()\n if action!=0 {if _,err:=r.Store.DB.ExecContext(ctx,`UPDATE session_machine_actions SET state=? WHERE id=?`,state,action);err!=nil{return err}}\n\terr := r.Store.Update', './internal/runner', '^TestAwayRefusedReceiptAndWrittenMarkerCommitAtomically$'),
 
+ ("immediate refusal atomicity", "internal/runner/machines.go", 'if state == "refused" && len(inputs) > 0 {', 'if false && state == "refused" && len(inputs) > 0 {', './internal/runner', '^TestAwayImmediateNoWriteRefusalIsAtomic$'),
+ ("accepted answer caller-turn binding", "internal/core/core.go", 'if req != "" {\n\t\tif err := tx.QueryRowContext(ctx, `SELECT coalesce(max(id),0) FROM turns', 'if false && req != "" {\n\t\tif err := tx.QueryRowContext(ctx, `SELECT coalesce(max(id),0) FROM turns', './internal/core', '^TestAwayAnswerAcceptanceBindsItsNewCallerTurn$'),
+ ("rejected answer completes bound caller turn", "internal/runner/away.go", 'if turn != 0 {', 'if false && turn != 0 {', './internal/runner', '^TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn$'),
+
 ]
 # The gone check appears twice; remove both to cover both warm and new reads.
 selected=set(sys.argv[1:])
