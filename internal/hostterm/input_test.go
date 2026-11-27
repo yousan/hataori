@@ -124,30 +124,6 @@ func TestInputCommands(t *testing.T) {
 		}
 	}
 
-	// A server before tmux 3.7 refuses -S: the text is pasted again without
-	// it, and so is every later one.
-	f.rec.argvs = nil
-	f.answer = func(argv []string) ([]byte, error) {
-		if argv[3] == "paste-buffer" && argv[len(argv)-1] == "-S" {
-			return nil, errors.New("hostterm: tmux paste-buffer: exit status 1: command paste-buffer: unknown flag -S")
-		}
-		return nil, nil
-	}
-	if err := l.Keys(ctx, "%4", buf, []control.HostKey{{Text: marker}, {Text: marker}}); err != nil {
-		t.Fatal(err)
-	}
-	want = [][]string{
-		{"tmux", "-L", "x", "load-buffer", "-b", buf, "-"},
-		{"tmux", "-L", "x", "paste-buffer", "-d", "-b", buf, "-t", "%4", "-S"},
-		{"tmux", "-L", "x", "paste-buffer", "-d", "-b", buf, "-t", "%4"},
-		{"tmux", "-L", "x", "load-buffer", "-b", buf, "-"},
-		{"tmux", "-L", "x", "paste-buffer", "-d", "-b", buf, "-t", "%4"},
-	}
-	if !slices.EqualFunc(f.rec.argvs, want, slices.Equal) {
-		t.Errorf("with an older tmux, ran\n%q\nwant\n%q", f.rec.argvs, want)
-	}
-	l.noRawPaste.Store(false)
-
 	// A paste that fails deletes the buffer, and so does a load that fails.
 	for _, failing := range []string{"paste-buffer", "load-buffer"} {
 		f.rec.argvs = nil
@@ -166,6 +142,43 @@ func TestInputCommands(t *testing.T) {
 		}
 	}
 	noMarkerInArgs(t, f.rec.argvs)
+}
+
+// Older tmux versions refuse -S before pasting. Replay their captured
+// replies: retry the text once, then omit -S on the next call too.
+func TestInputWithoutRawPasteFlag(t *testing.T) {
+	for _, version := range []string{"3.2a", "3.3a"} {
+		t.Run(version, func(t *testing.T) {
+			reply := strings.TrimSpace(string(readTestdata(t, "paste-buffer-S-"+version+".txt")))
+			f := &fake{answer: func(argv []string) ([]byte, error) {
+				if argv[3] == "paste-buffer" && argv[len(argv)-1] == "-S" {
+					return nil, fmt.Errorf("hostterm: tmux paste-buffer: exit status 1: %s", reply)
+				}
+				return nil, nil
+			}}
+			l := &Lister{Tmux: []string{"-L", "x"}, Buffers: testBuffers, run: f.run}
+			buf, err := l.NewBuffer()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if err := l.Keys(t.Context(), "%4", buf, []control.HostKey{{Text: marker}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := [][]string{
+				{"tmux", "-L", "x", "load-buffer", "-b", buf, "-"},
+				{"tmux", "-L", "x", "paste-buffer", "-d", "-b", buf, "-t", "%4", "-S"},
+				{"tmux", "-L", "x", "paste-buffer", "-d", "-b", buf, "-t", "%4"},
+				{"tmux", "-L", "x", "load-buffer", "-b", buf, "-"},
+				{"tmux", "-L", "x", "paste-buffer", "-d", "-b", buf, "-t", "%4"},
+			}
+			if !slices.EqualFunc(f.rec.argvs, want, slices.Equal) {
+				t.Errorf("ran\n%q\nwant\n%q", f.rec.argvs, want)
+			}
+			noMarkerInArgs(t, f.rec.argvs)
+		})
+	}
 }
 
 // A batch whose context ends runs no further command.
