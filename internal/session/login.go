@@ -37,7 +37,9 @@ type row interface {
 // OutageLogin returns the login whose outage is id; ok is false when there
 // is no such outage.
 func OutageLogin(ctx context.Context, q row, id int64) (l Login, ok bool, err error) {
-	err = q.QueryRowContext(ctx, `SELECT agent, config_dir FROM login_outages WHERE id = ?`, id).Scan(&l.Agent, &l.Dir)
+	// Remote login relay is not implemented yet. A remote outage must never
+	// cause the current relay to run a login command on the main machine.
+	err = q.QueryRowContext(ctx, `SELECT agent, config_dir FROM login_outages WHERE id = ? AND machine = 'local'`, id).Scan(&l.Agent, &l.Dir)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Login{}, false, nil
 	}
@@ -49,9 +51,13 @@ func OutageLogin(ctx context.Context, q row, id int64) (l Login, ok bool, err er
 
 // OpenOutage returns the open outage of the login; 0 when there is none.
 func OpenOutage(ctx context.Context, q row, l Login) (int64, error) {
+	return openMachineOutage(ctx, q, l, store.LocalMachine)
+}
+
+func openMachineOutage(ctx context.Context, q row, l Login, machine string) (int64, error) {
 	var id int64
-	err := q.QueryRowContext(ctx, `SELECT id FROM login_outages WHERE agent = ? AND config_dir = ? AND closed_at IS NULL`,
-		l.Agent, l.Dir).Scan(&id)
+	err := q.QueryRowContext(ctx, `SELECT id FROM login_outages WHERE machine = ? AND agent = ? AND config_dir = ? AND closed_at IS NULL`,
+		machine, l.Agent, l.Dir).Scan(&id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("session: login outage: %w", err)
 	}
@@ -61,7 +67,8 @@ func OpenOutage(ctx context.Context, q row, l Login) (int64, error) {
 // login is the login of a session of the agent.
 func (m *Machine) login(ctx context.Context, tx *store.Tx, agentName string, sessionID int64) (Login, error) {
 	var stored string
-	if err := tx.QueryRowContext(ctx, `SELECT spec FROM sessions WHERE id = ?`, sessionID).Scan(&stored); err != nil {
+	var machine string
+	if err := tx.QueryRowContext(ctx, `SELECT s.spec, t.machine FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.id = ?`, sessionID).Scan(&stored, &machine); err != nil {
 		return Login{}, fmt.Errorf("session: login: %w", err)
 	}
 	// '' before the session's first launch. A spec that cannot be read is
@@ -69,7 +76,7 @@ func (m *Machine) login(ctx context.Context, tx *store.Tx, agentName string, ses
 	var s struct{ Spec struct{ ConfigDir string } }
 	json.Unmarshal([]byte(stored), &s)
 	dir := s.Spec.ConfigDir
-	if m.LoginDir != nil {
+	if machine == store.LocalMachine && m.LoginDir != nil {
 		dir = m.LoginDir(agentName, agent.Spec{ConfigDir: dir})
 	}
 	return Login{Agent: agentName, Dir: dir}, nil
@@ -84,7 +91,11 @@ func (m *Machine) recordLogin(ctx context.Context, tx *store.Tx, agentName strin
 	if err != nil {
 		return err
 	}
-	outage, err := OpenOutage(ctx, tx, l)
+	var machine string
+	if err := tx.QueryRowContext(ctx, `SELECT t.machine FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.id = ?`, sessionID).Scan(&machine); err != nil {
+		return err
+	}
+	outage, err := openMachineOutage(ctx, tx, l, machine)
 	if err != nil {
 		return err
 	}
@@ -94,7 +105,7 @@ func (m *Machine) recordLogin(ctx context.Context, tx *store.Tx, agentName strin
 	switch {
 	case e.Outcome == Failure && e.Reason == string(agent.Login):
 		if !open {
-			res, err := tx.ExecContext(ctx, `INSERT INTO login_outages (agent, config_dir, opened_at) VALUES (?, ?, ?)`, l.Agent, l.Dir, now)
+			res, err := tx.ExecContext(ctx, `INSERT INTO login_outages (machine, agent, config_dir, opened_at) VALUES (?, ?, ?, ?)`, machine, l.Agent, l.Dir, now)
 			if err != nil {
 				return fmt.Errorf("session: open login outage: %w", err)
 			}

@@ -51,8 +51,8 @@ func (f *FrontEnd) stopped(ctx context.Context, thread control.ThreadID, turn ui
 }
 
 // pressStop stops the turn a Stop button was shown for, as the presser,
-// while that turn runs. A press that stops nothing writes one log line and
-// shows nothing.
+// while that turn runs. A refused interrupt answers and notifies the presser
+// in the thread, leaving the button available for another attempt.
 func (f *FrontEnd) pressStop(s surface.Selection, rest string) {
 	ctx := f.context()
 	ignored := func(reason string, err error) {
@@ -98,6 +98,12 @@ func (f *FrontEnd) pressStop(s surface.Selection, rest string) {
 	// The turn may end, and the next start, between the lookup and this
 	// call: Stop names the turn, and the core then stops nothing.
 	if err := api.Stop(ctx, thread, number); err != nil {
+		if errors.Is(err, control.ErrNotInterrupted) {
+			m := surface.Message{Text: "Nothing was stopped: " + err.Error() + ".", ReplyTo: &s.Ref, Notify: []string{s.Author.ID}}
+			if noticeErr := f.notice(ctx, s.Ref.Conv, key+":"+s.Author.ID+":refused", 0, m); noticeErr != nil {
+				ignored("the refusal could not be shown", noticeErr)
+			}
+		}
 		if !errors.Is(err, control.ErrForbidden) { // the core logged a refusal
 			ignored("not stopped", err)
 		}

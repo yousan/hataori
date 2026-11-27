@@ -639,6 +639,16 @@ body {
   margin-left: auto;
 }
 
+.trusts {
+  white-space: normal;
+}
+
+.trusts li > span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .passkeys-actions {
   display: flex;
   justify-content: flex-end;
@@ -938,6 +948,27 @@ body {
 
 .narrow-show {
   padding: 8px 10px 0;
+}
+
+.narrow-show .show {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.narrow-show .show button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.narrow-show .show-summary {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.narrow-show .show-summary .hidden-count,
+.narrow-show .show-summary .hidden-terminals {
+  white-space: normal;
 }
 
 .tab-main:focus-visible,
@@ -1261,10 +1292,11 @@ body {
 
 /* The text columns (title, agent and model, branch, last output) share
    what the other columns leave and are cut with an ellipsis, so the table
-   fits its pane whenever the other columns do (max-width: 0 lets a cell of
-   a table 100% wide shrink below its text); the tooltip has the whole
+   can shrink below its text (max-width: 0 on a cell of a table 100% wide);
+   the tooltip has the whole
    value. Agent and model, branch and last output each keep about 12
-   characters; the title gets what is left. */
+   characters; the title gets what is left, with a 16-character minimum.
+   The pane scrolls when those minimum widths no longer fit. */
 .all-threads td[data-col="title"],
 .all-threads td[data-col="agent"],
 .all-threads td[data-col="branch"],
@@ -1276,6 +1308,7 @@ body {
 
 .all-threads [data-col="title"] {
   width: 70%;
+  min-width: calc(16ch + 16px);
 }
 
 .all-threads td[data-col="agent"],
@@ -1378,6 +1411,7 @@ body {
   padding: 8px;
   border-radius: 4px;
   border: 1px solid var(--st-waiting);
+  overflow-wrap: anywhere;
 }
 
 .details-top.failure {
@@ -1498,6 +1532,17 @@ body {
 
 .shell.narrow .status {
   flex-wrap: wrap;
+}
+
+.shell.narrow button,
+.shell.narrow summary {
+  min-width: 44px;
+  min-height: 44px;
+  touch-action: manipulation;
+}
+
+.shell.narrow summary {
+  padding-block: 12px;
 }
 
 .shell.narrow .status-item,
@@ -1741,6 +1786,7 @@ a.chat-link:hover {
 .answers-text {
   margin: 0 0 4px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .answers-row {
@@ -1753,6 +1799,13 @@ a.chat-link:hover {
 .answers-row button,
 .answers-field button {
   font: inherit;
+}
+
+.answers-row button,
+.answers-check {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .answers-check {
@@ -2001,6 +2054,17 @@ a.chat-link:hover {
 
 .tree .row:has(> .box) {
   padding: 0;
+}
+
+.tree.narrow-list .row,
+.tree.narrow-list .row > .box {
+  min-height: 44px;
+}
+
+.tree.narrow-list .row[data-thread] > .box {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .node-body .row > .box {

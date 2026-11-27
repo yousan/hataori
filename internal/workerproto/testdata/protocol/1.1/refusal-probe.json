@@ -1,0 +1,1 @@
+{"kind":"refusal","id":"request-probe","binding":{"main":"main-A","worker":"worker-A"},"op":"probe","body":{"code":"not_ready","message":"reconciliation is not complete"}}

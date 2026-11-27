@@ -59,8 +59,8 @@ Choose A: proportional clamped widths reclaim a 400 px center at 800 px and grow
 
 ## Validation
 
-Pinned Node install/check (173 tests)/build, gofmt, go vet and focused page tests pass. Baseline 800 px center is 180 px and a footer action is offscreen. After the fix centers are 341 px at721, 400 px at800, 512 px at1024, 550 px at1100 and 550.52 px at1101; 1440 retains820 px. Toolbar/footer controls are contained and hit-tested in both themes; 390 phone is captured. A long fictional model reproduced footer overflow before overflow-wrap:anywhere; it is contained after. No local tmux tests.
+Pinned Node 24.22.1: npm ci --ignore-scripts, complete npm check (173 tests) with Node test-concurrency=1, npm run build; generated page rebuilt after main integration. gofmt, go vet (Go p=1) and focused TestThePage tests (-parallel=1) pass. Twenty-eight refreshed synthetic captures cover running and long model/status cases at 721/800/1024/1100/1101/1440/390 px in both themes. Center width, actual toolbar/footer containment and hit targets, metadata labels and long strings pass; phone layout preserved. Baseline-failing evidence and two prior layout concepts are retained. No local tmux tests.
 
-Fresh independent Codex review: no findings; follow-up confirmed long footer text wrapping after its reproduction.
+Fresh independent Codex review: landing_review_1020: fresh independent Codex source review after current-main integration found no actionable findings; clamped sidebars, 721+ center, search/density/footer wrapping, metadata and long model strings checked, prior fixes preserved and no permission/input changes.
 
-Concurrency: Open PRs #1035, #1032, #1029, #1028, #1027, #1026, #1013 share styles.css/generated page files; each finding uses a separate source hunk and starts from current main. Old #990 shares CSS but is merged; remote branches were checked before the source edit.
+Concurrency: Resumed existing PR after rechecking open PRs and remote branches. Shared dashboard CSS/generated assets: #1054, #1050, #1047, #1042, #1013. Main ecf07400 is integrated; previous findings stay on main and only this finding remains in this PR’s diff.

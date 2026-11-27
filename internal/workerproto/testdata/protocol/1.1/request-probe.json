@@ -1,0 +1,1 @@
+{"kind":"request","id":"request-probe","binding":{"main":"main-A","worker":"worker-A"},"op":"probe","body":{"agent":"fake","config":"default"}}
