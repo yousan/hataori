@@ -140,6 +140,7 @@ func firstWorkerWaitExit(records []*firstWorkerProcess, children []firstWorkerId
 
 func (f *firstWorker) kill() {
 	f.t.Helper()
+	f.ssh.freeze()
 	records := f.ssh.processes.snapshot()
 	descendants, err := firstWorkerDescendants(records)
 	if err != nil {

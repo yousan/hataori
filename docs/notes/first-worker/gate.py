@@ -27,6 +27,8 @@ MUTATIONS = [
     ("fixture generation quiescence", "cmd/hataori/first_worker_ssh_test.go", "if err := o.waitHandlers(); err != nil {", "if err := error(nil); err != nil {", "./cmd/hataori", "^TestFirstWorkerGenerationWaitsForAuthorizedHandler$"),
     ("fixture parent lease", "cmd/hataori/first_worker_ssh_test.go", "if err != nil || ended || !((parent == main.pid && birth == main.birth) || (parent == o.cli.pid && birth == o.cli.birth)) {", "if false && (err != nil || ended || !((parent == main.pid && birth == main.birth) || (parent == o.cli.pid && birth == o.cli.birth))) {", "./cmd/hataori", "^TestFirstWorkerSSHAuthorityRejectsForeignConnection$"),
 
+    ("fixture registration freeze", "cmd/hataori/first_worker_ssh_test.go", "func (o *firstWorkerSSHOwner) close() error {\n\to.freeze()\n\trecords := o.processes.snapshot()\n\tchildren, observationErr := firstWorkerDescendants(records)", "func (o *firstWorkerSSHOwner) close() error {\n\trecords := o.processes.snapshot()\n\tchildren, observationErr := firstWorkerDescendants(records)\n\to.freeze()", "./cmd/hataori", "^TestFirstWorkerLateSSHDescendantExitEvidence$"),
+
 ]
 
 
@@ -66,6 +68,7 @@ def main():
                 "fixture child exit barrier": "cleanup returned before owned child exit",
                 "fixture generation quiescence": "generation cleanup returned before authorized handler finished",
                 "fixture parent lease": "foreign main generation was admitted",
+                "fixture registration freeze": "late SSH descendant evidence missing",
             }
             proved = proved and expected[name] in output
             results.append({"guard": name, "command": " ".join(command), "expected_failure": proved, "exit_code": result.returncode,

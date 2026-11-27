@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"github.com/yousan/hataori/internal/control"
 	"net"
 	"os"
 	"os/exec"
@@ -15,6 +14,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/workerssh"
 )
 
 func firstWorkerSleeper(args []string) int {
@@ -356,5 +358,82 @@ func TestFirstWorkerDescendantExitEvidence(t *testing.T) {
 	retained, err := firstWorkerDescendants([]*firstWorkerProcess{r})
 	if err != nil || len(retained) != 2 {
 		t.Fatalf("owned descendant evidence lost: %d %v", len(retained), err)
+	}
+}
+
+func TestFirstWorkerLateSSHDescendantExitEvidence(t *testing.T) {
+	f := newFirstWorker(t)
+	o := f.ssh
+	before := map[*firstWorkerProcess]bool{}
+	for _, record := range o.processes.snapshot() {
+		before[record] = true
+	}
+	arrived, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	o.mu.Lock()
+	o.beforeFreeze = func() { close(arrived); <-release }
+	o.mu.Unlock()
+	closed := make(chan error, 1)
+	go func() { closed <- o.close() }()
+	defer func() {
+		unblock()
+		select {
+		case err := <-closed:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(15 * time.Second):
+			t.Error("late SSH cleanup not confirmed")
+		}
+	}()
+	select {
+	case <-arrived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cleanup did not reach freeze boundary")
+	}
+	// This real connection registers both a master and an established server
+	// after close has begun, immediately before registration is frozen.
+	pool, err := workerssh.New(context.Background(), workerssh.Options{RunDir: filepath.Join(t.TempDir(), "late"), ProbeInterval: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	w, err := pool.Worker(workerssh.Config{Destination: "first-worker", Root: f.root, Binding: f.binding})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "late owned SSH connection established", 10*time.Second, func() bool { return w.Status().Ready })
+	var late []*firstWorkerProcess
+	for _, record := range o.processes.snapshot() {
+		if !before[record] {
+			late = append(late, record)
+		}
+	}
+	if len(late) < 2 {
+		t.Fatal("late SSH client/server were not registered")
+	}
+	unblock()
+	// The deferred waiter checks close's error; don't consume that channel here.
+	eventually(t, "late SSH roots reaped", 10*time.Second, func() bool {
+		for _, record := range late {
+			select {
+			case <-record.done:
+			default:
+				return false
+			}
+		}
+		return true
+	})
+	identities, err := firstWorkerDescendants(late)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(identities) == 0 {
+		t.Fatal("late SSH descendant evidence missing")
+	}
+	if err := firstWorkerWaitExit(late, identities); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -24,6 +24,7 @@ type firstWorkerSSHOwner struct {
 	brokerInfo                         os.FileInfo
 	active                             bool
 	beforeStart                        func()
+	beforeFreeze                       func()
 	cli                                firstWorkerIdentity
 	main                               firstWorkerIdentity
 	helpers                            []firstWorkerIdentity
@@ -358,7 +359,26 @@ func (o *firstWorkerSSHOwner) waitHandlers() error {
 		return errors.New("fixture SSH handler termination not confirmed")
 	}
 }
+
+// Registration and freezing use the same mutex. Observe descendants only
+// after this barrier, while established transports are still open.
+func (o *firstWorkerSSHOwner) freeze() {
+	o.mu.Lock()
+	hook := o.beforeFreeze
+	o.beforeFreeze = nil
+	o.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	o.mu.Lock()
+	o.active = false
+	o.main = firstWorkerIdentity{}
+	o.mu.Unlock()
+}
 func (o *firstWorkerSSHOwner) cutGeneration() ([]firstWorkerIdentity, error) {
+	o.freeze()
+	records := o.processes.snapshot()
+	children, observationErr := firstWorkerDescendants(records)
 	o.mu.Lock()
 	o.active = false
 	o.main = firstWorkerIdentity{}
@@ -373,14 +393,16 @@ func (o *firstWorkerSSHOwner) cutGeneration() ([]firstWorkerIdentity, error) {
 	// No new handler may join until setMain; in-flight authorized starts must
 	// finish registration and exit before the final old-generation snapshot.
 	if err := o.waitHandlers(); err != nil {
-		return nil, err
+		return nil, errors.Join(observationErr, err)
 	}
 	o.mu.Lock()
-	defer o.mu.Unlock()
-	return append([]firstWorkerIdentity(nil), o.helpers...), nil
+	children = append(children, o.helpers...)
+	o.mu.Unlock()
+	return children, errors.Join(observationErr, firstWorkerWaitExit(o.processes.snapshot(), children))
 }
 
 func (o *firstWorkerSSHOwner) close() error {
+	o.freeze()
 	records := o.processes.snapshot()
 	children, observationErr := firstWorkerDescendants(records)
 	o.mu.Lock()

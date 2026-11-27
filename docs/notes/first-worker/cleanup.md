@@ -30,7 +30,8 @@ Established server children and wrapper helpers have separate read-only exit
 evidence: kernel parent relationships and birth identities, retained after the
 creator is reaped. Linux traverses tasks of the owned process; Darwin traverses
 the creator's fixed private process group and filters parent relationships.
-Generation shutdown refuses new handlers, closes owned streams, waits for
+Generation shutdown freezes new child registration under its registration
+mutex before observing all live connection descendants, closes owned streams, waits for
 in-flight authorized handlers, then takes the final process snapshot. This
 also covers a request paused immediately before child registration.
 
@@ -51,12 +52,16 @@ The focused serial gate retains all original first-worker scenarios and adds:
   race; shutdown cannot return while an authorized handler is held.
 - `TestFirstWorkerDescendantExitEvidence`: real child/grandchild traversal,
   graceful exit and preserved birth evidence after root reaping.
+- `TestFirstWorkerLateSSHDescendantExitEvidence`: a second real SSH connection
+  registers client/server immediately before shutdown freezes registration;
+  its actual established child identities are retained and confirmed ended.
 - `TestFirstWorkerSSHAuthorityRejectsForeignConnection`: correct token from an
   unregistered parent cannot create an SSH child; a foreign control socket stays
   usable and is not adopted.
 
 `gate.py --mutations` records actual assertion failures for process ownership,
-child exit waiting, generation quiescence and parent binding alongside the
+child exit waiting, generation quiescence, parent binding and registration
+freeze ordering alongside the
 original deduplication, catch-up and sole-copy deletion guard failures.
 The independent cleanup backstop remains active during exit-barrier mutation.
 All mutations restore their source in `finally`. Compilation failures, skipped

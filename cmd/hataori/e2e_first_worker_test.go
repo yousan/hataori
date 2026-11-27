@@ -220,6 +220,7 @@ func newFirstWorker(t *testing.T, configure ...func(*fake.Config)) *firstWorker 
 	}
 	f.startResident()
 	t.Cleanup(func() {
+		f.ssh.freeze()
 		records := f.ssh.processes.snapshot()
 		children, err := firstWorkerDescendants(records)
 		f.ssh.recordError(err)

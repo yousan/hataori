@@ -28,8 +28,8 @@ main-restart/failure exit barriers and foreign-identity guards.
 at a time in a disposable development checkout and restores every source in
 `finally`. Its three product regressions use the complete main/SSH/worker fixture:
 operation deduplication, catch-up-before-dispatch and current worker removal
-proof. Four additional fixture mutations prove creator ownership, child exit
-waiting, generation quiescence and parent binding. `negative-guards.json`
+proof. Five additional fixture mutations prove creator ownership, child exit
+waiting, generation quiescence, parent binding and registration freeze ordering. `negative-guards.json`
 records the observed failing assertions.
 Compilation failures, whole-test timeouts and skipped tests do not count as
 proof. The observed input-dedup mutation reached the faulted write/recovery
