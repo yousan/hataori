@@ -9,6 +9,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/yousan/hataori/internal/holder"
 )
 
 func TestAStartEndsALeftoverWithAClosedTerminal(t *testing.T) {
@@ -80,5 +82,21 @@ func TestAStartDoesNotSignalAnUnprovenLeftoverGroup(t *testing.T) {
 		if b, err := os.ReadFile(filepath.Join(dir, ExecFile)); err != nil || string(b) != string(old) {
 			t.Errorf("old execution state overwritten: %q, %v", b, err)
 		}
+	}
+}
+
+// Startup can stop after remain-on-exit was set but before respawning the
+// agent. A placeholder kept as a dead pane must not block the next Start.
+func TestALeftoverPlaceholderKeptOnExitIsCleared(t *testing.T) {
+	s := newServer(t)
+	h := s.starter()
+	_, _, dir := s.started(h, placeholder)
+	w, err := h.Start(t.Context(), dir, sleeper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { h.Stop(context.Background(), w, 0, 0) })
+	if l, err := h.Alive(t.Context(), w); err != nil || l.State != holder.Running {
+		t.Fatalf("new agent: %+v, %v", l, err)
 	}
 }
