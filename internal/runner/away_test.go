@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -12,9 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/agent/fake"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
+	"github.com/yousan/hataori/internal/host"
+	"github.com/yousan/hataori/internal/machineio"
+	"github.com/yousan/hataori/internal/session"
+	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/workerproto"
 )
 
@@ -173,5 +179,208 @@ func TestAwayResidentRestartDrainsBeforeHeldInputAndStaleStop(t *testing.T) {
 	f.st.DB.QueryRow(`SELECT max(pos) FROM events WHERE kind='machine_action' AND json_extract(data,'$.action')='send' AND json_extract(data,'$.state')='dispatched'`).Scan(&dispatched)
 	if buffered == 0 || dispatched <= buffered {
 		t.Fatalf("held dispatch preceded retained end %d %d", buffered, dispatched)
+	}
+}
+
+// This fixture owns no processes. Rebuilding its codec emulates both a
+// reconnect and a main restart from durable write/pause records.
+func TestAwayWrittenDeliveryBudgetSurvivesCodecRebuild(t *testing.T) {
+	f := placementRecordFixture(t)
+	ctx := context.Background()
+	if err := f.st.SyncMachines(ctx, []store.MachineBinding{{Key: "build", SSH: "fixture", Root: "/fixture"}}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	at := now.Add(-8 * time.Second)
+	first, _ := json.Marshal(core.FirstInput{Text: "unreported", Sent: true, Written: true, Current: true, WrittenAt: at.UnixMilli()})
+	for _, v := range []struct {
+		q    string
+		args []any
+	}{
+		{`INSERT INTO threads(id,scope,key,started_by,state,created_at,updated_at,machine) VALUES(1,'s','budget','owner','running',1,1,'build')`, nil},
+		{`INSERT INTO sessions(id,thread_id,agent,state,first_input,spec,created_at,updated_at,launch) VALUES(1,1,'fake','running',?,'{}',1,1,0)`, []any{string(first)}},
+		{`INSERT INTO session_pauses(session_id,began_at,ended_at) VALUES(1,?,?)`, []any{at.Add(time.Second).UnixMilli(), at.Add(5 * time.Second).UnixMilli()}},
+	} {
+		if _, err := f.st.DB.Exec(v.q, v.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.run.AwayEnabled = true
+	ad := f.run.Adapters["fake"]
+	for i := 0; i < 2; i++ {
+		lv := &live{id: 1, remote: true, codec: ad.NewCodec(agent.Spec{})}
+		f.run.handOverWritten(lv)
+		clock := f.run.codecNow(lv)
+		if a := lv.codec.Tick(clock); len(a.Events) != 0 {
+			t.Fatalf("expired before remaining second: %+v", a.Events)
+		}
+		a := lv.codec.Tick(clock.Add(1500 * time.Millisecond))
+		if len(a.Events) != 1 || a.Events[0].Kind != agent.TurnEnded || a.Events[0].Reason != agent.NotDelivered {
+			t.Fatalf("rebuild reset delivery budget: %+v", a.Events)
+		}
+	}
+}
+
+type awayInterruptCodec struct{ agent.Codec }
+
+func (c awayInterruptCodec) Interrupt() agent.Actions {
+	return agent.Actions{Write: [][]byte{[]byte("interrupt")}}
+}
+
+func TestAwayReadinessCutAtWriteAndStopBoundary(t *testing.T) {
+	for _, kind := range []string{"input", "stop"} {
+		t.Run(kind, func(t *testing.T) {
+			f := placementRecordFixture(t)
+			ctx := context.Background()
+			if err := f.st.SyncMachines(ctx, []store.MachineBinding{{Key: "build", SSH: "fixture", Root: "/fixture"}}); err != nil {
+				t.Fatal(err)
+			}
+			raw, _ := json.Marshal(core.FirstInput{Text: "unsent", Sent: true})
+			for _, v := range []struct {
+				q    string
+				args []any
+			}{
+				{`INSERT INTO threads(id,scope,key,started_by,state,created_at,updated_at,machine) VALUES(1,'s','boundary','owner','running',1,1,'build')`, nil},
+				{`INSERT INTO sessions(id,thread_id,agent,state,first_input,spec,created_at,updated_at,launch) VALUES(1,1,'fake','running',?,'',1,1,0)`, []any{string(raw)}},
+				{`INSERT INTO turns(id,session_id,started_by,principal,started_at) VALUES(1,1,'person','owner',1)`, nil},
+			} {
+				if _, err := f.st.DB.Exec(v.q, v.args...); err != nil {
+					t.Fatal(err)
+				}
+			}
+			connected := true
+			checks := 0
+			f.run.Remotes = map[string]RemoteMachine{"build": {Connection: func() Connection {
+				checks++
+				if kind == "stop" && checks == 2 {
+					connected = false
+				}
+				return Connection{Connected: connected, Token: "boundary"}
+			}}}
+			if _, err := f.st.ObserveConnection(ctx, "build", true, "boundary", "", false, time.Second, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.st.FinishCatchup(ctx, "build", "boundary", time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			f.run.AwayEnabled = true
+			lv := &live{id: 1, remote: true, codec: awayInterruptCodec{f.run.Adapters["fake"].NewCodec(agent.Spec{})}}
+			f.run.live = map[int64]*live{1: lv}
+			t.Cleanup(func() { f.run.live = nil })
+			f.run.point = func(p string) {
+				if p == "input marked" {
+					connected = false
+				}
+			}
+			var err error
+			if kind == "input" {
+				err = f.run.act(lv, agent.Actions{Inputs: []string{firstInputID}, Write: [][]byte{[]byte("unsent")}})
+			} else {
+				err = f.run.Interrupt(ctx, 1, 1, session.Stopper{Principal: "owner"})
+			}
+			if !errors.Is(err, core.ErrMachineUnchecked) {
+				t.Fatalf("readiness refusal hidden: %v", err)
+			}
+			var first, stopped string
+			f.st.DB.QueryRow(`SELECT first_input FROM sessions WHERE id=1`).Scan(&first)
+			var in core.FirstInput
+			if err := json.Unmarshal([]byte(first), &in); err != nil {
+				t.Fatal(err)
+			}
+			if in.Written {
+				t.Fatal("definitely-unsent input retained written marker")
+			}
+			f.st.DB.QueryRow(`SELECT stopped_by FROM turns WHERE id=1`).Scan(&stopped)
+			if stopped != "" {
+				t.Fatalf("unsent stop claimed success: %s", stopped)
+			}
+			if n := counts(t, f.st)["machine_action"]; n != 0 {
+				t.Fatalf("unwritten effect counted: %d", n)
+			}
+		})
+	}
+}
+
+// Missing retained output is deliberately different from a verified gone
+// inventory entry. No process exists or is inspected in this record fixture.
+type awayLostHistory struct{ machineio.Session }
+
+func (awayLostHistory) Source(context.Context, string) (machineio.Source, error) {
+	return machineio.Source{}, errors.New("isolated retained history unavailable")
+}
+func (awayLostHistory) Waiting(context.Context) ([]host.WaitingCall, error) { return nil, nil }
+
+func TestAwayUnknownInventoryAndConfirmedGoneDuringWarmReplay(t *testing.T) {
+	f := placementRecordFixture(t)
+	ctx := context.Background()
+	if err := f.st.SyncMachines(ctx, []store.MachineBinding{{Key: "build", SSH: "fixture", Root: "/fixture"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO threads(id,scope,key,started_by,state,created_at,updated_at,machine) VALUES(1,'s','reboot','owner','running',1,1,'build')`,
+		`INSERT INTO sessions(id,thread_id,agent,state,spec,created_at,updated_at,launch) VALUES(1,1,'fake','running','{}',1,1,0)`,
+		`INSERT INTO turns(id,session_id,started_by,principal,started_at) VALUES(1,1,'person','owner',1)`,
+		`INSERT INTO session_machine_runs(session_id,machine,run,workspace,agent_config,phase) VALUES(1,'build','original-run','handle','default','running')`,
+		`INSERT INTO machine_reservations(thread_id,machine,agent,operation,created_at) VALUES(1,'build','fake','original',1)`,
+		`INSERT INTO machine_inventory(machine,thread_id,session,run,state) VALUES('build',1,'s-1','original-run','unknown')`,
+	} {
+		if _, err := f.st.DB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.run.AwayEnabled = true
+	f.run.Remotes = map[string]RemoteMachine{"build": {Connection: func() Connection { return Connection{Connected: true, Token: "verified-reboot"} }}}
+	ad := f.run.Adapters["fake"]
+	lv := &live{id: 1, dir: StateDir(f.root, 1), remote: true, adapter: ad, codec: ad.NewCodec(agent.Spec{}), files: map[string]int64{}, io: awayLostHistory{}, sources: map[string]machineio.Source{}, warmPending: true, offset: 1}
+	if !f.run.step(lv) || counts(t, f.st)["turn_ended"] != 0 {
+		t.Fatal("unknown inventory was interpreted as reboot")
+	}
+	var slots int
+	f.st.DB.QueryRow(`SELECT count(*) FROM machine_reservations`).Scan(&slots)
+	if slots != 1 {
+		t.Fatal("unknown host released its reservation")
+	}
+	if _, err := f.st.DB.Exec(`UPDATE machine_inventory SET state='gone'`); err != nil {
+		t.Fatal(err)
+	}
+	if f.run.step(lv) {
+		t.Fatal("confirmed gone warm replay did not terminate recovery")
+	}
+	var status, reason, machine string
+	f.st.DB.QueryRow(`SELECT status,reason FROM turns WHERE id=1`).Scan(&status, &reason)
+	f.st.DB.QueryRow(`SELECT machine FROM threads WHERE id=1`).Scan(&machine)
+	if status != "failure" || reason != "interrupted" || machine != "build" || counts(t, f.st)["turn_ended"] != 1 {
+		t.Fatalf("confirmed reboot recovery %s %s %s %v", status, reason, machine, counts(t, f.st))
+	}
+	f.run.step(lv)
+	if counts(t, f.st)["turn_ended"] != 1 {
+		t.Fatal("repeated gone observation ended the turn twice")
+	}
+}
+
+func TestAwayRevokedPendingInputPreservesEventSequence(t *testing.T) {
+	f := placementRecordFixture(t)
+	for _, q := range []string{
+		`INSERT INTO threads(id,scope,key,started_by,state,created_at,updated_at,machine) VALUES(1,'s','sequence','owner','running',1,1,'local')`,
+		`INSERT INTO sessions(id,thread_id,agent,state,last_seq,spec,created_at,updated_at,launch) VALUES(1,1,'fake','running',5,'',1,1,0)`,
+		`INSERT INTO turns(id,session_id,started_by,principal,started_at) VALUES(1,1,'person','owner',1)`,
+		`INSERT INTO pending_inputs(id,session_id,request,data,context) VALUES(1,1,'','{"text":"revoked","origin":{"turn":1,"principal":"owner"}}','')`,
+	} {
+		if _, err := f.st.DB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.run.RevalidatePending = func(context.Context, int64, int64) error { return core.ErrForbidden }
+	lv := &live{id: 1, seq: 5, files: map[string]int64{}}
+	called := false
+	err := f.run.handOver(lv, 1, false, func() (agent.Actions, error) { called = true; return agent.Actions{}, nil })
+	if !errors.Is(err, core.ErrForbidden) || called || lv.seq != 6 {
+		t.Fatalf("refusal sequence or delivery: %v %v %d", err, called, lv.seq)
+	}
+	if _, err := f.run.commit(lv, batch{events: []agent.Event{{Kind: agent.TurnStarted, Input: "autonomous", StartedBy: agent.ByTerminal}}}); err != nil {
+		t.Fatal(err)
+	}
+	if lv.seq != 7 || counts(t, f.st)["turn_started"] != 1 {
+		t.Fatalf("next real event dropped: %d %v", lv.seq, counts(t, f.st))
 	}
 }

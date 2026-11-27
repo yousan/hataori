@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
@@ -81,7 +82,36 @@ func (c *Core) RevalidateInitial(ctx context.Context, tx *store.Tx, sid int64) e
 	if err == nil {
 		return nil
 	}
-	if _, e := tx.ExecContext(ctx, `UPDATE sessions SET launch=?,io_error=? WHERE id=?`, PlacementLaunchCanceled, PlacementCanceledReason, sid); e != nil {
+	// The host is already owned: withdrawing input must not cancel launch
+	// recovery or orphan its follower. Archive provenance before clearing the
+	// delivery slot, so a later grant cannot revive this accepted input.
+	if _, e := tx.ExecContext(ctx, `INSERT INTO machine_rejected_inputs(session_id,data,reason,created_at) VALUES(?,?,?,?)`, sid, raw, PlacementCanceledReason, time.Now().UnixMilli()); e != nil {
+		return e
+	}
+	if f.Sent && f.TurnID != 0 {
+		var current int64
+		if e := tx.QueryRowContext(ctx, `SELECT coalesce(max(id),0) FROM turns WHERE session_id=? AND ended_at IS NULL`, sid).Scan(&current); e != nil {
+			return e
+		}
+		if current == f.TurnID {
+			var seq uint64
+			if e := tx.QueryRowContext(ctx, `SELECT last_seq+1 FROM sessions WHERE id=?`, sid).Scan(&seq); e != nil {
+				return e
+			}
+			if e := c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.AgentEvent, Agent: agent.Event{Kind: agent.TurnEnded, Seq: seq, Input: "first", Status: agent.Failed, Reason: agent.NotDelivered}}); e != nil {
+				return e
+			}
+		}
+	}
+	if _, e := tx.ExecContext(ctx, `UPDATE sessions SET first_input='',io_error=?,context=CASE WHEN ?!='' AND set_aside IS NULL THEN ? ELSE context END WHERE id=?`, PlacementCanceledReason, f.Context, f.Context, sid); e != nil {
+		return e
+	}
+	var id control.ThreadID
+	if e := tx.QueryRowContext(ctx, `SELECT thread_id FROM sessions WHERE id=?`, sid).Scan(&id); e != nil {
+		return e
+	}
+	data, _ := json.Marshal(map[string]any{"action": "initial input", "state": "refused", "reason": "authorization or scope changed; initial delivery was withdrawn"})
+	if _, e := tx.Append(ctx, control.Event{Thread: id, Kind: "machine_action", Time: time.Now(), Data: data}); e != nil {
 		return e
 	}
 	return ErrForbidden
@@ -365,6 +395,7 @@ func (c *Core) DispatchHeld(ctx context.Context) error {
 			}
 			a := c.As(fresh).(*api)
 			a.heldReplay = true
+			a.heldActionID = v.id
 			switch v.kind {
 			case "send":
 				if v.request == "" {
@@ -374,7 +405,7 @@ func (c *Core) DispatchHeld(ctx context.Context) error {
 				if busy == control.Interrupt {
 					busy = control.Refuse
 				}
-				cause = a.Send(ctx, id, v.key, body.Input, busy)
+				cause = a.send(ctx, id, v.key, body.Input, busy, &sendGuard{held: true, proposal: true, session: v.sid, run: v.run, question: v.request})
 			case "answer":
 				cause = a.Answer(ctx, control.RequestID(v.request), body.Answer)
 			case "stop":
@@ -382,6 +413,16 @@ func (c *Core) DispatchHeld(ctx context.Context) error {
 			default:
 				cause = errors.New("unknown held action")
 			}
+		}
+		// Acceptance and its durable held receipt commit together before a
+		// worker write. A transport error afterwards cannot replay the API or
+		// mislabel an accepted answer as a refusal after its request closed.
+		var receipt string
+		if err := c.Store.DB.QueryRowContext(ctx, `SELECT state FROM machine_held_actions WHERE id=?`, v.id).Scan(&receipt); err != nil {
+			return err
+		}
+		if receipt == "dispatched" {
+			continue
 		}
 		if errors.Is(cause, ErrBusy) || errors.Is(cause, ErrMachineUnchecked) {
 			if _, err := c.Store.DB.ExecContext(ctx, `UPDATE machine_held_actions SET state='pending' WHERE id=?`, v.id); err != nil {
@@ -392,7 +433,7 @@ func (c *Core) DispatchHeld(ctx context.Context) error {
 		}
 		state, reason := "dispatched", ""
 		if cause != nil {
-			state, reason = "refused", cause.Error()
+			state, reason = "refused", heldRefusalReason(cause)
 		}
 		if err := c.Store.Update(ctx, func(tx *store.Tx) error {
 			if _, err := tx.ExecContext(ctx, `UPDATE machine_held_actions SET state=?,reason=? WHERE id=?`, state, reason, v.id); err != nil {
@@ -406,4 +447,37 @@ func (c *Core) DispatchHeld(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// acceptHeld commits the normal API acceptance and absence-queue receipt in
+// the same transaction. "dispatched" means handed to the durable input queue;
+// agent delivery continues to use the original pending input/effect receipt.
+func (a *api) acceptHeld(ctx context.Context, tx *store.Tx) error {
+	if a.heldActionID == 0 {
+		return nil
+	}
+	var id control.ThreadID
+	var kind string
+	if err := tx.QueryRowContext(ctx, `SELECT thread_id,kind FROM machine_held_actions WHERE id=?`, a.heldActionID).Scan(&id, &kind); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE machine_held_actions SET state='dispatched',reason='' WHERE id=?`, a.heldActionID); err != nil {
+		return err
+	}
+	data, _ := json.Marshal(map[string]any{"action": kind, "state": "dispatched", "reason": ""})
+	_, err := tx.Append(ctx, control.Event{Thread: id, Kind: "machine_action", Time: time.Now(), Data: data})
+	return err
+}
+
+func heldRefusalReason(err error) string {
+	switch {
+	case errors.Is(err, ErrForbidden), errors.Is(err, ErrDisabled):
+		return "current person, scope or operation no longer authorizes this action"
+	case errors.Is(err, ErrNotOpen):
+		return "the original request is no longer open"
+	case errors.Is(err, errGuardEnded), errors.Is(err, session.ErrRefused):
+		return "the original session, run, turn or request changed"
+	default:
+		return "the queued action could not safely target its original operation; it was not retried"
+	}
 }

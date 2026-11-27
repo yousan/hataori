@@ -224,6 +224,8 @@ type FirstInput struct {
 	Key         string            `json:"key"`
 	Text        string            `json:"text"`
 	Sent        bool              `json:"sent,omitempty"`         // the turn was started for it, and it was handed to the codec
+	TurnID      int64             `json:"turn_id,omitempty"`      // caller turn bound to this initial input
+	WrittenAt   int64             `json:"written_at,omitempty"`   // wall time of the original write, for active delivery budgets
 	Written     bool              `json:"written,omitempty"`      // it was written to the agent; see agent.Input.Written
 	WrittenText *string           `json:"written_text,omitempty"` // text recorded by the codec when written; nil for older inputs
 	Current     bool              `json:"current,omitempty"`      // Written was set by a runner that sets this; else it is agent.Input.Earlier
@@ -475,10 +477,11 @@ func (c *Core) AsFresh(caller control.Caller) control.API {
 var ErrAwake = errors.New("the thread is not asleep")
 
 type api struct {
-	heldReplay bool
-	c          *Core
-	caller     control.Caller
-	fresh      bool // AsFresh
+	heldReplay   bool
+	heldActionID int64
+	c            *Core
+	caller       control.Caller
+	fresh        bool // AsFresh
 }
 
 // check is the one authorization function: the caller must be allowed op,
@@ -2298,6 +2301,8 @@ type sendGuard struct {
 	// handle of the question it was proposed to answer, it is sent only
 	// while the thread waits on that question, else errGuardEnded.
 	proposal bool
+	held     bool // durable absence replay: bind the original session/run atomically
+	run      string
 	question string
 }
 
@@ -2383,6 +2388,15 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				return err // a repeated key is ignored, whatever Busy says
 			}
 		}
+		if guard != nil && guard.held {
+			var run string
+			if err := tx.QueryRowContext(ctx, `SELECT run FROM session_machine_runs WHERE session_id=?`, sid).Scan(&run); err != nil {
+				return err
+			}
+			if sid != guard.session || run != guard.run {
+				return errGuardEnded
+			}
+		}
 		if guard != nil && guard.proposal && guard.question != "" {
 			// A proposed answer answers the question it was proposed for, or
 			// nothing.
@@ -2421,7 +2435,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			// The key is not taken: the transaction is rolled back.
 			return fmt.Errorf("core: send to %v: %s: %w", id, state, ErrAwake)
 		}
-		if !a.fresh && guard == nil && (state == control.Creating || state == control.Idle || state == control.Running) {
+		if !a.fresh && (guard == nil || guard.held) && (state == control.Creating || state == control.Idle || state == control.Running) {
 			// A conversation of one input's own runs (AsFresh): this input is
 			// for the conversation it set aside, which the session resumes once
 			// that one ended. It is refused, not delivered into it; the chat
@@ -2448,7 +2462,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		}
 		marked := FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Link: in.Link,
 			Before: in.Before, After: in.After, Via: a.caller.Via}
-		if guard == nil {
+		if guard == nil || guard.held {
 			if waits, err = a.c.mustWait(ctx, tx, scope, id, state); err != nil {
 				return err
 			}
@@ -2494,7 +2508,15 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		return err
 	}
 	for {
-		err = a.c.Store.Update(ctx, take)
+		err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
+			if err := take(tx); err != nil {
+				return err
+			}
+			if accepted {
+				return a.acceptHeld(ctx, tx)
+			}
+			return nil
+		})
 		if !errors.Is(err, errPromptBuild) {
 			break
 		}
@@ -2746,6 +2768,9 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 		pending, err = pend(ctx, tx, sid, agentReq, ans, "")
 		if err == nil {
 			err = a.c.keepPendingAuthority(ctx, tx, pending, a.caller, control.OpAnswer)
+			if err == nil {
+				err = a.acceptHeld(ctx, tx)
+			}
 		}
 		return err
 	})

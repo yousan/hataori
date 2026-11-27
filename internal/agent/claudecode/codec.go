@@ -246,7 +246,7 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 		// the editor was consumed, including across another reconnect.
 		c.holdBox(in.ID)
 		if c.sent == nil {
-			c.sent = &sentInput{text: text, typed: typed, id: in.ID, pressed: true}
+			c.sent = &sentInput{text: text, typed: typed, id: in.ID, pressed: true, at: in.WrittenAt}
 		}
 		return Actions{}, nil
 	}

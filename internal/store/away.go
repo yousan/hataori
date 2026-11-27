@@ -11,11 +11,13 @@ import (
 
 var awayMigration = Migration{Name: "machine absence and held actions", Up: execAll(
 	`ALTER TABLE pending_inputs ADD COLUMN authority TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE pending_inputs ADD COLUMN written_at INTEGER NOT NULL DEFAULT 0`,
 	`CREATE TABLE machine_availability(machine TEXT PRIMARY KEY REFERENCES machines(key), state TEXT NOT NULL, token TEXT NOT NULL, first_failure INTEGER NOT NULL, reason TEXT NOT NULL, epoch INTEGER NOT NULL, observed_at INTEGER NOT NULL)`,
 	`CREATE TABLE machine_catchup(session_id INTEGER PRIMARY KEY REFERENCES sessions(id), token TEXT NOT NULL)`,
 	`CREATE TABLE session_pauses(id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL REFERENCES sessions(id), began_at INTEGER NOT NULL, ended_at INTEGER)`,
 	`CREATE UNIQUE INDEX session_pause_open ON session_pauses(session_id) WHERE ended_at IS NULL`,
 	`CREATE TABLE machine_held_actions(id INTEGER PRIMARY KEY, thread_id INTEGER NOT NULL REFERENCES threads(id), session_id INTEGER NOT NULL REFERENCES sessions(id), run TEXT NOT NULL, turn INTEGER NOT NULL, request TEXT NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL, data TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', reason TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, UNIQUE(thread_id,kind,key))`,
+	`CREATE TABLE machine_rejected_inputs(id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL REFERENCES sessions(id), data TEXT NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL)`,
 	`CREATE TABLE machine_absence_notices(machine TEXT NOT NULL REFERENCES machines(key), thread_id INTEGER NOT NULL REFERENCES threads(id), epoch INTEGER NOT NULL, PRIMARY KEY(machine,thread_id,epoch))`,
 )}
 

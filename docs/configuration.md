@@ -737,3 +737,24 @@ an immediate size error and one visible `not delivered` outcome. Its codec
 explicitly retires that input, including steering input during another turn;
 restart never retries it. Actual macOS user-session, login/Keychain and sleep/wake support
 remains gated by #969; isolated fixture tests are not that runtime evidence.
+
+## Worker absence and held actions
+
+`machine_away_grace` is a positive duration up to `1h`, default `30s`.
+A transport failure blocks placement/dispatch immediately, even during this
+grace. The first failure time/reason persists across main restarts. Binding or
+protocol refusal records away immediately. Availability overlays last known
+session state; disconnected turns are not declared ended or currently running.
+
+Accepted worker input, named stops and original-request answers wait durably
+on the main in thread order, with one notice per thread/absence. A pending stop
+has stopped nothing. Recovery verifies identity/version/inventory, drains
+retained output, reconciles original receipts and current waiting hooks, then
+rechecks current person/scope/configuration before dispatch. Stale stops and
+expired/withdrawn answers refuse visibly. Close/reopen/removal/attachment refuse
+while unchecked. Unknown hosts retain their slots; work never moves machines.
+Main delivery/start/idle/background/cleanup deadlines exclude absence/catch-up;
+worker-side hook deadlines still run. Local-only defaults remain unchanged.
+
+These behaviors are tested with isolated resident/fake-agent fixtures and CI.
+They do not establish actual macOS worker sleep/login-session runtime support.

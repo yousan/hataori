@@ -356,7 +356,7 @@ func (c *codec) Input(in agent.Input) (agent.Actions, error) {
 	switch {
 	case in.Written:
 		if in.ID != "" {
-			c.waiting = append(c.waiting, &written{id: in.ID})
+			c.waiting = append(c.waiting, &written{id: in.ID, at: in.WrittenAt})
 		}
 		return agent.Actions{}, nil
 	case c.running:
@@ -371,7 +371,7 @@ func (c *codec) write(in agent.Input) agent.Actions {
 	var a agent.Actions
 	if in.ID != "" {
 		a.Inputs = []string{in.ID}
-		c.waiting = append(c.waiting, &written{id: in.ID})
+		c.waiting = append(c.waiting, &written{id: in.ID, at: in.WrittenAt})
 		in.Text = inputIDPrefix + in.ID + "\n" + in.Text
 	}
 	if c.terminal {

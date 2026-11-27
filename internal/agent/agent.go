@@ -355,6 +355,9 @@ type Input struct {
 	// restarted, and its report has not been read. The codec records it as
 	// written and waiting for its report, and never writes its text again.
 	Written bool
+	// WrittenAt is the original write in the same active clock as Tick.
+	// Zero preserves compatibility with an older runner without a timestamp.
+	WrittenAt time.Time
 	// WrittenText, with Written, is the text the codec recorded when the
 	// input was written. nil means that no text was recorded, rather than
 	// that an empty text was written.

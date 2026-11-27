@@ -235,3 +235,20 @@ func (r *Runner) dispatchAllowed(lv *live) error {
 	}
 	return nil
 }
+
+// writtenClock translates a durable wall timestamp into the codec's active
+// clock without resetting the input's delivery budget on reconstruction.
+func (r *Runner) writtenClock(lv *live, at int64) time.Time {
+	if at == 0 {
+		return time.Time{}
+	}
+	written := time.UnixMilli(at)
+	if !r.AwayEnabled || !lv.remote {
+		return written
+	}
+	elapsed, err := store.ActiveAge(context.Background(), r.Store.DB, lv.id, written, time.Now())
+	if err != nil {
+		return r.codecNow(lv)
+	}
+	return r.codecNow(lv).Add(-elapsed)
+}

@@ -3532,6 +3532,30 @@ The holder for a tmux window a person started is `internal/holder/tmux` (#399). 
 
 Section 4.8. `HostTerminal.Reported` and `ReportedSession` are declared above, since protocol 3.15 (#397). So are `TakeIn`, `Release` and `TakeInRequest`, since protocol 3.17 (#400).
 
+### Machine absence interfaces (#964)
+
+`Core.Away` supplies machine availability separately from session state and
+rebuilds current caller authority before durable held-action dispatch. The new
+store migration records availability generations, per-session catch-up markers,
+held actions/absence notices and durable pause intervals. Only current-generation
+committed output plus receipt/hook reconciliation permits dispatch. Original
+session/run/turn/request targets remain fixed; unknown inventory retains slots.
+`Runner.RevalidatePending` and `RevalidateInitial` check accepted but unwritten
+input at the last dispatch boundary, including an initial input whose session
+became idle during catch-up. Rejected initial input is archived with provenance and owed context, while the
+completed host keeps launch zero, its follower, binding and reservation. Only the
+initial input's recorded caller turn may end on withdrawal. Regrant never revives
+that archived input.
+`agent.Input.WrittenAt` restores the original active delivery clock after codec
+reconstruction; durable write timestamps and pause intervals preserve the remaining
+budget across reconnect and main restart. `agent.HookReconciler` optionally withdraws requests whose original host hooks
+are no longer waiting; native pipe questions keep their own protocol semantics.
+`workerssh.Worker.Invalidate` blocks work after a failed application stream until
+identity/version/inventory probing succeeds again. Public protocol 3.47 carries
+availability/action events and `action_held`; worker protocol remains independently
+1.3 because its existing inventory/receipt/waiting-hook contract is unchanged.
+No actual macOS worker runtime support follows from these fixtures or CI.
+
 ## Appendix E: acceptance criteria after phase 1
 
 Every phase here also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also limit a `Caller` to the operations and event kinds a plugin was granted, and add hook points (section 7.3).

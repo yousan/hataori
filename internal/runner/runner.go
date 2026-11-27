@@ -1240,10 +1240,10 @@ func (r *Runner) handOverWritten(lv *live) {
 	r.Store.DB.QueryRow(`SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi)
 	var f firstInput
 	if fi != "" && json.Unmarshal([]byte(fi), &f) == nil && f.Sent && f.Written {
-		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true, WrittenText: f.WrittenText, Earlier: !f.Current}))
+		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true, WrittenAt: r.writtenClock(lv, f.WrittenAt), WrittenText: f.WrittenText, Earlier: !f.Current}))
 		lv.resend = false
 	}
-	rows, err := r.Store.DB.Query(`SELECT id, data, context, written, written_text FROM pending_inputs
+	rows, err := r.Store.DB.Query(`SELECT id, data, context, written, written_text, written_at FROM pending_inputs
 		WHERE session_id = ? AND request = '' AND written != 0 ORDER BY id`, lv.id)
 	if err != nil {
 		r.Log.Error("written input", "session", lv.id, "err", err)
@@ -1251,19 +1251,20 @@ func (r *Runner) handOverWritten(lv *live) {
 	}
 	var ins []agent.Input
 	for rows.Next() {
-		var id, written int64
+		var id, written, writtenAt int64
 		var data, earlier string
 		var writtenText *string
 		var in control.Input
-		if rows.Scan(&id, &data, &earlier, &written, &writtenText) == nil && json.Unmarshal([]byte(data), &in) == nil {
+		if rows.Scan(&id, &data, &earlier, &written, &writtenText, &writtenAt) == nil && json.Unmarshal([]byte(data), &in) == nil {
 			// One that a runner from before agent.Input.Earlier wrote, maybe
 			// to this agent, also one that it wrote to an agent before and
 			// marked stale; this runner removes those at a launch (newAgent).
-			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true, WrittenText: writtenText, Earlier: written != writtenNow})
+			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true, WrittenAt: time.UnixMilli(writtenAt), WrittenText: writtenText, Earlier: written != writtenNow})
 		}
 	}
 	rows.Close()
 	for _, in := range ins {
+		in.WrittenAt = r.writtenClock(lv, in.WrittenAt.UnixMilli())
 		r.do(lv, r.inputActions(lv, in))
 	}
 }
@@ -1310,6 +1311,12 @@ func (r *Runner) setWritten(lv *live, ids []string, written bool, text map[strin
 					continue
 				}
 				f.Written, f.Current, f.WrittenText = written, written, writtenText
+				if written && f.WrittenAt == 0 {
+					f.WrittenAt = time.Now().UnixMilli()
+				}
+				if !written {
+					f.WrittenAt = 0
+				}
 				b, _ := json.Marshal(f)
 				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(b), lv.id); err != nil {
 					return err
@@ -1324,7 +1331,7 @@ func (r *Runner) setWritten(lv *live, ids []string, written bool, text map[strin
 			if written {
 				mark = writtenNow
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ?, written_text = ? WHERE id = ? AND session_id = ?`, mark, writtenText, row, lv.id); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ?, written_text = ?, written_at=CASE WHEN ?=0 THEN 0 WHEN written_at=0 THEN ? ELSE written_at END WHERE id = ? AND session_id = ?`, mark, writtenText, mark, time.Now().UnixMilli(), row, lv.id); err != nil {
 				return err
 			}
 		}
@@ -1347,14 +1354,27 @@ func (r *Runner) handOver(lv *live, pending int64, answer bool, f func() (agent.
 	if r.RevalidatePending != nil {
 		if err := r.RevalidatePending(context.Background(), lv.id, pending); err != nil {
 			data, _ := json.Marshal(map[string]any{"action": "pending input", "state": "refused", "reason": "authorization or scope changed; queued delivery was withdrawn"})
-			r.Store.Update(context.Background(), func(tx *store.Tx) error {
+			recordErr := r.Store.Update(context.Background(), func(tx *store.Tx) error {
 				var id control.ThreadID
 				if e := tx.QueryRowContext(context.Background(), `SELECT thread_id FROM sessions WHERE id=?`, lv.id).Scan(&id); e != nil {
 					return e
 				}
+				if !answer {
+					var seq uint64
+					if e := tx.QueryRowContext(context.Background(), `SELECT last_seq+1 FROM sessions WHERE id=?`, lv.id).Scan(&seq); e != nil {
+						return e
+					}
+					if e := r.Machine.ApplyTx(context.Background(), tx, lv.id, session.Input{Kind: session.AgentEvent, Agent: agent.Event{Kind: agent.TurnEnded, Seq: seq, Input: strconv.FormatInt(pending, 10), Status: agent.Failed, Reason: agent.NotDelivered}}); e != nil {
+						return e
+					}
+				}
 				_, e := tx.Append(context.Background(), control.Event{Thread: id, Kind: "machine_action", Data: data})
 				return e
 			})
+			if recordErr != nil {
+				return errors.Join(err, recordErr)
+			}
+			r.Store.DB.QueryRow(`SELECT last_seq FROM sessions WHERE id=?`, lv.id).Scan(&lv.seq)
 			r.dropPending(pending)
 			return err
 		}
@@ -1654,6 +1674,11 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 		lv.codec = lv.adapter.NewCodec(lv.spec)
 		lv.replayReplies = r.warm(lv)
 		if lv.readErr != nil {
+			if r.confirmedGone(lv) {
+				r.exit(lv)
+				r.finishSessionCatchup(lv)
+				return false
+			}
 			return true
 		}
 		if lv.remote && !lv.catchingUp {
@@ -1729,6 +1754,11 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 		if err := r.reconcileMachineActions(lv); err != nil {
 			r.pauseIO(lv, err)
 			return true
+		}
+		if exited {
+			r.exit(lv)
+			r.finishSessionCatchup(lv)
+			return false
 		}
 		for _, a := range b.actions {
 			lv.replayReplies = append(lv.replayReplies, a.Reply...)
@@ -1967,7 +1997,10 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		if err := r.firstInputStep(ctx, tx, lv, b, &first); err != nil {
 			return err
 		}
-		return r.endAside(ctx, tx, lv, b, &slept)
+		if err := r.endAside(ctx, tx, lv, b, &slept); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `SELECT last_seq FROM sessions WHERE id=?`, lv.id).Scan(&seq)
 	})
 	if err == nil {
 		lv.seq = seq
@@ -2003,17 +2036,18 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 	if fi == "" {
 		return nil
 	}
-	if r.RevalidateInitial != nil {
+	var f firstInput
+	if err := json.Unmarshal([]byte(fi), &f); err != nil {
+		return err
+	}
+	willHandOver := !f.NoInput && !f.Written && ((!f.Sent && control.State(state) == control.Idle) || (f.Sent && lv.resend && !reported(b.events, firstInputID) && !notDelivered(b.events, firstInputID)))
+	if willHandOver && r.RevalidateInitial != nil {
 		if err := r.RevalidateInitial(ctx, tx, lv.id); err != nil {
 			if errors.Is(err, core.ErrForbidden) {
 				return nil
 			}
 			return err
 		}
-	}
-	var f firstInput
-	if err := json.Unmarshal([]byte(fi), &f); err != nil {
-		return err
 	}
 	switch {
 	case f.NoInput && (control.State(state) == control.Idle || control.State(state) == control.Running || control.State(state) == control.Waiting):
@@ -2034,6 +2068,9 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 			return err
 		}
 		f.Sent = true
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id=? AND ended_at IS NULL`, lv.id).Scan(&f.TurnID); err != nil {
+			return err
+		}
 		*first = &f
 	case f.Sent && reported(b.events, firstInputID):
 		// The agent reported the turn: delivered, and with it what the
@@ -2452,7 +2489,7 @@ func (r *Runner) attached(lv *live) bool {
 			return true
 		}
 		m, err := remote.Info(ctx)
-		return err != nil || m.Attached > 0 || m.DetachedMS > 0 && time.Since(time.UnixMilli(m.DetachedMS)) < r.idlePeriod()
+		return err != nil || m.Attached > 0 || m.DetachedMS > 0 && r.activeAge(ctx, r.Store.DB, lv.id, time.UnixMilli(m.DetachedMS)) < r.idlePeriod()
 	}
 	if w, ok := heldOf(lv.dir); ok {
 		// A person who looks at the tmux window, or types in it.
@@ -2883,7 +2920,7 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stop
 	a := lv.codec.Interrupt()
 	err = r.do(lv, a)
 	var no *holder.NotSent
-	if a.NotInterrupted || errors.As(err, &no) && no.Refused {
+	if a.NotInterrupted || errors.As(err, &no) && no.Refused || errors.Is(err, core.ErrMachineUnchecked) {
 		if names {
 			// Its end, whatever it is, is not this Stop's.
 			if _, err := r.Store.DB.Exec(`UPDATE turns SET stopped_by = '' WHERE id = ?`, turn); err != nil {
@@ -2891,6 +2928,9 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stop
 			}
 		}
 		lv.mu.Unlock()
+		if errors.Is(err, core.ErrMachineUnchecked) {
+			return err
+		}
 		if err != nil {
 			return fmt.Errorf("runner: session %d: %w: %w", id, control.ErrNotInterrupted, err)
 		}
@@ -2931,6 +2971,9 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stop
 		// than stopHold; the stop goes on without it.
 		lv.mu.Lock()
 		defer lv.mu.Unlock()
+		if !r.sessionChecked(id) {
+			return
+		}
 		var state string
 		if r.Store.DB.QueryRow(`SELECT state FROM sessions WHERE id = ?`, id).Scan(&state) == nil &&
 			control.State(state) != control.Running {

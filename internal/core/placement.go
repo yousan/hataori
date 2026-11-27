@@ -444,10 +444,16 @@ func (c *Core) RevalidatePlacementLaunch(ctx context.Context, sid int64) (bool, 
 	if c.Placement == nil {
 		return true, nil
 	}
-	var scope, repo, raw, state string
+	var scope, repo, raw, state, machine string
+	var launch int
 	var confined bool
-	if err := c.Store.DB.QueryRowContext(ctx, `SELECT t.scope,t.repo,t.confined,s.first_input,s.state FROM sessions s JOIN threads t ON t.id=s.thread_id WHERE s.id=?`, sid).Scan(&scope, &repo, &confined, &raw, &state); err != nil {
+	if err := c.Store.DB.QueryRowContext(ctx, `SELECT t.scope,t.repo,t.confined,s.first_input,s.state,t.machine,s.launch FROM sessions s JOIN threads t ON t.id=s.thread_id WHERE s.id=?`, sid).Scan(&scope, &repo, &confined, &raw, &state, &machine, &launch); err != nil {
 		return false, err
+	}
+	// A completed worker host must remain followed even if its unsent input
+	// is revoked. RevalidateInitial withdraws only the input after catch-up.
+	if c.Away != nil && machine != store.LocalMachine && launch == 0 {
+		return true, nil
 	}
 	if confined || state != "creating" || raw == "" {
 		return true, nil

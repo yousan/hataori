@@ -209,7 +209,7 @@ func (c *codec) Input(in agent.Input) (agent.Actions, error) {
 	defer c.mu.Unlock()
 	var a agent.Actions
 	if in.Written {
-		c.sent = append(c.sent, &pendingInput{input: in})
+		c.sent = append(c.sent, &pendingInput{input: in, at: in.WrittenAt})
 		return a, nil
 	}
 	c.queue = append(c.queue, in)

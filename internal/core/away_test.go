@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -184,5 +185,171 @@ func TestAwayQueuedActionsRecheckAuthorityScopeAndOriginalTargets(t *testing.T) 
 				t.Fatalf("refusal invisible %q", state)
 			}
 		})
+	}
+}
+
+func TestAwayHeldSendBindsOriginalTargetInsideAcceptance(t *testing.T) {
+	for _, change := range []string{"new question", "new run"} {
+		t.Run(change, func(t *testing.T) {
+			f, id, sid, _ := awayFixture(t)
+			ctx := context.Background()
+			f.agentEvent(t, sid, 2, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "q1", Text: "first?"}})
+			if err := f.owner.Send(ctx, id, "original-answer", control.Input{Text: "for q1"}, control.Deliver); err != nil {
+				t.Fatal(err)
+			}
+			awayReady(t, f, sid)
+			baseline := count(t, f.core.Store, "pending_inputs")
+			f.core.Hooks = &countHooks{}
+			f.core.stateRead = func() {
+				f.core.stateRead = nil
+				if change == "new question" {
+					f.agentEvent(t, sid, 3, agent.Event{Kind: agent.RequestWithdrawn, Request: &agent.RequestInfo{ID: "q1"}})
+					f.agentEvent(t, sid, 4, agent.Event{Kind: agent.Request, Request: &agent.RequestInfo{ID: "q2", Text: "second?"}})
+				} else {
+					if _, err := f.core.Store.DB.Exec(`UPDATE session_machine_runs SET run='replacement-run' WHERE session_id=?`, sid); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := f.core.DispatchHeld(ctx); err != nil {
+				t.Fatal(err)
+			}
+			var state string
+			f.core.Store.DB.QueryRow(`SELECT state FROM machine_held_actions`).Scan(&state)
+			if state != "refused" || len(f.runner.calls) != 0 || count(t, f.core.Store, "pending_inputs") != baseline {
+				t.Fatalf("retargeted held answer: %s %v", state, f.runner.calls)
+			}
+		})
+	}
+}
+
+func TestAwayClosedCleanupPreservesRemainingActiveAge(t *testing.T) {
+	f, id, sid, _ := awayFixture(t)
+	ctx := context.Background()
+	now := time.Now()
+	f.core.Machine.Now = func() time.Time { return now }
+	closed := now.Add(-3 * time.Hour)
+	for _, v := range []struct {
+		q    string
+		args []any
+	}{
+		{`UPDATE threads SET state='closed',updated_at=? WHERE id=?`, []any{closed.UnixMilli(), id}},
+		{`UPDATE sessions SET state='closed' WHERE id=?`, []any{sid}},
+		{`DELETE FROM session_pauses WHERE session_id=?`, []any{sid}},
+		{`INSERT INTO session_pauses(session_id,began_at,ended_at) VALUES(?,?,?)`, []any{sid, closed.Add(30 * time.Minute).UnixMilli(), now.UnixMilli()}},
+	} {
+		if _, err := f.core.Store.DB.Exec(v.q, v.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	awayReady(t, f, sid)
+	rm := &fakeRemover{}
+	f.core.Remover = rm
+	if n, err := f.core.RemoveClosed(ctx, time.Hour); err != nil || n != 0 || rm.Asked() != 0 {
+		t.Fatalf("cleanup counted absence: %d %v asks=%d", n, err, rm.Asked())
+	}
+	now = now.Add(31 * time.Minute)
+	if n, err := f.core.RemoveClosed(ctx, time.Hour); err != nil || n != 0 || len(f.eventsOf(t, id, KindRemovalRefused)) != 1 {
+		t.Fatalf("remaining cleanup budget did not attempt the worker proof: %d %v", n, err)
+	}
+}
+
+func TestAwayAcceptedQueueReceiptCommitsBeforeRunnerWrite(t *testing.T) {
+	f, id, sid, _ := awayFixture(t)
+	ctx := context.Background()
+	if err := f.owner.Send(ctx, id, "receipt-boundary", control.Input{Text: "once"}, control.Deliver); err != nil {
+		t.Fatal(err)
+	}
+	awayReady(t, f, sid)
+	f.runner.deliverErr = ErrMachineUnchecked
+	if err := f.core.DispatchHeld(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	f.core.Store.DB.QueryRow(`SELECT state FROM machine_held_actions`).Scan(&state)
+	if state != "dispatched" {
+		t.Fatalf("durable acceptance lost to transport error: %s", state)
+	}
+	before := count(t, f.core.Store, "pending_inputs")
+	restartAwayCore(t, f)
+	if err := f.core.DispatchHeld(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if count(t, f.core.Store, "pending_inputs") != before || len(f.runner.calls) != 0 {
+		t.Fatalf("accepted API replayed: %v", f.runner.calls)
+	}
+	if n := len(f.eventsOf(t, id, "machine_action")); n != 2 {
+		t.Fatalf("expected one pending notice and one dispatch receipt: %d", n)
+	}
+}
+
+func TestAwayRevokedInitialInputKeepsHostMonitoringAndAudit(t *testing.T) {
+	for _, sent := range []bool{false, true} {
+		t.Run(fmt.Sprint(sent), func(t *testing.T) {
+			f, id, sid, revoked := awayFixture(t)
+			ctx := context.Background()
+			var turn int64
+			f.core.Store.DB.QueryRow(`SELECT max(id) FROM turns WHERE session_id=?`, sid).Scan(&turn)
+			first := FirstInput{Principal: "owner", Text: "never dispatch revoked initial input", Key: "initial", Context: "owed context", Sent: sent}
+			if sent {
+				first.TurnID = turn
+			}
+			raw, _ := json.Marshal(first)
+			if _, err := f.core.Store.DB.Exec(`UPDATE sessions SET first_input=?,launch=0 WHERE id=?`, string(raw), sid); err != nil {
+				t.Fatal(err)
+			}
+			*revoked = true
+			if allowed, err := f.core.RevalidatePlacementLaunch(ctx, sid); err != nil || !allowed {
+				t.Fatalf("owned host monitoring canceled: %v %v", allowed, err)
+			}
+			var rejection error
+			if err := f.core.Store.Update(ctx, func(tx *store.Tx) error {
+				rejection = f.core.RevalidateInitial(ctx, tx, sid)
+				if errors.Is(rejection, ErrForbidden) {
+					return nil
+				}
+				return rejection
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if !errors.Is(rejection, ErrForbidden) {
+				t.Fatalf("initial authority not rechecked: %v", rejection)
+			}
+			var input, context string
+			var launch int
+			f.core.Store.DB.QueryRow(`SELECT first_input,launch,context FROM sessions WHERE id=?`, sid).Scan(&input, &launch, &context)
+			if input != "" || launch != 0 || context != "owed context" || count(t, f.core.Store, "machine_rejected_inputs") != 1 {
+				t.Fatalf("rejection lost monitoring/audit/context: %q %d %q", input, launch, context)
+			}
+			if sent {
+				var ended any
+				f.core.Store.DB.QueryRow(`SELECT ended_at FROM turns WHERE id=?`, turn).Scan(&ended)
+				if ended == nil {
+					t.Fatal("bound caller turn left running after rejection")
+				}
+			}
+			restartAwayCore(t, f)
+			*revoked = false
+			if err := f.core.Store.Update(ctx, func(tx *store.Tx) error { return f.core.RevalidateInitial(ctx, tx, sid) }); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.eventsOf(t, id, "machine_action")) != 1 || count(t, f.core.Store, "machine_rejected_inputs") != 1 {
+				t.Fatal("regrant revived rejected first input or duplicated refusal")
+			}
+		})
+	}
+}
+
+func TestAwayAPIAvailabilityPreservesHistoricalTimestamp(t *testing.T) {
+	f, id, sid, _ := awayFixture(t)
+	var at int64
+	f.core.Store.DB.QueryRow(`SELECT updated_at FROM sessions WHERE id=?`, sid).Scan(&at)
+	detail, err := f.owner.Thread(context.Background(), id, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := detail.Availability
+	if a == nil || a.State == "ready" || a.LastKnownState != control.Running || a.LastKnownAt == nil || a.LastKnownAt.UnixMilli() != at {
+		t.Fatalf("availability overlay lost history: %+v", a)
 	}
 }

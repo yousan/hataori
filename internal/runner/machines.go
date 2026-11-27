@@ -402,6 +402,7 @@ func (r *Runner) inheritWorkspace(ctx context.Context, id int64, workspace strin
 // input marker is already durable. Replay rebuilds codecs without this method.
 func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) (result error) {
 	if r.AwayEnabled && !r.sessionChecked(lv.id) {
+		failed(true) // readiness refused before any effect was journaled or sent
 		return core.ErrMachineUnchecked
 	}
 	defer func() {
