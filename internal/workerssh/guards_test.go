@@ -82,10 +82,13 @@ func TestDestinationOwnershipAndRegistration(t *testing.T) {
 func TestCleanupPreservesReplacementsAndUnknownFiles(t *testing.T) {
 	for _, replacement := range []string{"regular", "socket"} {
 		t.Run(replacement, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), "attempt")
-			if err := os.Mkdir(dir, 0700); err != nil {
+			// macOS testing.TempDir paths can exceed sockaddr_un's limit.
+			// Use the same short private temporary namespace as real attempts.
+			dir, err := os.MkdirTemp("/tmp", "hws-cleanup-")
+			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() { os.RemoveAll(dir) }) // Only this test's new directory.
 			info, err := os.Stat(dir)
 			if err != nil {
 				t.Fatal(err)
