@@ -21,6 +21,8 @@ import tempfile
 import threading
 import time
 
+from capture_metadata import normalize_metadata
+
 MODEL = "gpt-6-luna"
 FLAGS = []
 for feature in ("shell_tool", "unified_exec", "multi_agent", "goals", "sleep_tool",
@@ -55,6 +57,23 @@ for line in sys.stdin:
         continue
     print(json.dumps({"jsonrpc":"2.0","id":m["id"],"result":r}),flush=True)
 '''
+
+
+def make_scrubber():
+    uuids, opaque_ids = {}, {}
+    def scrub(value):
+        s = json.dumps(value, ensure_ascii=False)
+        def uid(m):
+            return uuids.setdefault(m[0], "00000000-0000-4000-8000-%012d" % (len(uuids)+1))
+        s = re.sub(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",uid,s)
+        s = re.sub(r"(?<![A-Za-z0-9])[A-Za-z]+_[0-9a-f]{20,}", lambda m: opaque_ids.setdefault(m[0], "opaque_%06d" % (len(opaque_ids)+1)), s)
+        s = s.replace("/fixture/home", "/fixture/user-config")
+        s = re.sub(r"rollout-[^\"/]+\.jsonl", "rollout-fixture.jsonl", s)
+        s = re.sub(r"(?<![A-Za-z0-9])[0-9a-f]{32,}","HEX_REDACTED",s)
+        s = re.sub(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?","CREDENTIAL_REDACTED",s)
+        s = re.sub(r"sk-[A-Za-z0-9_-]{20,}","CREDENTIAL_REDACTED",s)
+        return normalize_metadata(json.loads(s))
+    return scrub
 
 
 def main():
@@ -248,20 +267,7 @@ def main():
         if b"disposable-fixture-only" in file.read_bytes():
             outcome["fixture_credential_in_rollouts"].append(str(file.relative_to(root)))
     # Scrub identifiers before persisting traffic; never read auth or arbitrary CLI logs.
-    uuids = {}
-    opaque_ids = {}
-    def scrub(value):
-        s = json.dumps(value, ensure_ascii=False)
-        def uid(m):
-            return uuids.setdefault(m[0], "00000000-0000-4000-8000-%012d" % (len(uuids)+1))
-        s = re.sub(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",uid,s)
-        s = re.sub(r"(?<![A-Za-z0-9])[A-Za-z]+_[0-9a-f]{20,}", lambda m: opaque_ids.setdefault(m[0], "opaque_%06d" % (len(opaque_ids)+1)), s)
-        s = s.replace("/fixture/home", "/fixture/user-config")
-        s = re.sub(r"rollout-[^\"/]+\.jsonl", "rollout-fixture.jsonl", s)
-        s = re.sub(r"(?<![A-Za-z0-9])[0-9a-f]{32,}","HEX_REDACTED",s)
-        s = re.sub(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?","CREDENTIAL_REDACTED",s)
-        s = re.sub(r"sk-[A-Za-z0-9_-]{20,}","CREDENTIAL_REDACTED",s)
-        return json.loads(s)
+    scrub = make_scrubber()
     (out/"outcome.json").write_text(json.dumps(scrub(outcome),indent=2)+"\n")
     with (out/"wire.jsonl").open("w") as f:
         for row in raw:
