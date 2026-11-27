@@ -55,6 +55,9 @@ func TestClosedTerminalAgentSurvivesPollingAndCanBeStopped(t *testing.T) {
 		t.Fatal(err)
 	}
 	on("set-option", "-w", "-t", "=held:", "remain-on-exit", "on")
+	// Keep the private server alive even if the regression removes the
+	// held pane, so cleanup can still verify the agent's server parent.
+	on("new-session", "-d", "-s", "sentinel", "exec sleep 600")
 	pane := strings.TrimSpace(string(on("display-message", "-p", "-t", "=held:", "#{pane_id}")))
 	env := strings.TrimSpace(string(on("display-message", "-p", "-t", pane, "#{socket_path},#{pid},0")))
 	w, err := tmux.Window(env, pane, pid)
