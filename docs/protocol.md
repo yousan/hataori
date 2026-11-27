@@ -1510,6 +1510,18 @@ Since 3.42. An accepted input did not reach the agent. It ends no running turn: 
 | `link` | object | optional | the link it came through, as in `input` |
 | `via` | string | optional | the way it came through, as in `input` |
 
+### Event `input_waiting`
+
+Since 3.43. A terminal handoff has waited longer than the input timeout.
+The input remains pending and its turn stays open. The adapter reports this
+once per waiting input, rather than once per retry. No input text is included.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `session` | integer | required | the session |
+| `input` | string | required | the input's id within the session |
+| `reason` | string | required | why it waits, for a person |
+
 ### Event `input_waits`
 
 Since 3.39. Input of a conversation with the supervisor waits for others (`Send`): as many of its scope's conversations run a turn as may at a time. Written once per wait, however much input waits, and not while the conversation runs a turn of its own.

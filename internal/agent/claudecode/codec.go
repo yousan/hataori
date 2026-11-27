@@ -501,6 +501,8 @@ type sentInput struct {
 	owed    bool      // its Enter was not handed over: it is pressed again
 	since   time.Time // the first Tick after its paste was first refused, or after a turn that ran meanwhile
 	tries   int       // times it was refused
+	waitAt  time.Time // first Tick with an owed Enter
+	waited  bool      // its waiting notice was emitted
 	next    time.Time // when it is tried again; zero until the Tick after it was refused
 }
 
@@ -577,12 +579,20 @@ func (c *codec) tickInput(now time.Time) Actions {
 		}
 		s.refused, s.at = false, time.Time{}
 		return c.paste()
-	case s.owed && c.ready:
-		if !s.retry(now) {
-			return Actions{}
+	case s.owed:
+		if s.waitAt.IsZero() {
+			s.waitAt = now
 		}
-		s.owed, s.at = false, now
-		return c.enter(now)
+		var a Actions
+		if !s.waited && now.Sub(s.waitAt) >= c.inputTimeout() {
+			s.waited = true
+			a = c.events(agent.Event{Kind: agent.InputWaiting, Input: s.id, Reason: "Enter could not be handed to the agent's window"})
+		}
+		if c.ready && s.retry(now) {
+			s.owed, s.at = false, now
+			a = merge(a, c.enter(now))
+		}
+		return a
 	}
 	if c.sent.at.IsZero() {
 		c.sent.at = now // not before the paste: it is handed over before the next Tick
@@ -654,8 +664,8 @@ const DefaultInputTimeout = 30 * time.Second
 //
 // With input still held back, for the screen or for the MCP servers, or
 // whose paste was refused, there is nothing in the CLI to stop, and no
-// transcript will say anything: the turn that the oldest of it was to start
-// ends here, and it is not written.
+// transcript will say anything. End all safely unsubmitted inputs, including
+// the one that opened the current session turn; none may run after the Stop.
 //
 // While an Enter is owed the CLI holds the text, and has no turn to stop: a
 // later Tick presses the Enter, as the next input would be submitted with it.
@@ -665,18 +675,20 @@ func (c *codec) Interrupt() Actions {
 	if !c.running && c.holdsBox() {
 		return Actions{NotInterrupted: true}
 	}
-	if !c.running && c.sent == nil && len(c.queue) > 0 {
-		q := c.queue[0]
-		c.queue = c.queue[1:]
-		return c.number(c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: q.id})))
-	}
-	if !c.running && c.sent != nil && c.sent.refused {
-		id := c.sent.id
-		c.sent = nil // a Tick writes the next
-		return c.number(c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: id})))
+	if !c.running && (c.sent == nil || c.sent.refused) && (c.sent != nil || len(c.queue) > 0) {
+		var a Actions
+		if c.sent != nil {
+			a = c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: c.sent.id}))
+			c.sent = nil
+		}
+		for _, q := range c.queue {
+			a = merge(a, c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: q.id})))
+		}
+		c.queue = nil
+		return c.number(a)
 	}
 	if !c.running && c.sent != nil && c.sent.owed {
-		return Actions{NotInterrupted: true}
+		return Actions{NotInterrupted: true, InterruptReason: "the message's Enter has not reached the agent's window"}
 	}
 	return Actions{Keys: []agent.Part{stopKey}}
 }
