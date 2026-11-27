@@ -105,6 +105,9 @@ func (a *api) RemoveThread(ctx context.Context, id control.ThreadID) error {
 // the state change to removed, or removal_refused with the reason.
 func (c *Core) remove(ctx context.Context, id control.ThreadID, principal control.Principal, trigger string) error {
 	defer c.locks.lock(threadLock(id))()
+	if err := c.requireLocalWorkspace(ctx, id); err != nil {
+		return fmt.Errorf("%w: %w", ErrRemovalRefused, err)
+	}
 	sid, state, err := c.current(ctx, c.Store.DB, id)
 	if err != nil {
 		return err

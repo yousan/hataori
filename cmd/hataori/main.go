@@ -26,7 +26,7 @@
 //	hataori plugin [--root DIR]                 write the instance's Claude Code plugin under the
 //	                                            root, and print the two commands that install it
 //	hataori version
-//	hataori worker init|run --root DIR --main ID [--installation ID]
+//	hataori worker main-id|init|run --root DIR --main ID [--installation ID]
 //
 // The root is --root, or $HATAORI_ROOT. Output is one JSON object per line,
 // except for attach, whose output is the agent's terminal, and plugin, which
@@ -106,7 +106,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runCtx(context.Background(), args, stdout, stderr)
 }
 
-const usage = "usage: hataori run|threads|thread NUMBER|events [--after N] [--follow]|stop NUMBER|attach NUMBER|close NUMBER|remove NUMBER|reopen NUMBER|signin [--web]|take WINDOW --scope SCOPE [--key KEY]|release NUMBER|trusts|untrust ID [--root DIR] | hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori plugin [--root DIR] | hataori worker init|run --root DIR --main ID [--installation ID] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori hook --window --root DIR | hataori statusline --last FILE [--run COMMAND]"
+const usage = "usage: hataori run|threads|thread NUMBER|events [--after N] [--follow]|stop NUMBER|attach NUMBER|close NUMBER|remove NUMBER|reopen NUMBER|signin [--web]|take WINDOW --scope SCOPE [--key KEY]|release NUMBER|trusts|untrust ID [--root DIR] | hataori connect [[user@]host] [--root DIR] [--hataori PATH] [--port N] | hataori mcp --scope SCOPE [--root DIR] [--output-max BYTES] | hataori plugin [--root DIR] | hataori worker main-id|init|run --root DIR --main ID [--installation ID] | hataori version | hataori host <state-dir> | hataori hook [--wait] [--timeout DURATION] | hataori hook --window --root DIR | hataori statusline --last FILE [--run COMMAND]"
 
 func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {

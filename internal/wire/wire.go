@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.43"
+const Version = "3.44"
 
 type hello struct {
 	Version string `json:"version"`
@@ -353,6 +353,17 @@ var operations = map[string]operation{
 			return nil, err
 		}
 		return api.AttachTerminal(ctx, a.ID)
+	}},
+	"AttachWorker": {attachTerminalArgs{}, control.WorkerAttachment{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a attachTerminalArgs
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		worker, ok := api.(control.WorkerAttacher)
+		if !ok {
+			return nil, fmt.Errorf("wire: worker attachment is unavailable")
+		}
+		return worker.AttachWorker(ctx, a.ID)
 	}},
 	"Limits": {limitsArgs{}, []control.AgentLimits{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		return api.Limits(ctx)

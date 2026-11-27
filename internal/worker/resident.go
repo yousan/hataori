@@ -58,6 +58,8 @@ type runRecord struct {
 	Turn         string                  `json:"turn,omitempty"`
 	Instructions string                  `json:"instructions,omitempty"`
 	Policy       []string                `json:"policy,omitempty"`
+	Spec         agent.Spec              `json:"spec,omitempty"`
+	Terminal     bool                    `json:"terminal,omitempty"`
 }
 
 type ownerMarker struct {
@@ -91,6 +93,7 @@ type journal struct {
 	Workspaces map[string]workspaceRecord `json:"workspaces"`
 	Trashes    map[string]*trashRecord    `json:"trashes,omitempty"`
 	Files      map[string]*fileRecord     `json:"files,omitempty"`
+	Sources    map[string]*sourceRecord   `json:"sources,omitempty"`
 }
 
 func emptyJournal(binding workerproto.Binding) journal {
@@ -268,6 +271,11 @@ func (r *Resident) validateJournal() error {
 			return errors.New("worker: invalid owned workspace record")
 		}
 	}
+	for key, s := range r.state.Sources {
+		if s == nil || workerproto.CheckTarget(s.Target, s.Target) != nil || r.state.Runs[targetKey(s.Target)] == nil || key != targetKey(s.Target)+"-"+s.Source.Source || !workerproto.ValidID(s.Source.Source) || !workerproto.ValidID(s.Source.Handle) || !workerproto.ValidID(s.Source.Generation) || !filepath.IsAbs(s.Path) || len(s.Path) > 4096 || s.Inode == 0 || s.Size < 0 || s.Size > maxRunHistory {
+			return errors.New("worker: invalid retained source journal")
+		}
+	}
 	return nil
 }
 
@@ -395,6 +403,20 @@ func (r *Resident) recover() error {
 			continue
 		}
 		switch rec.Request.Op {
+		case "bind_workspace":
+			var b workerproto.BindWorkspace
+			json.Unmarshal(rec.Request.Body, &b)
+			_, done := r.state.Workspaces[workspaceKey(*rec.Request.Target, b.Workspace)]
+			if !done {
+				done = r.transferWorkspace(*rec.Request.Target, b) == nil
+			}
+			if done {
+				rec.Receipt.State = "complete"
+				rec.Receipt.Result = &workerproto.Effect{Workspace: b.Workspace}
+			} else {
+				rec.Receipt.State = "unknown"
+				r.ready = false
+			}
 		case "prepare":
 			run := r.state.Runs[targetKey(*rec.Request.Target)]
 			if run != nil && run.State == "prepared" {
@@ -486,6 +508,7 @@ func (r *Resident) probe(ctx context.Context, key workerproto.AgentConfig) worke
 		return h
 	}
 	cfg := r.configs[key]
+	h.ConfigDir = cfg.ConfigDir
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	state, err := a.Probe(ctx, agent.Spec{ConfigDir: cfg.ConfigDir, NoProjectSettings: true})

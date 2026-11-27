@@ -1,10 +1,11 @@
 # Worker protocol
 
-Status: protocol foundation for #957 and resident #959, part of #956. This document specifies
-worker protocol **1.1**. It is independent of the control protocol described in
+Status: worker protocol and runner integration through #962, part of #956. This document specifies
+worker protocol **1.2**. It is independent of the control protocol described in
 `protocol.md`; a control socket and an unversioned host socket are never worker
-endpoints. The resident foundation is described in `worker-resident.md`; SSH transport and runner integration
-ship separately. There is no remotely usable worker yet.
+endpoints. The resident is described in `worker-resident.md`. SSH transport and
+the machine-bound runner are implemented; public placement and away queues
+remain #963/#964, before the first-worker guide and product gate in #965.
 
 ## Compatibility and golden files
 
@@ -96,7 +97,7 @@ versions and an `error` object. Only fixed, safe explanations may be returned.
 
 The exported structs in `internal/workerproto/bodies.go` define the JSON field
 names and types. All bodies are objects, including `Empty` (`{}`). The table is
-exhaustive for 1.1; an unlisted operation refuses. **S** means a registered
+exhaustive for 1.2; an unlisted operation refuses. **S** means a registered
 session/run is required, **D** means durable acceptance and a receipt reply.
 
 | Operation | Capability | Scope | Request body | Reply body |
@@ -106,6 +107,8 @@ session/run is required, **D** means durable acceptance and a receipt reply.
 | `probe` | health | connection | AgentConfig | AgentHealth |
 | `prepare` | host | S,D | Prepare | Receipt |
 | `start` | host | S,D | Start | Receipt |
+| `describe` (since 1.2) | runner | S | Empty | RunMetadata |
+| `bind_workspace` (since 1.2) | runner | S,D | BindWorkspace | Receipt |
 | `stop` | host | S,D | Stop | Receipt |
 | `end_host` (since 1.1) | lifecycle | S,D | Empty | Receipt |
 | `input` | host | S,D | Input | Receipt |
@@ -267,10 +270,11 @@ separate in-memory routing and must never log the body on decode failure.
 
 ## Implementation status
 
-This foundation does not launch processes, open sockets, read files or remove
-directories. Future dispatchers must call the binding/target/capability guards
-before doing so, and implement the durable rules below before advertising a
-capability. Specification tests run on Linux and macOS without tmux, agent
+The resident implements owned process launch, sockets, retained reads and
+workspace operations. Every dispatcher checks binding, target and negotiated
+capabilities before resolving a resource or performing an effect. Main session
+I/O requires negotiated runner minor 1.2 before sending any effect; older
+residents cannot silently ignore required launch restrictions. Specification tests run on Linux and macOS without tmux, agent
 credentials, a service manager or an operator's SSH configuration. Runtime
 platform conformance, including macOS login-session access, remains #969.
 
@@ -282,3 +286,52 @@ its durable `end_host` operation, requiring negotiated minor 1 or later and
 `stop`, whose named-turn interruption semantics remain unchanged. Optional
 `AgentHealth.installation` and `Telemetry.disk_free` refine health observations.
 No control-protocol version or golden file changes with this worker version.
+
+## Version 1.2 additions
+
+The 1.0 and 1.1 corpora remain immutable. Optional `AgentHealth.config_dir`
+identifies the worker-local configuration for separately keyed health reports;
+it is metadata and never a path to open on the main. Capability `runner` adds `describe`
+(Empty → RunMetadata) and durable `bind_workspace` (BindWorkspace → Receipt).
+`describe` returns adapter codec context only for a run with launch metadata.
+Its path strings are never main-side resource addresses. `Start.effort` and
+`Start.no_project_settings` are optional. The latter combines the durable main
+thread restriction with the registered worker profile restriction; the worker
+refuses before launch unless its adapter proves that it omitted project settings. `bind_workspace` transfers one owned directory's authority from a
+confirmed-ended run to a prepared run of the same thread, keeping its inode and
+removing the previous run's handle before a new host can start. Both targets
+must have valid ownership markers; its journal and receipt recover together.
+
+An input or answer refused before its write intent/effect records a durable
+`refused` receipt. Only that correlated receipt proves nothing was written. A
+refusal envelope after an intent or effect is uncertain, and never authorizes
+a blind retry. A new answer attempt key is permitted only after confirmed
+refusal of the previous attempt; unknown and complete attempts keep their
+original request.
+
+The resident now implements `follow` and `read`. Built-in sources are `events`
+and (for terminal agents) `terminal`; other source IDs are `file-` followed by
+the SHA-256 of an adapter-reported path. The resident independently discovers
+that path in its own actual host output through `agent.FollowSources`; a main
+supplied digest alone grants no file lookup. Each source has a persisted device,
+inode, handle and generation. Reads retain immutable prefixes under the run;
+replacement/truncation prevents extension while an already retained exact range
+remains available. Missing retained history is `history_lost`. The per-run
+retention budget is 64 MiB across at most 128 sources. Committed offsets never
+release data. `history_release` remains refused; no automatic pruning ships.
+
+Attachment handles are connection-local and are not receipts. The resident
+verifies the owned host on the same connection that becomes its attachment.
+Optional `Bytes.cols`, `rows`, `reset` and `ended` describe attachment streams.
+Only an explicit `ended` means normal host termination; EOF alone is connection
+loss. Keys/resize are accepted only for that live handle on that connection,
+never replayed. One attachment emits monotonically ordered ranges, and an RPC
+read repeats its caller's order for correlation. Main stores decode ordering,
+source identities and content hashes transactionally with resulting events and
+validates the same exact ranges during reconstruction.
+
+Envelope refusals are not no-write proofs: the resident may return `unavailable`
+after an effect whose acknowledgment was lost. Only a durable `refused` receipt
+or a local failure proven to precede sending permits a safe retry. Unknown
+input keeps the main's written marker and awaits the agent report or a visible
+`not delivered` outcome.

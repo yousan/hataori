@@ -9,13 +9,14 @@ import (
 	"os"
 
 	"github.com/yousan/hataori/internal/host"
+	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/worker"
 	"github.com/yousan/hataori/internal/workerproto"
 )
 
 func workerMain(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: hataori worker init|run --root DIR --main ID [--installation ID]")
+		fmt.Fprintln(stderr, "usage: hataori worker main-id|init|run --root DIR --main ID [--installation ID]")
 		return exitUsage
 	}
 	mode := args[0]
@@ -24,10 +25,21 @@ func workerMain(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	root := fs.String("root", "", "worker root; must be explicit, never HATAORI_ROOT")
 	main := fs.String("main", "", "registered main installation identity")
 	installation := fs.String("installation", "", "expected worker installation identity (run)")
-	if fs.Parse(args[1:]) != nil || fs.NArg() != 0 || *root == "" || *main == "" {
+	if fs.Parse(args[1:]) != nil || fs.NArg() != 0 || *root == "" || *main == "" && mode != "main-id" {
 		return exitUsage
 	}
 	switch mode {
+	case "main-id":
+		if *main != "" || *installation != "" {
+			return exitUsage
+		}
+		id, err := store.ReadMainIdentity(ctx, *root)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return exitError
+		}
+		fmt.Fprintln(stdout, id)
+		return 0
 	case "init":
 		if *installation != "" {
 			return exitUsage

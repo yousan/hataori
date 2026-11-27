@@ -183,6 +183,13 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 		Host: host.Command{Path: exe, Args: []string{"host"}}, Root: abs, Log: lg, IdlePeriod: cfg.Idle,
 		ContextBytes: cfg.ContextBytes, Cols: uint16(cfg.TerminalCols), Rows: uint16(cfg.TerminalRows)}
 	defer r.Close()
+	connections, err := startMachineConnections(ctx, abs, cfg, st, r)
+	if err != nil {
+		return err
+	}
+	if connections != nil {
+		defer connections.Close()
+	}
 	// The tmux windows hataori starts, with the "holder" key, are in tmux
 	// sessions named after the instance, so that two never meet; and those
 	// of windows people started are held with the same program.
