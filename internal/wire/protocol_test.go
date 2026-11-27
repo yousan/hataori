@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -66,7 +67,12 @@ func TestVersions(t *testing.T) {
 // answers each line with the function's lines (none when nil).
 func fakeDaemon(t *testing.T, version string, answer func(req message) []string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "d.sock")
+	dir, err := os.MkdirTemp("/tmp", "hw") // Keep Unix socket addresses short on macOS.
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "d.sock")
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)

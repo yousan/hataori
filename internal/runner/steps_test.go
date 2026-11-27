@@ -160,6 +160,9 @@ func storedReader(t *testing.T, codec agent.Codec) *reader {
 func (x *reader) commitStep() batch {
 	x.t.Helper()
 	b := x.r.read(x.lv)
+	if b.err != nil {
+		x.t.Fatalf("read fixture: %v, files=%v", b.err, b.files)
+	}
 	ctx := context.Background()
 	if err := x.r.Store.Update(ctx, func(tx *store.Tx) error { return saveRead(ctx, tx, x.lv.id, b) }); err != nil {
 		x.t.Fatal(err)

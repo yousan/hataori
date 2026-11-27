@@ -109,20 +109,26 @@ func (r *Runner) readLines(lv *live, path string, off int64) ([][]byte, int64, r
 	}
 	var data []byte
 	// A protocol chunk is bounded, while an agent line can span chunks.
-	// Stop at one complete batch, or pause an oversized unfinished line.
-	for len(data) < 1<<20 {
-		b, err := lv.io.Read(context.Background(), s, off+int64(len(data)), machineio.MaxRead)
+	// Drain the available source before decoding later hooks, preserving usage
+	// and end ordering. Refuse an oversized batch without committing a prefix.
+	const maxSourceBatch = 64 << 20
+	for len(data) <= maxSourceBatch {
+		limit := min(machineio.MaxRead, maxSourceBatch+1-len(data))
+		b, err := lv.io.Read(context.Background(), s, off+int64(len(data)), limit)
 		if err != nil {
 			return nil, off, readRange{}, err
 		}
 		data = append(data, b.Data...)
+		if len(data) > maxSourceBatch {
+			break
+		}
 		end := complete(data, 0)
-		if end > 0 || len(b.Data) == 0 {
+		if len(b.Data) < limit {
 			proof := readRange{path: path, start: off, end: off + end, source: s, digest: digestRead(data[:end])}
 			return lines(data, 0, end), off + end, proof, nil
 		}
 	}
-	return nil, off, readRange{}, errors.New("runner: unfinished source line exceeds the read limit")
+	return nil, off, readRange{}, errors.New("runner: source batch exceeds the retained read limit")
 }
 
 func (r *Runner) pauseIO(lv *live, err error) {

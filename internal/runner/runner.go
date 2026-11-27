@@ -2068,7 +2068,7 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 	}
 	// failed tells the codec that its keys were not handed over.
 	failed := func(nothing bool) {
-		if nothing && len(a.Inputs) > 0 {
+		if nothing && len(a.Inputs) > 0 && (lv.remote || a.KeysFailed != nil) {
 			r.unmarkWritten(lv, a.Inputs)
 		}
 		if a.KeysFailed != nil {

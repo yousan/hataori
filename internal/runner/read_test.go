@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"github.com/yousan/hataori/internal/agent/claudecode"
 	"github.com/yousan/hataori/internal/agent/fake"
 	"github.com/yousan/hataori/internal/host"
+	"github.com/yousan/hataori/internal/machineio"
 )
 
 // reader is a runner and one session's state for read, without a host or a
@@ -48,11 +50,36 @@ func (x *reader) appendTo(path string, ls ...[]byte) {
 	}
 }
 
-func (x *reader) hooks(ls ...[]byte) { x.appendTo(filepath.Join(x.lv.dir, host.EventsFile), ls...) }
+func (x *reader) hooks(ls ...[]byte) {
+	// Relocate only captured transcript addresses into this isolated fixture.
+	// The capture remains immutable; a missing advertised source is an error.
+	for i, line := range ls {
+		var event struct {
+			Hook    string          `json:"hook"`
+			Wait    bool            `json:"wait"`
+			At      int64           `json:"at"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		var payload map[string]json.RawMessage
+		if json.Unmarshal(line, &event) != nil || event.Hook == "" || json.Unmarshal(event.Payload, &payload) != nil {
+			continue
+		}
+		var path string
+		if json.Unmarshal(payload["transcript_path"], &path) == nil && path != "" {
+			payload["transcript_path"], _ = json.Marshal(filepath.Join(x.lv.dir, "transcript.jsonl"))
+			event.Payload, _ = json.Marshal(payload)
+			ls[i], _ = json.Marshal(event)
+		}
+	}
+	x.appendTo(filepath.Join(x.lv.dir, host.EventsFile), ls...)
+}
 
 // step reads what is new and keeps the offsets, as a step that commits.
 func (x *reader) step() []agent.Event {
 	b := x.r.read(x.lv)
+	if b.err != nil {
+		x.t.Fatalf("read fixture: %v, files=%v", b.err, b.files)
+	}
 	for _, rd := range b.reads {
 		if rd.path == "" && rd.end != b.offset {
 			x.t.Errorf("the log's range ends at %d and the offset is %d", rd.end, b.offset)
@@ -422,8 +449,8 @@ func TestLineWithoutItsEndIsLeft(t *testing.T) {
 	})
 }
 
-// A file that became shorter than the stored offset is not read until it
-// is longer again, and then from that offset.
+// A file shorter than the stored offset reports truncation without progress.
+// When it grows back, reading resumes at the unchanged committed offset.
 func TestFileShorterThanTheOffset(t *testing.T) {
 	bothSources(t, func(t *testing.T, x *reader, path string, line func(string) []byte, offset func() int64) {
 		x.appendTo(path, line("one"), line("two"))
@@ -432,8 +459,10 @@ func TestFileShorterThanTheOffset(t *testing.T) {
 		if err := os.Truncate(path, at-5); err != nil {
 			t.Fatal(err)
 		}
-		if got := x.step(); len(got) != 0 || offset() != at {
-			t.Fatalf("events %v at offset %d, want none and still %d", kinds(got), offset(), at)
+		b := x.r.read(x.lv)
+		var failure *machineio.ReadError
+		if !errors.As(b.err, &failure) || failure.State != "truncated" || offset() != at {
+			t.Fatalf("read %+v at %d, want explicit truncation and unchanged %d", b.err, offset(), at)
 		}
 		x.partial(path, []byte("xxxx\n")) // as long as the offset again
 		if got := x.step(); len(got) != 0 || offset() != at {

@@ -712,6 +712,8 @@ This is the runner boundary in #962, not the first-worker product gate. Placemen
 and away queues follow in #963/#964, and the combined guide/gate is #965.
 Retained history currently has a 64 MiB per-run budget and at most 128 sources;
 exhaustion pauses the session rather than discarding codec reconstruction bytes.
+A read step drains up to 64 MiB per source before decoding later hooks; an
+oversized batch pauses without committing a prefix.
 An owner attachment uses its own connection and ends visibly on loss; it never
 replays raw keys. Its connection checks only its pinned run; other sessions
 can start without invalidating it. One encoded worker input action is limited
