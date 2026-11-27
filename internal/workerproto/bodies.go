@@ -1,0 +1,544 @@
+package workerproto
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"math"
+	"sort"
+)
+
+type Operation struct {
+	Name       string
+	Capability string
+	Session    bool
+	Durable    bool
+}
+
+var operations = map[string]Operation{
+	"health":          {"health", "health", false, false},
+	"inventory":       {"inventory", "health", false, false},
+	"probe":           {"probe", "health", false, false},
+	"prepare":         {"prepare", "host", true, true},
+	"start":           {"start", "host", true, true},
+	"stop":            {"stop", "host", true, true},
+	"input":           {"input", "host", true, true},
+	"answer":          {"answer", "host", true, true},
+	"receipt":         {"receipt", "receipts", true, false},
+	"attach":          {"attach", "terminal", true, false},
+	"keys":            {"keys", "terminal", true, false},
+	"resize":          {"resize", "terminal", true, false},
+	"detach":          {"detach", "terminal", true, false},
+	"follow":          {"follow", "replay", true, false},
+	"read":            {"read", "replay", true, false},
+	"history_release": {"history_release", "replay", true, true},
+	"clone":           {"clone", "workspace", true, true},
+	"fetch":           {"fetch", "workspace", true, true},
+	"inspect":         {"inspect", "workspace", true, false},
+	"remove":          {"remove", "workspace", true, true},
+	"restore":         {"restore", "workspace", true, true},
+	"acknowledge":     {"acknowledge", "workspace", true, true},
+	"purge":           {"purge", "workspace", true, true},
+	"upload":          {"upload", "transfer", true, true},
+	"download":        {"download", "transfer", true, false},
+	"login_start":     {"login_start", "login", false, false},
+	"login_input":     {"login_input", "login", false, false},
+	"login_cancel":    {"login_cancel", "login", false, false},
+}
+
+func Operations() []Operation {
+	ops := make([]Operation, 0, len(operations))
+	for _, op := range operations {
+		ops = append(ops, op)
+	}
+	sort.Slice(ops, func(i, j int) bool { return ops[i].Name < ops[j].Name })
+	return ops
+}
+
+func knownCapability(cap string) bool {
+	for _, op := range operations {
+		if op.Capability == cap {
+			return true
+		}
+	}
+	return false
+}
+
+var refusalCodes = []string{
+	"incompatible_major", "binding", "wrong_target", "invalid_message",
+	"unsupported_operation", "unsupported_capability", "not_ready", "stale",
+	"key_conflict", "unavailable", "missing", "unreadable", "replaced",
+	"truncated", "history_lost", "limit", "proof_refused", "unknown_outcome",
+	"not_found", "unsupported_holder", "denied",
+}
+
+func RefusalCodes() []string { return append([]string(nil), refusalCodes...) }
+
+type Empty struct{}
+
+type AgentConfig struct {
+	Agent  string `json:"agent"`
+	Config string `json:"config"`
+}
+
+type AgentHealth struct {
+	AgentConfig
+	Installed bool   `json:"installed"`
+	Login     string `json:"login"` // logged_in, logged_out, unknown
+}
+
+// Telemetry is an observation, never an admission grant. A consumer checks age,
+// boot and configured limits; invalid/unknown samples cannot advertise capacity.
+type Telemetry struct {
+	ObservedMS int64   `json:"observed_ms"`
+	ValidMS    int64   `json:"valid_ms"`
+	Known      bool    `json:"known"`
+	MemoryFree uint64  `json:"memory_free"`
+	Load       float64 `json:"load"`
+}
+
+type Health struct {
+	Boot      string        `json:"boot"`
+	Ready     bool          `json:"ready"`
+	Agents    []AgentHealth `json:"agents"`
+	Telemetry Telemetry     `json:"telemetry"`
+}
+
+type HostRecord struct {
+	Target Target   `json:"target"`
+	State  string   `json:"state"` // reserved, running, ended, gone, unknown
+	Turn   string   `json:"turn,omitempty"`
+	Hooks  []string `json:"hooks,omitempty"`
+}
+
+type Inventory struct {
+	Boot     string       `json:"boot"`
+	Complete bool         `json:"complete"`
+	Hosts    []HostRecord `json:"hosts"`
+}
+
+type Prepare struct {
+	Instructions string   `json:"instructions"`
+	Policy       []string `json:"policy"` // session-bound uploaded handles
+}
+
+type Start struct {
+	AgentConfig
+	Holder    string `json:"holder"`
+	Workspace string `json:"workspace"`
+	Model     string `json:"model,omitempty"`
+	Resume    string `json:"resume,omitempty"` // opaque adapter conversation ID
+}
+
+type Stop struct {
+	Turn string `json:"turn"`
+}
+
+type Input struct {
+	Turn string `json:"turn"`
+	Data []byte `json:"data"`
+}
+
+type Answer struct {
+	Turn    string `json:"turn"`
+	Request string `json:"request"`
+	Data    []byte `json:"data"`
+}
+
+type ReceiptQuery struct {
+	Operation string `json:"operation"`
+	Key       string `json:"key"`
+}
+
+type Effect struct {
+	Host      string `json:"host,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
+	Trash     string `json:"trash,omitempty"`
+	Handle    string `json:"handle,omitempty"`
+	Digest    string `json:"digest,omitempty"`
+	Size      uint64 `json:"size,omitempty"`
+}
+
+type Receipt struct {
+	Operation   string   `json:"operation"`
+	Key         string   `json:"key"`
+	RequestHash string   `json:"request_hash"`
+	State       string   `json:"state"` // pending, complete, unknown, refused
+	Result      *Effect  `json:"result,omitempty"`
+	Refusal     *Refusal `json:"refusal,omitempty"`
+}
+
+type Attachment struct {
+	Handle string `json:"handle"`
+	Cols   uint16 `json:"cols"`
+	Rows   uint16 `json:"rows"`
+}
+
+type Handle struct {
+	Handle string `json:"handle"`
+}
+
+type Keys struct {
+	Handle string `json:"handle"`
+	Data   []byte `json:"data"`
+}
+
+type Follow struct {
+	Source string `json:"source"` // adapter-reported source ID, never a path
+}
+
+type Source struct {
+	Handle     string `json:"handle"`
+	Source     string `json:"source"`
+	Generation string `json:"generation"`
+}
+
+type Read struct {
+	Source
+	Order  uint64 `json:"order"`
+	Offset uint64 `json:"offset"`
+	Limit  uint32 `json:"limit"`
+}
+
+// Bytes gives an exact, ordered range. empty is a successful zero-byte read;
+// every other no-data state prevents the consumer claiming catch-up.
+type Bytes struct {
+	Source
+	Order  uint64 `json:"order"`
+	Offset uint64 `json:"offset"`
+	Next   uint64 `json:"next"`
+	State  string `json:"state"`
+	Data   []byte `json:"data"`
+}
+
+type HistoryRelease struct {
+	Retired bool `json:"retired"` // Requires the main's durable run retirement.
+}
+
+type Clone struct {
+	Repository string `json:"repository"` // configured repository ID, not a URL
+}
+
+type Workspace struct {
+	Workspace string `json:"workspace"`
+}
+
+type Inspection struct {
+	Workspace string   `json:"workspace"`
+	Identity  string   `json:"identity"`
+	Clean     bool     `json:"clean"` // diagnostic only; removal always reproves
+	Reasons   []string `json:"reasons"`
+}
+
+type Trash struct {
+	Trash string `json:"trash"`
+}
+
+type Upload struct {
+	Handle string `json:"handle"`
+	Digest string `json:"digest"` // SHA-256 of the complete accepted file
+	Size   uint64 `json:"size"`
+	Offset uint64 `json:"offset"`
+	Data   []byte `json:"data"`
+	Final  bool   `json:"final"`
+}
+
+type Download struct {
+	Handle string `json:"handle"`
+	Offset uint64 `json:"offset"`
+	Limit  uint32 `json:"limit"`
+}
+
+type FileBytes struct {
+	Handle string `json:"handle"`
+	Digest string `json:"digest"`
+	Size   uint64 `json:"size"`
+	Offset uint64 `json:"offset"`
+	Data   []byte `json:"data"`
+	Final  bool   `json:"final"`
+}
+
+type Login struct {
+	AgentConfig
+	Attempt string `json:"attempt"`
+}
+
+type LoginInput struct {
+	Attempt string `json:"attempt"`
+	Data    []byte `json:"data"`
+}
+
+type LoginAttempt struct {
+	Attempt string `json:"attempt"`
+}
+
+type LoginStream struct {
+	Attempt string `json:"attempt"`
+	State   string `json:"state"` // data, complete, cancelled, expired
+	Data    []byte `json:"data"`
+}
+
+func body[T any](m Message, valid func(T) bool) error {
+	var b T
+	if err := decode(m.Body, &b); err != nil {
+		return err
+	}
+	if !valid(b) {
+		return refuse("invalid_message", "invalid operation body")
+	}
+	return nil
+}
+
+func oneOf(s string, values ...string) bool {
+	for _, v := range values {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+func digest(s string) bool {
+	b, err := hex.DecodeString(s)
+	return err == nil && len(b) == sha256.Size && hex.EncodeToString(b) == s
+}
+
+func agent(c AgentConfig) bool { return identifier(c.Agent) && identifier(c.Config) }
+func source(s Source) bool {
+	return identifier(s.Handle) && identifier(s.Source) && identifier(s.Generation)
+}
+func handles(ss ...string) bool {
+	for _, s := range ss {
+		if !identifier(s) {
+			return false
+		}
+	}
+	return true
+}
+func goodRefusal(r Refusal) bool {
+	return oneOf(r.Code, refusalCodes...) && len(r.Message) > 0 && len(r.Message) <= 512
+}
+
+func receipt(r Receipt) bool {
+	op, ok := operations[r.Operation]
+	if !ok || !op.Durable || !identifier(r.Key) || !digest(r.RequestHash) {
+		return false
+	}
+	switch r.State {
+	case "pending", "unknown":
+		return r.Result == nil && r.Refusal == nil
+	case "refused":
+		return r.Result == nil && r.Refusal != nil && goodRefusal(*r.Refusal)
+	case "complete":
+		if r.Result == nil || r.Refusal != nil {
+			return false
+		}
+		e := r.Result
+		for _, h := range []string{e.Host, e.Workspace, e.Trash, e.Handle} {
+			if h != "" && !identifier(h) {
+				return false
+			}
+		}
+		return e.Digest == "" || digest(e.Digest)
+	}
+	return false
+}
+
+func byteRange(b Bytes) bool {
+	if !source(b.Source) || b.Order == 0 || len(b.Data) > MaxChunk || b.Next < b.Offset {
+		return false
+	}
+	if b.State == "data" {
+		return len(b.Data) > 0 && b.Next-b.Offset == uint64(len(b.Data))
+	}
+	return oneOf(b.State, "empty", "unavailable", "missing", "unreadable", "replaced", "truncated", "history_lost") && len(b.Data) == 0 && b.Next == b.Offset
+}
+
+func validateBody(m Message) error {
+	if m.Kind == "refusal" {
+		return body(m, goodRefusal)
+	}
+	if m.Kind == "stream" {
+		switch m.Op {
+		case "read", "attach":
+			return body(m, byteRange)
+		case "login_start":
+			return body(m, func(b LoginStream) bool {
+				return identifier(b.Attempt) && len(b.Data) <= MaxChunk &&
+					(oneOf(b.State, "complete", "cancelled", "expired") && len(b.Data) == 0 || b.State == "data" && len(b.Data) > 0)
+			})
+		}
+		return refuse("invalid_message", "operation has no stream form")
+	}
+	if m.Kind == "reply" {
+		if operations[m.Op].Durable || m.Op == "receipt" {
+			return body(m, func(r Receipt) bool {
+				return receipt(r) && (m.Op == "receipt" || r.Operation == m.Op && r.Key == m.Key)
+			})
+		}
+		switch m.Op {
+		case "health":
+			return body(m, func(b Health) bool {
+				if !identifier(b.Boot) || !telemetry(b.Telemetry) || len(b.Agents) > 128 {
+					return false
+				}
+				for _, a := range b.Agents {
+					if !agentHealth(a) {
+						return false
+					}
+				}
+				return true
+			})
+		case "probe":
+			return body(m, agentHealth)
+		case "inventory":
+			return body(m, func(b Inventory) bool {
+				if !identifier(b.Boot) || len(b.Hosts) > 4096 {
+					return false
+				}
+				seen := make(map[Target]bool)
+				for _, h := range b.Hosts {
+					if !validTarget(h.Target) || seen[h.Target] || !oneOf(h.State, "reserved", "running", "ended", "gone", "unknown") || h.Turn != "" && !identifier(h.Turn) || !handles(h.Hooks...) {
+						return false
+					}
+					seen[h.Target] = true
+				}
+				return true
+			})
+		case "attach":
+			return body(m, func(b Attachment) bool { return identifier(b.Handle) && b.Cols > 0 && b.Rows > 0 })
+		case "follow":
+			return body(m, source)
+		case "read":
+			return body(m, byteRange)
+		case "inspect":
+			return body(m, func(b Inspection) bool { return handles(b.Workspace, b.Identity) && len(b.Reasons) <= 128 })
+		case "download":
+			return body(m, func(b FileBytes) bool {
+				return identifier(b.Handle) && digest(b.Digest) && len(b.Data) <= MaxChunk && b.Offset <= b.Size && uint64(len(b.Data)) <= b.Size-b.Offset && (!b.Final || uint64(len(b.Data)) == b.Size-b.Offset)
+			})
+		case "login_start", "login_input", "login_cancel":
+			return body(m, func(b LoginAttempt) bool { return identifier(b.Attempt) })
+		case "keys", "resize", "detach":
+			return body(m, func(Empty) bool { return true })
+		}
+	}
+	if m.Kind != "request" {
+		return refuse("invalid_message", "invalid message kind")
+	}
+	switch m.Op {
+	case "health", "inventory":
+		return body(m, func(Empty) bool { return true })
+	case "probe":
+		return body(m, agent)
+	case "prepare":
+		return body(m, func(b Prepare) bool { return len(b.Instructions) <= MaxChunk && handles(b.Policy...) })
+	case "start":
+		return body(m, func(b Start) bool {
+			return agent(b.AgentConfig) && b.Holder == "own" && identifier(b.Workspace) && len(b.Model) <= 128 && len(b.Resume) <= 256
+		})
+	case "stop":
+		return body(m, func(b Stop) bool { return identifier(b.Turn) })
+	case "input":
+		return body(m, func(b Input) bool { return identifier(b.Turn) && len(b.Data) > 0 && len(b.Data) <= MaxChunk })
+	case "answer":
+		return body(m, func(b Answer) bool { return handles(b.Turn, b.Request) && len(b.Data) <= MaxChunk })
+	case "receipt":
+		return body(m, func(b ReceiptQuery) bool { return operations[b.Operation].Durable && identifier(b.Key) })
+	case "attach", "resize":
+		return body(m, func(b Attachment) bool { return identifier(b.Handle) && b.Cols > 0 && b.Rows > 0 })
+	case "keys":
+		return body(m, func(b Keys) bool { return identifier(b.Handle) && len(b.Data) > 0 && len(b.Data) <= MaxChunk })
+	case "detach":
+		return body(m, func(b Handle) bool { return identifier(b.Handle) })
+	case "follow":
+		return body(m, func(b Follow) bool { return identifier(b.Source) })
+	case "read":
+		return body(m, func(b Read) bool {
+			return source(b.Source) && b.Order > 0 && b.Limit > 0 && b.Limit <= MaxChunk && b.Offset <= math.MaxUint64-uint64(b.Limit)
+		})
+	case "history_release":
+		return body(m, func(b HistoryRelease) bool { return b.Retired })
+	case "clone":
+		return body(m, func(b Clone) bool { return identifier(b.Repository) })
+	case "fetch", "inspect", "remove":
+		return body(m, func(b Workspace) bool { return identifier(b.Workspace) })
+	case "restore", "acknowledge", "purge":
+		return body(m, func(b Trash) bool { return identifier(b.Trash) })
+	case "upload":
+		return body(m, func(b Upload) bool {
+			return identifier(b.Handle) && digest(b.Digest) && len(b.Data) <= MaxChunk && b.Offset <= b.Size && uint64(len(b.Data)) <= b.Size-b.Offset && (!b.Final || uint64(len(b.Data)) == b.Size-b.Offset)
+		})
+	case "download":
+		return body(m, func(b Download) bool {
+			return identifier(b.Handle) && b.Limit > 0 && b.Limit <= MaxChunk && b.Offset <= math.MaxUint64-uint64(b.Limit)
+		})
+	case "login_start":
+		return body(m, func(b Login) bool { return agent(b.AgentConfig) && identifier(b.Attempt) })
+	case "login_input":
+		return body(m, func(b LoginInput) bool { return identifier(b.Attempt) && len(b.Data) > 0 && len(b.Data) <= MaxChunk })
+	case "login_cancel":
+		return body(m, func(b LoginAttempt) bool { return identifier(b.Attempt) })
+	}
+	return refuse("invalid_message", "invalid operation form")
+}
+
+func agentHealth(a AgentHealth) bool {
+	return agent(a.AgentConfig) && oneOf(a.Login, "logged_in", "logged_out", "unknown") && (a.Installed || a.Login == "unknown")
+}
+
+func telemetry(t Telemetry) bool {
+	return t.ObservedMS >= 0 && t.ValidMS >= 0 && t.ValidMS <= 60000 && !math.IsNaN(t.Load) && !math.IsInf(t.Load, 0) && t.Load >= 0 &&
+		(t.Known && t.ObservedMS > 0 && t.ValidMS > 0 || !t.Known && t.MemoryFree == 0 && t.Load == 0)
+}
+
+// RequestHash binds a durable key to the exact operation and JSON body, not a
+// transport request ID. JSON object keys are sorted, insignificant whitespace
+// removed and numbers retained exactly; optional extensions participate too.
+func RequestHash(m Message) (string, error) {
+	if m.Kind != "request" || !operations[m.Op].Durable {
+		return "", refuse("invalid_message", "not a durable request")
+	}
+	if err := validateBody(m); err != nil {
+		return "", err
+	}
+	var b any
+	d := json.NewDecoder(bytes.NewReader(m.Body))
+	d.UseNumber()
+	if err := d.Decode(&b); err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(struct {
+		Binding   Binding `json:"binding"`
+		Target    *Target `json:"target"`
+		Operation string  `json:"operation"`
+		Body      any     `json:"body"`
+	}{m.Binding, m.Target, m.Op, b})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// CheckReceipt correlates a decoded receipt with the receiver's original
+// durable request. It does not interpret unknown as permission to retry.
+func CheckReceipt(request Message, received Receipt) error {
+	hash, err := RequestHash(request)
+	if err != nil {
+		return err
+	}
+	if !receipt(received) || received.Key != request.Key || received.Operation != request.Op || received.RequestHash != hash {
+		return refuse("key_conflict", "receipt does not match the recorded request")
+	}
+	return nil
+}
+
+// CheckRange correlates a decoded read with the durable ordered read plan.
+func CheckRange(request Read, received Bytes) error {
+	if !byteRange(received) || request.Source != received.Source || request.Order != received.Order || request.Offset != received.Offset || uint64(len(received.Data)) > uint64(request.Limit) {
+		return refuse("invalid_message", "stream range does not match the recorded read")
+	}
+	return nil
+}

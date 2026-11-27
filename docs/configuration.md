@@ -3,6 +3,13 @@
 This is everything hataori reads to configure itself: the instance root, the config file, the files the config points to, environment variables and command-line flags.
 It is written from the code. When the two disagree, the code is right and this file is a bug.
 
+## Worker protocol status
+
+The separately versioned [worker protocol](worker-protocol.md) has an encoding
+and validation foundation. It adds no configuration fields, command, resident
+or SSH connection yet. Local-only operation remains the shipped default;
+worker installation and platform support require the later gates in #956.
+
 ## The instance root
 
 One instance is one directory, its root. hataori reads and writes only under it.
