@@ -107,6 +107,8 @@ session/run is required, **D** means durable acceptance and a receipt reply.
 | `probe` | health | connection | AgentConfig | AgentHealth |
 | `prepare` | host | S,D | Prepare | Receipt |
 | `start` | host | S,D | Start | Receipt |
+| `describe` (since 1.2) | runner | S | Empty | RunMetadata |
+| `bind_workspace` (since 1.2) | runner | S,D | BindWorkspace | Receipt |
 | `stop` | host | S,D | Stop | Receipt |
 | `end_host` (since 1.1) | lifecycle | S,D | Empty | Receipt |
 | `input` | host | S,D | Input | Receipt |
@@ -287,7 +289,9 @@ No control-protocol version or golden file changes with this worker version.
 
 ## Version 1.2 additions
 
-The 1.0 and 1.1 corpora remain immutable. Capability `runner` adds `describe`
+The 1.0 and 1.1 corpora remain immutable. Optional `AgentHealth.config_dir`
+identifies the worker-local configuration for separately keyed health reports;
+it is metadata and never a path to open on the main. Capability `runner` adds `describe`
 (Empty → RunMetadata) and durable `bind_workspace` (BindWorkspace → Receipt).
 `describe` returns adapter codec context only for a run with launch metadata.
 Its path strings are never main-side resource addresses. `Start.effort` and
@@ -297,6 +301,13 @@ refuses before launch unless its adapter proves that it omitted project settings
 confirmed-ended run to a prepared run of the same thread, keeping its inode and
 removing the previous run's handle before a new host can start. Both targets
 must have valid ownership markers; its journal and receipt recover together.
+
+An input or answer refused before its write intent/effect records a durable
+`refused` receipt. Only that correlated receipt proves nothing was written. A
+refusal envelope after an intent or effect is uncertain, and never authorizes
+a blind retry. A new answer attempt key is permitted only after confirmed
+refusal of the previous attempt; unknown and complete attempts keep their
+original request.
 
 The resident now implements `follow` and `read`. Built-in sources are `events`
 and (for terminal agents) `terminal`; other source IDs are `file-` followed by

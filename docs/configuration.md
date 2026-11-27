@@ -693,7 +693,7 @@ Main routing/placement remains #962 and later work; macOS support remains #969.
 ## Machine session I/O
 
 Worker protocol 1.2 adds resident reads, retained source handles, codec metadata,
-owner attachment and same-directory run rebinding. Public protocol 3.43 adds
+owner attachment and same-directory run rebinding. Public protocol 3.44 adds
 `AttachWorker` and the `machine` / `io_paused` summary fields. Local
 `Attachment.socket` and `Limits` semantics are unchanged: `Limits` remains the
 local agent summary, while worker windows stay separately sourced by machine,
