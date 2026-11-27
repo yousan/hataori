@@ -44,6 +44,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build the tmux version under test
+        id: tmux-build
         run: |
           set -eu
           if ! pkg-config --exists libevent ncurses || ! command -v bison >/dev/null; then
@@ -62,3 +63,46 @@ jobs:
           set -eu
           tmux -V
           go test -timeout 150m -count="$TEST_COUNT" -run "$TEST_NAMES" ./internal/holder/tmux
+      - name: Test host terminal inputs
+        if: ${{ !cancelled() && steps.tmux-build.outcome == 'success' && !matrix.tests }}
+        run: go test -timeout 150m -count="$TEST_COUNT" -run "$TEST_NAMES" ./internal/hostterm
+      - name: Check the split test rejects inherited remain-on-exit
+        if: ${{ !cancelled() && steps.tmux-build.outcome == 'success' && matrix.version == '3.8' }}
+        run: |
+          set -eu
+          source=internal/holder/tmux/started.go
+          cp "$source" "$RUNNER_TEMP/started-before-mutant.go"
+          trap 'cp "$RUNNER_TEMP/started-before-mutant.go" "$source"' EXIT
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          p = Path("internal/holder/tmux/started.go")
+          s = p.read_text()
+          before = '"set-option -w -u -t " + r.Pane + " remain-on-exit"'
+          after = '"set-option -w -t " + r.Pane + " remain-on-exit on"'
+          assert s.count(before) == 1
+          p.write_text(s.replace(before, after))
+          PYTHON
+          if go test -timeout 2m -run '^TestStartInASessionWithAPersonsWindow$' ./internal/holder/tmux > "$RUNNER_TEMP/split-mutant.log" 2>&1; then
+            cat "$RUNNER_TEMP/split-mutant.log"
+            echo "Split test accepted inherited remain-on-exit"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/split-mutant.log"
+          grep -q 'panes after the second stop' "$RUNNER_TEMP/split-mutant.log"
+      - name: Repeat the split test with two concurrent copies
+        if: ${{ !cancelled() && steps.tmux-build.outcome == 'success' && !matrix.tests }}
+        run: |
+          set -eu
+          pids=""
+          for copy in 1 2 3; do
+            go test -timeout 10m -count=30 -run '^TestStartInASessionWithAPersonsWindow$' ./internal/holder/tmux > "$RUNNER_TEMP/split-$copy.log" 2>&1 &
+            pids="$pids $!"
+          done
+          failed=0
+          for pid in $pids; do
+            wait "$pid" || failed=1
+          done
+          for copy in 1 2 3; do
+            cat "$RUNNER_TEMP/split-$copy.log"
+          done
+          exit "$failed"
