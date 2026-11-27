@@ -1275,10 +1275,11 @@ body {
 
 /* The text columns (title, agent and model, branch, last output) share
    what the other columns leave and are cut with an ellipsis, so the table
-   fits its pane whenever the other columns do (max-width: 0 lets a cell of
-   a table 100% wide shrink below its text); the tooltip has the whole
+   can shrink below its text (max-width: 0 on a cell of a table 100% wide);
+   the tooltip has the whole
    value. Agent and model, branch and last output each keep about 12
-   characters; the title gets what is left. */
+   characters; the title gets what is left, with a 16-character minimum.
+   The pane scrolls when those minimum widths no longer fit. */
 .all-threads td[data-col="title"],
 .all-threads td[data-col="agent"],
 .all-threads td[data-col="branch"],
@@ -1290,6 +1291,7 @@ body {
 
 .all-threads [data-col="title"] {
   width: 70%;
+  min-width: calc(16ch + 16px);
 }
 
 .all-threads td[data-col="agent"],
