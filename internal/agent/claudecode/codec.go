@@ -654,8 +654,8 @@ const DefaultInputTimeout = 30 * time.Second
 //
 // With input still held back, for the screen or for the MCP servers, or
 // whose paste was refused, there is nothing in the CLI to stop, and no
-// transcript will say anything: the turn that the oldest of it was to start
-// ends here, and it is not written.
+// transcript will say anything. End all safely unsubmitted inputs, including
+// the one that opened the current session turn; none may run after the Stop.
 //
 // While an Enter is owed the CLI holds the text, and has no turn to stop: a
 // later Tick presses the Enter, as the next input would be submitted with it.
@@ -665,15 +665,17 @@ func (c *codec) Interrupt() Actions {
 	if !c.running && c.holdsBox() {
 		return Actions{NotInterrupted: true}
 	}
-	if !c.running && c.sent == nil && len(c.queue) > 0 {
-		q := c.queue[0]
-		c.queue = c.queue[1:]
-		return c.number(c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: q.id})))
-	}
-	if !c.running && c.sent != nil && c.sent.refused {
-		id := c.sent.id
-		c.sent = nil // a Tick writes the next
-		return c.number(c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: id})))
+	if !c.running && (c.sent == nil || c.sent.refused) && (c.sent != nil || len(c.queue) > 0) {
+		var a Actions
+		if c.sent != nil {
+			a = c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: c.sent.id}))
+			c.sent = nil
+		}
+		for _, q := range c.queue {
+			a = merge(a, c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Interrupted, Input: q.id})))
+		}
+		c.queue = nil
+		return c.number(a)
 	}
 	if !c.running && c.sent != nil && c.sent.owed {
 		return Actions{NotInterrupted: true}
