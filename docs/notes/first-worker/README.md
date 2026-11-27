@@ -5,6 +5,8 @@ listed focused tests, serially with `GOMAXPROCS=1`, `-p 1` and `-parallel 1`.
 The normal Linux/macOS CI suite also runs these tests. It starts no tmux or
 service manager. All databases, repositories, SSH keys/configuration, Unix
 sockets and foreground/detached processes belong to temporary fixtures.
+[Fixture process ownership](cleanup.md) describes the separate SSH creator,
+main-restart/failure exit barriers and foreign-identity guards.
 
 ## Acceptance mapping
 
@@ -24,9 +26,11 @@ sockets and foreground/detached processes belong to temporary fixtures.
 
 `python3 docs/notes/first-worker/gate.py --mutations` removes one product guard
 at a time in a disposable development checkout and restores every source in
-`finally`. Its three regressions use the complete main/SSH/worker fixture:
+`finally`. Its three product regressions use the complete main/SSH/worker fixture:
 operation deduplication, catch-up-before-dispatch and current worker removal
-proof. `negative-guards.json` records the observed failing assertions.
+proof. Four additional fixture mutations prove creator ownership, child exit
+waiting, generation quiescence and parent binding. `negative-guards.json`
+records the observed failing assertions.
 Compilation failures, whole-test timeouts and skipped tests do not count as
 proof. The observed input-dedup mutation reached the faulted write/recovery
 phase and failed the original-turn count assertion; the catch-up mutation

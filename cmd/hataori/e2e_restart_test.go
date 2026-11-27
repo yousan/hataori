@@ -28,10 +28,11 @@ import (
 
 type procRoot struct {
 	*chatRoot
-	svc    *service
-	daemon *exec.Cmd
-	log    *bytes.Buffer
-	logMu  *sync.Mutex
+	svc        *service
+	daemon     *exec.Cmd
+	log        *bytes.Buffer
+	logMu      *sync.Mutex
+	afterStart func(*exec.Cmd)
 }
 
 // newProcRoot is newChatRoot, with the chat service behind the bridge.
@@ -73,6 +74,9 @@ func (p *procRoot) start(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.daemon = cmd
+	if p.afterStart != nil {
+		p.afterStart(cmd)
+	}
 	eventually(t, "the daemon to serve", 15*time.Second, func() bool {
 		c, err := wire.Dial(p.root)
 		if err == nil {

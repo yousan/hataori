@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -40,11 +39,12 @@ type firstWorker struct {
 	cancel  context.CancelFunc
 	done    chan error
 	boot    atomic.Uint64
+	ssh     *firstWorkerSSHOwner
 }
 
-// firstWorkerSSH owns every key/config and a foreground server PID. Missing
+// firstWorkerSSH owns every key/config, SSH client and connection process. Missing
 // prerequisites fail this gate rather than silently skipping a platform.
-func firstWorkerSSH(t *testing.T) string {
+func firstWorkerSSH(t *testing.T) (string, *firstWorkerSSHOwner) {
 	t.Helper()
 	ssh, err := exec.LookPath("ssh")
 	if err != nil {
@@ -84,7 +84,6 @@ func firstWorkerSSH(t *testing.T) string {
 		t.Fatal(err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
 	write("server.conf", strings.Join([]string{
 		fmt.Sprintf("ListenAddress 127.0.0.1:%d", port),
 		"HostKey " + filepath.Join(dir, "host"),
@@ -92,37 +91,39 @@ func firstWorkerSSH(t *testing.T) string {
 		"PidFile " + filepath.Join(dir, "server.pid"),
 		"UsePAM no", "PasswordAuthentication no", "KbdInteractiveAuthentication no",
 		"PubkeyAuthentication yes", "StrictModes no", "LogLevel ERROR",
-		"PermitUserEnvironment no", "AllowAgentForwarding no", "X11Forwarding no",
+		"PermitUserEnvironment no", "AllowAgentForwarding no", "X11Forwarding no", "MaxSessions 0",
 	}, "\n")+"\n", 0600)
 	log, err := os.OpenFile(filepath.Join(dir, "server.log"), os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(server, "-D", "-e", "-f", filepath.Join(dir, "server.conf"))
-	command.Stderr = log
-	if err := command.Start(); err != nil {
+	broker, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(dir, "broker.sock"), Net: "unix"})
+	if err != nil {
+		listener.Close()
 		log.Close()
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- command.Wait() }()
+	broker.SetUnlinkOnClose(false)
+	brokerInfo, err := os.Lstat(broker.Addr().String())
+	if err != nil {
+		broker.Close()
+		listener.Close()
+		log.Close()
+		t.Fatal(err)
+	}
+	owner := &firstWorkerSSHOwner{brokerInfo: brokerInfo, processes: newFirstWorkerProcesses(), ssh: ssh, config: filepath.Join(dir, "client.conf"), token: firstWorkerToken(), socket: broker.Addr().String(), broker: broker, listener: listener.(*net.TCPListener), connections: map[net.Conn]bool{}, masters: map[string]*firstWorkerMaster{}}
+	birth, ended, err := firstWorkerBirth(os.Getpid())
+	if err != nil || ended {
+		t.Fatal("fixture owner identity unavailable")
+	}
+	owner.cli = firstWorkerIdentity{os.Getpid(), birth}
 	t.Cleanup(func() {
-		command.Process.Signal(syscall.SIGTERM)
-		select {
-		case <-done:
-		case <-time.After(2 * time.Second):
-			command.Process.Kill()
-			<-done
+		if err := owner.close(); err != nil {
+			t.Error(err)
 		}
 		log.Close()
 	})
-	eventually(t, "first-worker fixture SSH listener", 10*time.Second, func() bool {
-		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
-		if err == nil {
-			c.Close()
-		}
-		return err == nil
-	})
+	owner.serve(server, filepath.Join(dir, "server.conf"), log)
 	public, err = os.ReadFile(filepath.Join(dir, "host.pub"))
 	if err != nil {
 		t.Fatal(err)
@@ -139,19 +140,20 @@ func firstWorkerSSH(t *testing.T) string {
 	if err := os.Mkdir(filepath.Join(dir, "bin"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	write("bin/ssh", "#!/bin/sh\nexec "+quoteSh(ssh)+" -F "+quoteSh(filepath.Join(dir, "client.conf"))+" \"$@\"\n", 0700)
-	return filepath.Join(dir, "bin")
+	write("bin/ssh", "#!/bin/sh\nexec "+quoteSh(os.Args[0])+" first-worker-ssh "+quoteSh(owner.socket)+" "+quoteSh(owner.token)+" \"$@\"\n", 0700)
+	return filepath.Join(dir, "bin"), owner
 }
 
 func newFirstWorker(t *testing.T, configure ...func(*fake.Config)) *firstWorker {
 	t.Helper()
-	bin := firstWorkerSSH(t)
+	bin, ssh := firstWorkerSSH(t)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_TERMINAL_PROMPT", "0")
-	f := &firstWorker{t: t, root: filepath.Join(shortDir(t), "worker"), repo: bareRepo(t)}
+	f := &firstWorker{t: t, ssh: ssh, root: filepath.Join(shortDir(t), "worker"), repo: bareRepo(t)}
 	f.boot.Store(1)
+	ssh.remote = worker.SocketPath(f.root)
 	f.main = newProcRoot(t, func(cfg map[string]any) {
 		cfg["machine_away_grace"] = "25ms"
 		cfg["owner"] = "owner"
@@ -166,6 +168,7 @@ func newFirstWorker(t *testing.T, configure ...func(*fake.Config)) *firstWorker 
 			{"key": "build", "ssh": "first-worker", "root": f.root, "agents": []string{"fake"}, "max_resident": 2},
 		}
 	})
+	f.main.afterStart = func(cmd *exec.Cmd) { ssh.setMain(cmd.Process.Pid) }
 	limits := fakesurface.DefaultLimits
 	limits.Commands = true
 	f.main.driver.SetLimits(limits)
@@ -217,7 +220,16 @@ func newFirstWorker(t *testing.T, configure ...func(*fake.Config)) *firstWorker 
 	}
 	f.startResident()
 	t.Cleanup(func() {
+		records := f.ssh.processes.snapshot()
+		children, err := firstWorkerDescendants(records)
+		f.ssh.recordError(err)
 		f.main.stopDaemon()
+		if err := f.ssh.close(); err != nil {
+			t.Error(err)
+		}
+		if err := firstWorkerWaitExit(records, children); err != nil {
+			t.Error(err)
+		}
 		killSessions(f.root) // Only PID identity records in this fixture's worker root.
 		f.stopResident()
 		if t.Failed() {
@@ -237,6 +249,9 @@ func newFirstWorker(t *testing.T, configure ...func(*fake.Config)) *firstWorker 
 		err := db.QueryRow(`SELECT count(*) FROM machine_health h JOIN machine_agent_health a ON a.machine=h.machine WHERE h.machine='build' AND h.reconciled=1 AND a.agent='fake' AND a.state='logged_in'`).Scan(&ready)
 		return err == nil && ready == 1
 	})
+	if _, err := firstWorkerDescendants(ssh.processes.snapshot()); err != nil {
+		t.Fatal(err)
+	}
 	return f
 }
 
@@ -301,7 +316,7 @@ func TestFirstWorkerPlacementChatAndDirectoryOwnership(t *testing.T) {
 	if len(before) != 2 {
 		t.Fatalf("actual worker directories: %d", len(before))
 	}
-	p.restart(t)
+	f.restart()
 	f.sameWorkspaces(before)
 	for _, root := range []string{f.root, p.root} {
 		var databases []string
