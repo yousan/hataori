@@ -11,11 +11,30 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
 )
+
+func TestWorkerAttachmentRefusesOldDaemonBeforeSending(t *testing.T) {
+	var sent atomic.Bool
+	path := fakeDaemon(t, "3.42", func(message) []string { sent.Store(true); return nil })
+	c, err := dialPath(path, Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := c.AttachWorker(ctx, 1); err == nil || !strings.Contains(err.Error(), "3.44") {
+		t.Fatalf("compatibility refusal: %v", err)
+	}
+	if sent.Load() {
+		t.Fatal("sent a remote attachment to an incompatible daemon")
+	}
+}
 
 // Major versions must be equal; minor versions may differ.
 func TestVersions(t *testing.T) {

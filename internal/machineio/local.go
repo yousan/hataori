@@ -46,7 +46,7 @@ func (l *Local) path(name string) string {
 }
 
 func (l *Local) Source(ctx context.Context, name string) (Source, error) {
-	f, err := os.Open(l.path(name))
+	f, err := os.OpenFile(l.path(name), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return Source{}, readError(err)
 	}
@@ -72,7 +72,7 @@ func (l *Local) Read(ctx context.Context, src Source, off int64, limit int) (Ran
 	if off < 0 || limit <= 0 || limit > MaxRead {
 		return Range{}, fmt.Errorf("session read: invalid range")
 	}
-	f, err := os.Open(l.path(src.Name))
+	f, err := os.OpenFile(l.path(src.Name), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return Range{}, readError(err)
 	}

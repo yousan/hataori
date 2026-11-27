@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -29,7 +30,7 @@ func SocketPath(root string) string {
 
 func (r *Resident) Hello() workerproto.Hello {
 	return workerproto.Hello{Version: workerproto.Version, Binding: r.binding,
-		Capabilities: []string{"health", "host", "receipts", "lifecycle", "workspace", "transfer"}, Required: []string{"receipts", "lifecycle"}}
+		Capabilities: []string{"health", "host", "receipts", "lifecycle", "workspace", "transfer", "runner", "replay", "terminal"}, Required: []string{"receipts", "lifecycle"}}
 }
 
 func (r *Resident) Listen() (string, error) {
@@ -197,6 +198,14 @@ func (r *Resident) serveConnection(ctx context.Context, c *net.UnixConn) {
 		c.SetReadDeadline(time.Now().Add(60 * time.Second))
 		data, err := readFrame(reader)
 		if err != nil {
+			return
+		}
+		var route struct {
+			Op string `json:"op"`
+		}
+		json.Unmarshal(data, &route)
+		if route.Op == "attach" {
+			r.serveAttachment(ctx, c, reader, connection, data)
 			return
 		}
 		reply := r.Dispatch(ctx, connection, data)

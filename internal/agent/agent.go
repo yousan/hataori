@@ -85,6 +85,14 @@ type WorkerAdapters interface {
 	ForWorker() Adapter
 }
 
+// FollowSources identifies files actually named by one line from this
+// session's agent. The resident calls it on its own retained output, never on
+// a path supplied by the main. It grants only read handles for this run.
+// Implementations do no I/O and use the same captured format as their codec.
+type FollowSources interface {
+	FollowSources(Source, []byte) []string
+}
+
 // Health is the result of Probe.
 type Health struct {
 	Installed bool

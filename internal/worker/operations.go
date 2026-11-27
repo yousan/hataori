@@ -89,6 +89,28 @@ func (r *Resident) Dispatch(ctx context.Context, c *workerproto.Connection, data
 			return deny("not_found", "agent configuration is not registered")
 		}
 		return finish(r.probe(ctx, key))
+	case "describe":
+		info, refusal := r.describe(ctx, *m.Target)
+		if refusal != nil {
+			return deny(refusal.Code, refusal.Message)
+		}
+		return finish(info)
+	case "follow":
+		var b workerproto.Follow
+		json.Unmarshal(m.Body, &b)
+		source, refusal := r.followSource(*m.Target, b.Source)
+		if refusal != nil {
+			return deny(refusal.Code, refusal.Message)
+		}
+		return finish(source)
+	case "read":
+		var b workerproto.Read
+		json.Unmarshal(m.Body, &b)
+		result, refusal := r.readSource(*m.Target, b)
+		if refusal != nil {
+			return deny(refusal.Code, refusal.Message)
+		}
+		return finish(result)
 	case "inspect":
 		var b workerproto.Workspace
 		json.Unmarshal(m.Body, &b)
@@ -113,7 +135,7 @@ func (r *Resident) Dispatch(ctx context.Context, c *workerproto.Connection, data
 			return deny("not_found", "operation receipt is not retained")
 		}
 		return finish(rec.Receipt)
-	case "prepare", "start", "end_host", "input", "answer", "clone", "fetch", "remove", "restore", "acknowledge", "purge", "upload":
+	case "prepare", "start", "end_host", "input", "answer", "clone", "fetch", "remove", "restore", "acknowledge", "purge", "upload", "bind_workspace":
 		// All supported effects have a durable receipt, even when a reply is lost.
 	default:
 		return deny("unsupported_operation", "operation is not implemented by this resident")
@@ -134,6 +156,8 @@ func (r *Resident) Dispatch(ctx context.Context, c *workerproto.Connection, data
 	}
 	var refusal *workerproto.Refusal
 	switch m.Op {
+	case "bind_workspace":
+		refusal = r.bindWorkspace(m)
 	case "clone", "fetch", "remove", "restore", "acknowledge", "purge":
 		refusal = r.workspaceOperation(ctx, m)
 	case "upload":
@@ -349,9 +373,9 @@ func (r *Resident) start(ctx context.Context, m workerproto.Message) *workerprot
 		return failure("missing", "workspace handle is not registered or its identity changed")
 	}
 	spec := agent.Spec{Dir: workspace, StateDir: r.hostDir(run.Target), Model: b.Model, ResumeID: b.Resume,
-		Instructions: run.Instructions, ConfigDir: cfg.ConfigDir, Approvals: agent.AskInChat, NoProjectSettings: cfg.NoProjectSettings}
+		Instructions: run.Instructions, ConfigDir: cfg.ConfigDir, Effort: b.Effort, Approvals: agent.AllowAll, NoProjectSettings: cfg.NoProjectSettings || b.NoProjectSettings}
 	launch, err := r.adapters[b.AgentConfig].Launch(spec)
-	if err != nil || len(launch.Argv) == 0 || cfg.NoProjectSettings && !launch.NoProjectSettings {
+	if err != nil || len(launch.Argv) == 0 || spec.NoProjectSettings && !launch.NoProjectSettings {
 		return failure("denied", "adapter could not build the allowed launch")
 	}
 	// ForWorker already excluded ambient pass_env from probe and launch.
@@ -366,6 +390,8 @@ func (r *Resident) start(ctx context.Context, m workerproto.Message) *workerprot
 		return failure("not_ready", "run already has host launch state")
 	}
 	run.Agent = b.AgentConfig
+	run.Spec, run.Terminal = spec, launch.Terminal
+	run.Turn = "startup"
 	run.Workspace = b.Workspace
 	run.State = "starting"
 	rec, err := r.intent(m)
@@ -460,13 +486,21 @@ func (r *Resident) ended(run *runRecord) bool {
 }
 
 func (r *Resident) write(m workerproto.Message) *workerproto.Refusal {
+	// Only pre-write refusals prove nothing was handed to the host.
+	deny := func(code, message string) *workerproto.Refusal {
+		rec, err := r.intent(m)
+		if err != nil {
+			return failure("unavailable", "write refusal could not be recorded")
+		}
+		return r.refuseFile(rec, code, message)
+	}
 	run := r.state.Runs[targetKey(*m.Target)]
 	if run == nil || run.State != "running" {
-		return failure("stale", "run is not running")
+		return deny("stale", "run is not running")
 	}
 	c, err := r.owned(run)
 	if err != nil {
-		return failure("unavailable", "owned host cannot be checked")
+		return deny("unavailable", "owned host cannot be checked")
 	}
 	defer c.Close()
 	var input workerproto.Input
@@ -476,18 +510,18 @@ func (r *Resident) write(m workerproto.Message) *workerproto.Refusal {
 	} else {
 		json.Unmarshal(m.Body, &answer)
 		if run.Turn != answer.Turn {
-			return failure("stale", "answer names another turn")
+			return deny("stale", "answer names another turn")
 		}
 		calls, err := c.Waiting()
 		if err != nil {
-			return failure("unavailable", "waiting hooks cannot be checked")
+			return deny("unavailable", "waiting hooks cannot be checked")
 		}
 		found := false
 		for _, call := range calls {
 			found = found || call.ID == answer.Request
 		}
 		if !found {
-			return failure("stale", "hook is no longer waiting")
+			return deny("stale", "hook is no longer waiting")
 		}
 	}
 	if m.Op == "input" {

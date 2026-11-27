@@ -24,6 +24,8 @@ var operations = map[string]Operation{
 	"prepare":         {"prepare", "host", true, true, 0},
 	"start":           {"start", "host", true, true, 0},
 	"end_host":        {"end_host", "lifecycle", true, true, 1},
+	"describe":        {"describe", "runner", true, false, 2},
+	"bind_workspace":  {"bind_workspace", "runner", true, true, 2},
 	"stop":            {"stop", "host", true, true, 0},
 	"input":           {"input", "host", true, true, 0},
 	"answer":          {"answer", "host", true, true, 0},
@@ -86,6 +88,7 @@ type AgentConfig struct {
 
 type AgentHealth struct {
 	AgentConfig
+	ConfigDir    string `json:"config_dir,omitempty"` // 1.2, metadata only
 	Installed    bool   `json:"installed"`
 	Login        string `json:"login"`                  // logged_in, logged_out, unknown
 	Installation string `json:"installation,omitempty"` // 1.1: installed, missing, unknown
@@ -129,10 +132,49 @@ type Prepare struct {
 
 type Start struct {
 	AgentConfig
-	Holder    string `json:"holder"`
-	Workspace string `json:"workspace"`
-	Model     string `json:"model,omitempty"`
-	Resume    string `json:"resume,omitempty"` // opaque adapter conversation ID
+	Holder            string `json:"holder"`
+	Workspace         string `json:"workspace"`
+	Model             string `json:"model,omitempty"`
+	Resume            string `json:"resume,omitempty"`              // opaque adapter conversation ID
+	Effort            string `json:"effort,omitempty"`              // 1.2
+	NoProjectSettings bool   `json:"no_project_settings,omitempty"` // 1.2
+}
+
+// RunMetadata carries codec context, never an address on the main. The worker
+// resolves all paths using its registered adapter and owned workspace.
+type RunMetadata struct {
+	AgentConfig
+	Dir               string        `json:"dir"`
+	StateDir          string        `json:"state_dir"`
+	ConfigDir         string        `json:"config_dir"`
+	Model             string        `json:"model,omitempty"`
+	Effort            string        `json:"effort,omitempty"`
+	Resume            string        `json:"resume,omitempty"`
+	Instructions      string        `json:"instructions,omitempty"`
+	NoProjectSettings bool          `json:"no_project_settings"`
+	Terminal          bool          `json:"terminal"`
+	State             string        `json:"state"`
+	Turn              string        `json:"turn,omitempty"`
+	Status            *RunStatus    `json:"status,omitempty"`
+	Waiting           []WaitingHook `json:"waiting"`
+	Attached          int           `json:"attached"`
+	DetachedMS        int64         `json:"detached_ms"`
+}
+
+type RunStatus struct {
+	Exited   bool   `json:"exited"`
+	Code     int    `json:"code"`
+	Signal   string `json:"signal,omitempty"`
+	Stopped  bool   `json:"stopped,omitempty"`
+	StopNote string `json:"stop_note,omitempty"`
+	Error    string `json:"error,omitempty"`
+	Shutdown bool   `json:"shutdown,omitempty"`
+}
+
+type WaitingHook struct {
+	ID      string `json:"id"`
+	AtMS    int64  `json:"at_ms"`
+	Payload []byte `json:"payload"`
 }
 
 type Stop struct {
@@ -214,6 +256,10 @@ type Bytes struct {
 	Next   uint64 `json:"next"`
 	State  string `json:"state"`
 	Data   []byte `json:"data"`
+	Cols   uint16 `json:"cols,omitempty"` // 1.2 attachment output only
+	Rows   uint16 `json:"rows,omitempty"`
+	Reset  bool   `json:"reset,omitempty"`
+	Ended  bool   `json:"ended,omitempty"` // explicit host end; EOF alone is link loss
 }
 
 type HistoryRelease struct {
@@ -225,6 +271,11 @@ type Clone struct {
 }
 
 type Workspace struct {
+	Workspace string `json:"workspace"`
+}
+
+type BindWorkspace struct {
+	Previous  Target `json:"previous"`
 	Workspace string `json:"workspace"`
 }
 
@@ -412,6 +463,18 @@ func validateBody(m Message) error {
 			})
 		case "attach":
 			return body(m, func(b Attachment) bool { return identifier(b.Handle) && b.Cols > 0 && b.Rows > 0 })
+		case "describe":
+			return body(m, func(b RunMetadata) bool {
+				if !agent(b.AgentConfig) || !oneOf(b.State, "reserved", "running", "ended", "gone", "unknown") || b.Turn != "" && !identifier(b.Turn) || len(b.Waiting) > 64 || b.Attached < 0 || len(b.Dir) > 4096 || len(b.StateDir) > 4096 || len(b.ConfigDir) > 4096 || len(b.Instructions) > MaxChunk {
+					return false
+				}
+				for _, h := range b.Waiting {
+					if !identifier(h.ID) || h.AtMS < 0 || len(h.Payload) > MaxChunk {
+						return false
+					}
+				}
+				return true
+			})
 		case "follow":
 			return body(m, source)
 		case "read":
@@ -432,7 +495,7 @@ func validateBody(m Message) error {
 		return refuse("invalid_message", "invalid message kind")
 	}
 	switch m.Op {
-	case "health", "inventory", "end_host":
+	case "health", "inventory", "end_host", "describe":
 		return body(m, func(Empty) bool { return true })
 	case "probe":
 		return body(m, agent)
@@ -440,7 +503,7 @@ func validateBody(m Message) error {
 		return body(m, func(b Prepare) bool { return len(b.Instructions) <= MaxChunk && handles(b.Policy...) })
 	case "start":
 		return body(m, func(b Start) bool {
-			return agent(b.AgentConfig) && b.Holder == "own" && identifier(b.Workspace) && len(b.Model) <= 128 && len(b.Resume) <= 256
+			return agent(b.AgentConfig) && b.Holder == "own" && identifier(b.Workspace) && len(b.Model) <= 128 && len(b.Resume) <= 256 && len(b.Effort) <= 128
 		})
 	case "stop":
 		return body(m, func(b Stop) bool { return identifier(b.Turn) })
@@ -468,6 +531,8 @@ func validateBody(m Message) error {
 		return body(m, func(b Clone) bool { return identifier(b.Repository) })
 	case "fetch", "inspect", "remove":
 		return body(m, func(b Workspace) bool { return identifier(b.Workspace) })
+	case "bind_workspace":
+		return body(m, func(b BindWorkspace) bool { return validTarget(b.Previous) && identifier(b.Workspace) })
 	case "restore", "acknowledge", "purge":
 		return body(m, func(b Trash) bool { return identifier(b.Trash) })
 	case "upload":

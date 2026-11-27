@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const Version = "1.1"
+const Version = "1.2"
 
 const (
 	MaxFrame = 1 << 20 // Includes the terminating newline.

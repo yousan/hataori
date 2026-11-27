@@ -278,12 +278,12 @@ func TestWarmAfterASleepGivesOnlyTheWokenAgentsLines(t *testing.T) {
 	if got, want := replayed(), "two h4 h5"; got != want {
 		t.Fatalf("replayed %q, want %q", got, want)
 	}
-	// Without the stored ranges (the query fails), the lines still begin
-	// where the woken agent's do, in the order used before ranges.
+	// Missing replay ordering is an explicit pause; guessing the old source
+	// order could rebuild another codec state and release a wrong answer.
 	if _, err := x.r.Store.DB.Exec(`DROP TABLE session_reads`); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := replayed(), "h4 h5 two"; got != want {
+	if got, want := replayed(), ""; got != want {
 		t.Fatalf("without the ranges, replayed %q, want %q", got, want)
 	}
 }

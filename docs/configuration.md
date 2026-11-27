@@ -128,6 +128,7 @@ configure its allowed agents and admission limits; it cannot have `ssh` or
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `key` | string | required | Stable, unique machine identity: starts with `a`–`z`, then only `a`–`z`, digits and `-`. Case changes and surrounding whitespace are refused. `local` is reserved for the main machine. |
+| `installation` | string | absent | Explicit worker installation ID from `worker init`, required for first contact. The verified handshake pins it durably. A different ID after pinning is refused; removing/re-adding a machine does not replace it. Never set on `local`. |
 | `ssh` | string | required for workers | System OpenSSH destination (`[user@]host` or an SSH configuration alias), without whitespace, options, slashes or port syntax. Configure the port through OpenSSH. Absent for `local`. No SSH connection is made by this foundation. |
 | `root` | string | required for workers | Canonical absolute POSIX directory on the worker, other than `/`; no `..`, redundant separators or control characters. Never opened or resolved as a path on the main. Absent for `local`. |
 | `agents` | array of strings | all configured adapters | Allowed agent names from `adapters`; unknown or duplicate names are refused. An explicit empty array permits no ordinary starts on the machine. |
@@ -688,3 +689,30 @@ crash/acknowledgment/retention behavior and tested file/journal limits. Transfer
 use session handles, 64 KiB chunks and an 8 MiB per-file maximum; retained receipt
 capacity can limit later uploads without blocking unrelated operations.
 Main routing/placement remains #962 and later work; macOS support remains #969.
+
+## Machine session I/O
+
+Worker protocol 1.2 adds resident reads, retained source handles, codec metadata,
+owner attachment and same-directory run rebinding. Public protocol 3.43 adds
+`AttachWorker` and the `machine` / `io_paused` summary fields. Local
+`Attachment.socket` and `Limits` semantics are unchanged: `Limits` remains the
+local agent summary, while worker windows stay separately sourced by machine,
+agent and login configuration in storage. They are never summed as quota.
+Remote login is optional and is not relayed by this implementation.
+
+Obtain the main's stable registration ID with
+`hataori worker main-id --root MAIN_ROOT` after initializing the main. This
+reads an existing database only. Initialize a separate worker root with that
+ID as described in [worker-resident.md](worker-resident.md), install compatible
+binaries manually, and enter the resulting worker ID in `machines[].installation`.
+The main uses the configured SSH alias and existing local OpenSSH authentication;
+no bot/forge/supervisor credential is copied to the resident.
+
+This is the runner boundary in #962, not the first-worker product gate. Placement
+and away queues follow in #963/#964, and the combined guide/gate is #965.
+Retained history currently has a 64 MiB per-run budget and at most 128 sources;
+exhaustion pauses the session rather than discarding codec reconstruction bytes.
+An owner attachment uses its own connection and ends visibly on loss; it never
+replays raw keys. A new unknown run in its inventory also ends that connection
+conservatively. Actual macOS user-session, login/Keychain and sleep/wake support
+remains gated by #969; isolated fixture tests are not that runtime evidence.

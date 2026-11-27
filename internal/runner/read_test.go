@@ -27,6 +27,11 @@ type reader struct {
 
 func newReader(t *testing.T, codec agent.Codec) *reader {
 	dir := t.TempDir()
+	// The fake creates its transcript before reporting it. Preserve that
+	// ordering: a missing reported source now pauses the entire batch.
+	if err := os.WriteFile(filepath.Join(dir, "transcript.jsonl"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
 	return &reader{t: t, r: &Runner{Log: slog.New(slog.NewTextHandler(io.Discard, nil))},
 		lv: &live{dir: dir, codec: codec, files: map[string]int64{}}}
 }

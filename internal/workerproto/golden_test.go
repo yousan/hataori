@@ -62,10 +62,12 @@ func examples(t *testing.T) map[string]any {
 	fileDigest := hex.EncodeToString(fileSum[:])
 	requests := map[string]any{
 		"health": Empty{}, "inventory": Empty{}, "probe": agentConfig,
-		"prepare":  Prepare{Instructions: "Answer in English.", Policy: []string{"policy-A"}},
-		"end_host": Empty{},
-		"start":    Start{AgentConfig: agentConfig, Holder: "own", Workspace: "workspace-A", Model: "default"},
-		"stop":     Stop{Turn: "turn-A"}, "input": Input{Turn: "turn-A", Data: []byte("Run tests.\n")},
+		"prepare":        Prepare{Instructions: "Answer in English.", Policy: []string{"policy-A"}},
+		"end_host":       Empty{},
+		"describe":       Empty{},
+		"bind_workspace": BindWorkspace{Previous: Target{Thread: 7, Session: "session-old", Run: "run-old"}, Workspace: "workspace-A"},
+		"start":          Start{AgentConfig: agentConfig, Holder: "own", Workspace: "workspace-A", Model: "default"},
+		"stop":           Stop{Turn: "turn-A"}, "input": Input{Turn: "turn-A", Data: []byte("Run tests.\n")},
 		"answer":  Answer{Turn: "turn-A", Request: "request-A", Data: []byte("yes")},
 		"receipt": ReceiptQuery{Operation: "input", Key: "key-input"},
 		"attach":  Attachment{Handle: "attachment-A", Cols: 80, Rows: 24},
@@ -84,6 +86,7 @@ func examples(t *testing.T) map[string]any {
 		"login_cancel": LoginAttempt{Attempt: "attempt-A"},
 	}
 	replies := map[string]any{
+		"describe":  RunMetadata{AgentConfig: agentConfig, Dir: "/worker/workspace", StateDir: "/worker/session", ConfigDir: "", Terminal: true, State: "running", Waiting: []WaitingHook{}},
 		"health":    Health{Boot: "boot-A", Ready: true, Agents: []AgentHealth{{AgentConfig: agentConfig, Installed: true, Login: "logged_in", Installation: "installed"}}, Telemetry: Telemetry{ObservedMS: 1000, ValidMS: 5000, Known: true, MemoryFree: 1024, DiskFree: 2048, Load: 0.5}},
 		"inventory": Inventory{Boot: "boot-A", Complete: true, Hosts: []HostRecord{{Target: target, State: "running", Turn: "turn-A", Hooks: []string{"request-A"}}}},
 		"probe":     AgentHealth{AgentConfig: agentConfig, Installed: true, Login: "logged_out", Installation: "installed"},
