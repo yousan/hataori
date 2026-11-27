@@ -49,7 +49,7 @@ func TestStartRecordsOutputAtLiteralPipePaths(t *testing.T) {
 
 func literalPipePaths(t *testing.T, s *server) (string, string) {
 	t.Helper()
-	root := filepath.Join(s.dir, "root-#{pid}-#-%Y-it's")
+	root := filepath.Join(s.dir, "root-#{pid}-#-%Y-#[red]-it's")
 	dir := filepath.Join(root, "7")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func literalPipePaths(t *testing.T, s *server) (string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(root, "binary-#{pid}-#-%Y")
+	bin := filepath.Join(root, "binary-#{pid}-#-%Y-#[blue]")
 	if err := os.Symlink(self, bin); err != nil {
 		t.Fatal(err)
 	}
