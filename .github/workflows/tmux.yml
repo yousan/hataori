@@ -34,10 +34,25 @@ jobs:
       fail-fast: false
       matrix:
         version: ['3.2', '3.2a', '3.4', '3.8']
+        include:
+          # Start requires >=3.2; these release families exercise the exact
+          # pipe command directly, including versions before that minimum.
+          - version: '3.0a'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.1c'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.3a'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.5a'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.6b'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.7c'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
     env:
       TMUX_VERSION: ${{ matrix.version }}
       TEST_COUNT: ${{ inputs.count || '1' }}
-      TEST_NAMES: ${{ inputs.tests || '.' }}
+      TEST_NAMES: ${{ matrix.tests || inputs.tests || '.' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -47,7 +62,7 @@ jobs:
         run: |
           set -eu
           if ! pkg-config --exists libevent ncurses || ! command -v bison >/dev/null; then
-            sudo apt-get update
+            sudo apt-get -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" -o Dir::Etc::sourceparts="-" update
             sudo apt-get install -y libevent-dev libncurses-dev bison
           fi
           curl -fsSL "https://github.com/tmux/tmux/releases/download/$TMUX_VERSION/tmux-$TMUX_VERSION.tar.gz" -o "$RUNNER_TEMP/tmux.tar.gz"
