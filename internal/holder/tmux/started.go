@@ -312,39 +312,45 @@ func startedProcess(w holder.Window) int {
 // findStarted is find for a window hataori started, whose pane's process is
 // process, when known. Once a person gave the pane a program of their own,
 // with respawn-pane, the pane is theirs, and the agent's window is gone;
-// hataori's log of the pane ends. A respawn without a command runs the agent
+// hataori's log of the pane ends. A PID transition between the two reads is
+// retried a bounded number of times, since an agent may end meanwhile and
+// tmux 3.8 then clears its PID. A respawn without a command runs the agent
 // again, which is still hataori's.
 func (h *Holder) findStarted(ctx context.Context, r ref, process int) (pane, error) {
-	p, err := h.find(ctx, r)
-	if err != nil || p.pid > 0 && (process <= 0 || p.pid == process) || process <= 0 && r.Dir == "" {
-		return p, err
-	}
-	out, err := h.formatted(ctx, r, "list-panes", "-t", r.Pane, "-F", "#{pane_id} #{pane_pid} #{pane_start_command}")
-	if err != nil {
-		return pane{}, err
-	}
-	pid := "" // a dead pane's, since tmux 3.8
-	if p.pid > 0 {
-		pid = strconv.Itoa(p.pid)
-	}
-	for _, l := range strings.Split(string(out), "\n") {
-		started, ok := strings.CutPrefix(l, r.Pane+" "+pid+" ")
-		if !ok {
-			continue
+	var changed error
+	for range makeTries {
+		p, err := h.find(ctx, r)
+		if err != nil || p.pid > 0 && (process <= 0 || p.pid == process) || process <= 0 && r.Dir == "" {
+			return p, err
 		}
-		if runsExec(started, r.Dir) {
-			p.start = started
-			return p, nil
+		out, err := h.formatted(ctx, r, "list-panes", "-t", r.Pane, "-F", "#{pane_id} #{pane_pid} #{pane_start_command}")
+		if err != nil {
+			return pane{}, err
 		}
-		// The pane's pipe is hataori's while one runs: a person's own takes
-		// its place. Left there, it would keep the next start waiting.
-		if r.Dir != "" && host.PipeRuns(r.Dir) {
-			h.tmux(context.WithoutCancel(ctx), r, nil, ifPane(r.Pane, "pipe-pane -t "+r.Pane,
-				fmt.Sprintf("#{==:#{pid},%d}", r.Server), hasProcess(p.pid, started))...)
+		pid := "" // a dead pane's, since tmux 3.8
+		if p.pid > 0 {
+			pid = strconv.Itoa(p.pid)
 		}
-		return pane{}, fmt.Errorf("%w: the pane %s runs process %s, not the agent's %d", errGone, r.Pane, pid, process)
+		for _, l := range strings.Split(string(out), "\n") {
+			started, ok := strings.CutPrefix(l, r.Pane+" "+pid+" ")
+			if !ok {
+				continue
+			}
+			if runsExec(started, r.Dir) {
+				p.start = started
+				return p, nil
+			}
+			// The pane's pipe is hataori's while one runs: a person's own takes
+			// its place. Left there, it would keep the next start waiting.
+			if r.Dir != "" && host.PipeRuns(r.Dir) {
+				h.tmux(context.WithoutCancel(ctx), r, nil, ifPane(r.Pane, "pipe-pane -t "+r.Pane,
+					fmt.Sprintf("#{==:#{pid},%d}", r.Server), hasProcess(p.pid, started))...)
+			}
+			return pane{}, fmt.Errorf("%w: the pane %s runs process %s, not the agent's %d", errGone, r.Pane, pid, process)
+		}
+		changed = fmt.Errorf("tmux: the pane %s changed as it was looked at: %.200q", r.Pane, out)
 	}
-	return pane{}, fmt.Errorf("tmux: the pane %s changed as it was looked at: %.200q", r.Pane, out)
+	return pane{}, changed
 }
 
 // reapWait bounds the wait for tmux to reap a process that ended.
