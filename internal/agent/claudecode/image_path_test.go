@@ -17,6 +17,9 @@ func TestImagePathLinesAreText(t *testing.T) {
 			{"Look at these\n/tmp/one.gif /tmp/two.webp", "Look at these\n" + commandPrefix + "/tmp/one.gif /tmp/two.webp"},
 			{"Look at these\n/one.png /tmp/two.webp", "Look at these\n" + commandPrefix + "/one.png /tmp/two.webp"},
 			{"Look at this\n/tmp/escaped.p\\ng", "Look at this\n" + commandPrefix + "/tmp/escaped.p\\ng"},
+			{"Look at this\n\u200b/tmp/example.png", "Look at this\n" + commandPrefix + "\u200b/tmp/example.png"},
+			{"Look at this\n/tmp/example.p\u200bng", "Look at this\n" + commandPrefix + "/tmp/example.p\u200bng"},
+			{"Look at this\n/tmp/example.png\u200b", "Look at this\n" + commandPrefix + "/tmp/example.png\u200b"},
 		} {
 			got := c.pasteText(tt.text)
 			if got != tt.want {
@@ -44,5 +47,14 @@ func TestOrdinaryShellKeepsImagePaths(t *testing.T) {
 		if got := c.pasteText(text); got != text {
 			t.Errorf("shell command %q pasted as %q", text, got)
 		}
+	}
+}
+
+func TestOrdinaryImagePathAfterTerminalSequence(t *testing.T) {
+	c := (&Adapter{}).NewCodec(agent.Spec{}).(*codec)
+	text := "Look at this\n\x1b[31m/tmp/example.png"
+	want := "Look at this\n" + commandPrefix + "\x1b[31m/tmp/example.png"
+	if got := c.pasteText(text); got != want {
+		t.Fatalf("%q pasted as %q, want %q", text, got, want)
 	}
 }

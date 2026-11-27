@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import uuid
 import zlib
 
@@ -42,6 +43,10 @@ TEXTS = [
     ("single_quoted", "Look at this\n'{cwd}/{p} single.png'"),
     ("escaped", "Look at this\n{cwd}/{p}\\ escaped.PNG"),
     ("escaped_extension", "Look at this\n{cwd}/{p}-extension.p\\ng"),
+    ("invisible_before", "Look at this\n\u200b{cwd}/{p}-invisible-before.png"),
+    ("invisible_extension", "Look at this\n{cwd}/{p}-invisible-extension.p\u200bng"),
+    ("invisible_after", "Look at this\n{cwd}/{p}-invisible-after.png\u200b"),
+    ("terminal_sequence", "Look at this\n\x1b[31m{cwd}/{p}-terminal.png"),
     ("jpg", "Look at this\n{cwd}/{p}-image.jpg"),
     ("jpeg", "Look at this\n{cwd}/{p}-image.jpeg"),
     ("gif", "Look at this\n{cwd}/{p}-image.gif"),
@@ -55,7 +60,8 @@ TEXTS = [
 def no_images(text):
     lines = text.split("\n")
     for i, line in enumerate(lines):
-        first = line.strip()
+        visible = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line)
+        first = "".join(c for c in visible if unicodedata.category(c) != "Cf").strip()
         path = first.strip("\"'")
         absolute = path.startswith(("/", "\\")) or len(path) > 2 and path[1] == ":"
         if not absolute and ("/" in path or "\\" in path):
@@ -88,6 +94,8 @@ class World:
             for d, names in ((self.cwd, [p + "-whole.png", p + "-line.png", p + " spaces.PNG", p + " escaped.PNG",
                                          p + " single.png", p + "-extension.png", p + "-image.jpg", p + "-image.jpeg",
                                          p + "-image.gif", p + "-image.webp",
+                                         p + "-invisible-before.png", p + "-invisible-extension.png",
+                                         p + "-invisible-after.png", p + "-terminal.png",
                                          p + "-inside-linked.png", p + "-relative.png", p + "-wake.png"]),
                              (self.out, [p + "-outside.png", p + "-line-outside.png", p + "-one.png", p + "-two.png", p + "-linked.png"])):
                 for name in names:
