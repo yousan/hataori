@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/yousan/hataori/internal/core"
 )
@@ -14,11 +15,13 @@ import (
 // CloneRegistered records the private staging directory and its identity before
 // publication. The caller must durably commit that record before returning nil.
 func (m Maker) CloneRegistered(ctx context.Context, handle, repo string, staged func(string, core.Placement) error) (string, error) {
+	ctx, cancel := m.registeredContext(ctx)
+	defer cancel()
 	if !opaqueName(handle) || staged == nil {
 		return "", errors.New("workspace: registered clone requires handle and journal callback")
 	}
 	return m.cloneStaged(ctx, repo, filepath.Join(m.Root, Dir, handle), nil, func(stage string, p core.Placement) error {
-		if err := syncClone(stage); err != nil {
+		if err := syncClone(ctx, stage); err != nil {
 			return err
 		}
 		if err := syncParents(stage, p.Dir); err != nil {
@@ -30,8 +33,11 @@ func (m Maker) CloneRegistered(ctx context.Context, handle, repo string, staged 
 
 // Persist clone contents before committing their identity. Symlinks are
 // directory entries, never followed; nonregular objects refuse publication.
-func syncClone(path string) error {
+func syncClone(ctx context.Context, path string) error {
 	return filepath.WalkDir(path, func(name string, entry os.DirEntry, err error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err != nil {
 			return err
 		}
@@ -274,6 +280,8 @@ func (r Remover) PurgeRegistered(entry string, p core.Placement) error {
 // FetchRegistered refreshes the worker's non-pruning mirror and the independent
 // checkout from the configured repository, never a main-supplied URL/origin.
 func (m Maker) FetchRegistered(ctx context.Context, dir, repository string) error {
+	ctx, cancel := m.registeredContext(ctx)
+	defer cancel()
 	if err := CheckAddress(repository); err != nil {
 		return err
 	}
@@ -289,5 +297,15 @@ func (m Maker) FetchRegistered(ctx context.Context, dir, repository string) erro
 	if command.Run() != nil {
 		return errors.New("workspace: configured repository fetch failed")
 	}
-	return syncClone(gitDir)
+	return syncClone(ctx, gitDir)
+}
+
+// One operation deadline covers mirror work and its checkout/fallback command.
+// The resident lifetime context alone cannot bound a stalled Git transport.
+func (m Maker) registeredContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := m.FetchTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	return context.WithTimeout(ctx, timeout)
 }

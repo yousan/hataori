@@ -2,9 +2,14 @@ package workspace
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/yousan/hataori/internal/core"
 )
@@ -116,5 +121,59 @@ func TestRegisteredCloneNeverReplacesEmptyDirectory(t *testing.T) {
 	after, statErr := os.Stat(target)
 	if statErr != nil || replacement == nil || !os.SameFile(replacement, after) {
 		t.Fatal("clone replacement lost", statErr)
+	}
+}
+
+func TestRegisteredCheckoutFetchHasOperationDeadline(t *testing.T) {
+	x := newRemoval(t)
+	x.git(x.bare, "update-server-info")
+	var refs atomic.Int32
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/info/refs") && refs.Add(1) > 1 {
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+			return
+		}
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/repo.git")
+		http.FileServer(http.Dir(x.bare)).ServeHTTP(w, r)
+	}))
+	defer func() { close(release); server.Close() }()
+	m := x.r.Maker
+	m.FetchTimeout = 3 * time.Second
+	parent, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := m.FetchRegistered(parent, x.clone, server.URL+"/repo.git"); err == nil {
+		t.Fatal("stalled checkout fetch succeeded")
+	}
+	if refs.Load() < 2 {
+		t.Fatal("fixture never reached checkout fetch after successful mirror")
+	}
+	if parent.Err() != nil {
+		t.Fatal("checkout relied on resident lifetime/parent deadline")
+	}
+}
+
+func TestRegisteredFallbackCloneHasOperationDeadline(t *testing.T) {
+	x := newRemoval(t)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer func() { close(release); server.Close() }()
+	m := x.r.Maker
+	m.FetchTimeout = 300 * time.Millisecond
+	parent, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := m.CloneRegistered(parent, "deadline-clone", server.URL+"/repo.git", func(string, core.Placement) error { return nil }); err == nil {
+		t.Fatal("stalled fallback clone succeeded")
+	}
+	if parent.Err() != nil {
+		t.Fatal("fallback clone relied on parent deadline")
 	}
 }

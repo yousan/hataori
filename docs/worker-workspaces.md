@@ -75,7 +75,10 @@ objects. Do not declare a server independent if its objects depend on a root.
 Clones have independent objects, the repository origin, and the existing
 worker-local non-pruning mirror cache. Removing a mirror never removes the
 clone's objects. Fetch explicitly refreshes the configured repository without
-pruning or resetting the checkout. The resident owns its root exclusively;
+pruning or resetting the checkout. Registered clone/fetch share a two-minute
+operation deadline across mirror work and checkout/fallback Git commands; a
+stalled repository cannot retain the resident request lock indefinitely. The
+resident owns its root exclusively;
 this is not a sandbox against another process controlling that same OS account.
 
 Before clone publication the journal records its random handle, staging path,
