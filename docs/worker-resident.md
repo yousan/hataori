@@ -49,8 +49,9 @@ Optional `config_dir` is an absolute, worker-local login configuration directory
 it is never accepted from a protocol request. It selects `CODEX_HOME` for Codex
 and the adapter's login directory for Claude Code. `no_project_settings` demands
 the adapter's policy isolation capability; unsupported adapters refuse launch.
-At most 32 configurations are loaded. Unknown top-level configuration fields
-refuse; no main instance configuration is consulted. An empty agent list is
+At most 32 configurations are loaded. The optional `workspaces` object configures
+[worker-local workspaces and files](worker-workspaces.md). Other unknown
+top-level configuration fields refuse; no main instance configuration is consulted. An empty agent list is
 valid for a health-only resident. Changes require a resident restart.
 
 Worker adapters must implement `agent.WorkerAdapters`: they discard ambient
