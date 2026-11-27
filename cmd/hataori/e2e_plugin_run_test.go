@@ -21,6 +21,8 @@ import (
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/plugin"
+	"github.com/yousan/hataori/internal/surface"
+	fakesurface "github.com/yousan/hataori/internal/surface/fake"
 	"github.com/yousan/hataori/internal/wire"
 )
 
@@ -266,50 +268,73 @@ func TestPluginStartsAndStartsAgain(t *testing.T) {
 	}
 }
 
+// warningDuringShutdown models a successful service post returning just
+// as the daemon stops. The fake has recorded the message before the test
+// observes it; the outbox has not yet recorded the successful reply.
+type warningDuringShutdown struct {
+	*fakesurface.Driver
+	once sync.Once
+}
+
+func (d *warningDuringShutdown) Post(ctx context.Context, conv surface.Conversation, key string, m surface.Message) (surface.MessageRef, error) {
+	ref, err := d.Driver.Post(ctx, conv, key, m)
+	if err == nil && strings.Contains(m.Text, "plugin flaky is stopped") {
+		d.once.Do(func() { <-ctx.Done() })
+	}
+	return ref, err
+}
+
 // A plugin that keeps failing stays stopped after the set number of exits,
 // and the owner is told once in the direct conversation of the login
 // alert: not again when the daemon restarts within the same outage.
 func TestPluginThatKeepsFailingIsToldOnce(t *testing.T) {
-	path, sum := writePlugin(t, "flaky", `echo started >> "$HATAORI_PLUGIN_STATE/starts"; exit 3`)
-	r := newChatRoot(t, func(cfg map[string]any) { cfg["plugins"] = []map[string]any{pluginEntry("flaky", path, sum)} })
-	runnerHook = func(pr *plugin.Runner) { pr.Backoff, pr.Failures = 10*time.Millisecond, 3 }
-	t.Cleanup(func() { runnerHook = nil })
-	dm, _ := r.driver.OpenDirect(nil, e2eOwner)
-	toldIn := func() int {
-		n := 0
-		for _, c := range r.driver.Calls(dm) {
-			if strings.Contains(c.Message.Text, "plugin flaky is stopped") {
-				n++
+	for _, duringPost := range []bool{false, true} {
+		t.Run(fmt.Sprintf("shutdown_during_post=%v", duringPost), func(t *testing.T) {
+			path, sum := writePlugin(t, "flaky", `echo started >> "$HATAORI_PLUGIN_STATE/starts"; exit 3`)
+			r := newChatRoot(t, func(cfg map[string]any) { cfg["plugins"] = []map[string]any{pluginEntry("flaky", path, sum)} })
+			runnerHook = func(pr *plugin.Runner) { pr.Backoff, pr.Failures = 10*time.Millisecond, 3 }
+			t.Cleanup(func() { runnerHook = nil })
+			if duringPost {
+				drivers.Store(r.root, &warningDuringShutdown{Driver: r.driver})
 			}
-		}
-		return n
-	}
-	starts := func() int {
-		b, _ := os.ReadFile(filepath.Join(r.root, "state", "plugins", "flaky", "starts"))
-		return strings.Count(string(b), "started")
-	}
-	logged, stop := pluginDaemon(t, r.root)
-	r.connected(t)
-	eventually(t, "the owner told", 20*time.Second, func() bool { return toldIn() == 1 })
-	if n := starts(); n != 3 {
-		t.Fatalf("started %d times, want 3", n)
-	}
-	if !strings.Contains(logged(), "plugin stays stopped") {
-		t.Fatal("no log line")
-	}
-	stop()
+			dm, _ := r.driver.OpenDirect(nil, e2eOwner)
+			toldIn := func() int {
+				n := 0
+				for _, c := range r.driver.Calls(dm) {
+					if strings.Contains(c.Message.Text, "plugin flaky is stopped") {
+						n++
+					}
+				}
+				return n
+			}
+			starts := func() int {
+				b, _ := os.ReadFile(filepath.Join(r.root, "state", "plugins", "flaky", "starts"))
+				return strings.Count(string(b), "started")
+			}
+			logged, stop := pluginDaemon(t, r.root)
+			r.connected(t)
+			eventually(t, "the owner told", 20*time.Second, func() bool { return toldIn() == 1 })
+			if n := starts(); n != 3 {
+				t.Fatalf("started %d times, want 3", n)
+			}
+			if !strings.Contains(logged(), "plugin stays stopped") {
+				t.Fatal("no log line")
+			}
+			stop()
 
-	logged, stop = pluginDaemon(t, r.root)
-	r.connected(t)
-	eventually(t, "the plugin stopped again", 20*time.Second, func() bool { return strings.Contains(logged(), "plugin stays stopped") })
-	time.Sleep(500 * time.Millisecond) // a second message would be on its way
-	if n := toldIn(); n != 1 {
-		t.Fatalf("the owner was told %d times for one outage", n)
+			logged, stop = pluginDaemon(t, r.root)
+			r.connected(t)
+			eventually(t, "the plugin stopped again", 20*time.Second, func() bool { return strings.Contains(logged(), "plugin stays stopped") })
+			time.Sleep(500 * time.Millisecond) // a second message would be on its way
+			if n := toldIn(); n != 1 {
+				t.Fatalf("the owner was told %d times for one outage; calls: %+v", n, r.driver.Calls(dm))
+			}
+			if n := starts(); n != 6 {
+				t.Fatalf("started %d times over two runs of the daemon, want 6", n)
+			}
+			stop()
+		})
 	}
-	if n := starts(); n != 6 {
-		t.Fatalf("started %d times over two runs of the daemon, want 6", n)
-	}
-	stop()
 }
 
 // A daemon stop leaves no process of any plugin, also of one that ignores

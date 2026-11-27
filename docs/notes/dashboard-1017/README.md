@@ -37,8 +37,8 @@ Only sizing/spacing or overflow containment changes; no new layout structure or 
 
 ## Validation
 
-Pinned Node install/check (173 tests)/build, gofmt, go vet and focused page tests pass. On the baseline, the unbroken question has 1,183 px of content in a 788/370 px answer pane and 1,191 px in a 273 px details card. After the fix, all measured content stays within its container, at both widths/themes and in three split panes. Fresh Codex review found no issues. No local tmux tests.
+Pinned Node 24.22.1: npm ci --ignore-scripts, complete npm check with 173 tests serially (node --test --test-concurrency=1), npm run build; generated page rebuilt after main integration. gofmt, go vet (Go p=1) and focused TestThePage tests (-parallel=1) pass. Sixteen refreshed synthetic captures cover long/ordinary questions, start failure and desktop split layouts at 1440/390 px in both themes; all wrapping geometry checks pass. Baseline-failing evidence is preserved. No local tmux tests.
 
-Fresh independent Codex review: no findings.
+Fresh independent Codex review: landing_review_1017: fresh independent Codex review after current-main integration found no findings; only nine CSS insertions, phone 44 px controls preserved by selector specificity, no action or permission changes.
 
-Concurrency: Open PRs #1028, #1027, #1026, #1013 share styles.css/generated page files; each finding uses a separate source hunk and starts from current main. Old #990 shares CSS but is merged; remote branches were checked before the source edit.
+Concurrency: Resumed existing PR after rechecking open PRs and remote branches. Shared dashboard CSS/generated assets: #1054, #1050, #1047, #1042, #1039, #1035, #1032, #1013. Main fae3fd04 is integrated; previous findings stay on main and only this finding remains in this PR’s diff.

@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.42**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.43**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -1461,6 +1461,18 @@ Since 3.42. An accepted input did not reach the agent. It ends no running turn: 
 | `from` | string | optional | the caller's source, as in `input` |
 | `link` | object | optional | the link it came through, as in `input` |
 | `via` | string | optional | the way it came through, as in `input` |
+
+### Event `input_waiting`
+
+Since 3.43. A terminal handoff has waited longer than the input timeout.
+The input remains pending and its turn stays open. The adapter reports this
+once per waiting input, rather than once per retry. No input text is included.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `session` | integer | required | the session |
+| `input` | string | required | the input's id within the session |
+| `reason` | string | required | why it waits, for a person |
 
 ### Event `input_waits`
 

@@ -1,0 +1,68 @@
+name: tmux compatibility
+
+on:
+  pull_request:
+    paths:
+      - internal/holder/tmux/**
+      - internal/hostterm/**
+      - .github/workflows/tmux.yml
+  push:
+    branches: [main]
+    paths:
+      - internal/holder/tmux/**
+      - internal/hostterm/**
+      - .github/workflows/tmux.yml
+  workflow_dispatch:
+    inputs:
+      count:
+        description: Repetitions of each test
+        default: '1'
+        required: true
+      tests:
+        description: Test name regular expression
+        default: '.'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  tmux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['3.2', '3.2a', '3.4', '3.8']
+    env:
+      TMUX_VERSION: ${{ matrix.version }}
+      TEST_COUNT: ${{ inputs.count || '1' }}
+      TEST_NAMES: ${{ inputs.tests || '.' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build the tmux version under test
+        run: |
+          set -eu
+          if ! pkg-config --exists libevent ncurses || ! command -v bison >/dev/null; then
+            sudo apt-get -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" -o Dir::Etc::sourceparts="-" update
+            sudo apt-get install -y libevent-dev libncurses-dev bison
+          fi
+          curl -fsSL "https://github.com/tmux/tmux/releases/download/$TMUX_VERSION/tmux-$TMUX_VERSION.tar.gz" -o "$RUNNER_TEMP/tmux.tar.gz"
+          tar -xzf "$RUNNER_TEMP/tmux.tar.gz" -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/tmux-$TMUX_VERSION"
+          ./configure --prefix="$RUNNER_TEMP/tmux-install"
+          make -j2
+          make install
+          echo "$RUNNER_TEMP/tmux-install/bin" >> "$GITHUB_PATH"
+      - name: Test the holder
+        run: |
+          set -eu
+          tmux -V
+          go test -timeout 150m -count="$TEST_COUNT" -run "$TEST_NAMES" ./internal/holder/tmux
