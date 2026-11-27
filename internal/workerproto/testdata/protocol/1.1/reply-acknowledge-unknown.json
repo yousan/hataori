@@ -1,0 +1,1 @@
+{"kind":"reply","id":"request-acknowledge","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"acknowledge","key":"key-acknowledge","body":{"operation":"acknowledge","key":"key-acknowledge","request_hash":"dcb5d724c83fcc1a49084733d44c586b93b9469bf7ee92e01a3c166c4dda224a","state":"unknown"}}

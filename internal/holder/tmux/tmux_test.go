@@ -79,7 +79,7 @@ func env() []string {
 // own, and returns the pane's id and its process.
 func (s *server) pane(command string) (string, int) {
 	s.t.Helper()
-	format := "#{pane_id} #{pane_pid}" // -P prints a tab as "_"
+	format := "#{pane_id} #{pane_pid}" + formatEnd // -P prints a tab as "_"
 	var out string
 	if s.n == 0 {
 		out = s.run("new-session", "-d", "-s", "t", "-x", "100", "-y", "30", "-P", "-F", format, command)
@@ -87,7 +87,11 @@ func (s *server) pane(command string) (string, int) {
 		out = s.run("new-window", "-d", "-t", "t:", "-P", "-F", format, command)
 	}
 	s.n++
-	f := strings.Fields(out)
+	whole, ok := strings.CutSuffix(out, formatDone)
+	if !ok {
+		s.t.Fatalf("incomplete new pane format: %q", out)
+	}
+	f := strings.Fields(whole)
 	if len(f) != 2 {
 		s.t.Fatalf("new pane: %q", out)
 	}

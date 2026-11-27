@@ -232,12 +232,12 @@ type pane struct {
 
 // paneFormat is what find asks list-panes for. Spaces between the fields:
 // without -u, tmux may print a tab in a format as "_" (#483). Only the
-// session's name, the last, may hold anything a person chose: without the
-// U+0020, as tmux up to 3.1 prints a newline of it as it is, and what follows
-// must not read as another pane's line. Every other field prints something,
+// session's name, the last, may hold anything a person chose. Spaces and
+// line breaks are replaced so old tmux cannot print a name as another row.
+// Every other field prints something,
 // "-" for nothing: a dead pane may have no terminal any more.
 const paneFormat = "#{pid} #{pane_id} #{?pane_tty,#{pane_tty},-} #{pane_width} #{pane_height} #{?pane_pid,#{pane_pid},-} #{pane_dead} " +
-	"#{?pane_dead,x#{pane_dead_status},-} #{?pane_dead_signal,#{pane_dead_signal},-} #{s/ /_/:session_name}"
+	"#{?pane_dead,x#{pane_dead_status},-} #{?pane_dead_signal,#{pane_dead_signal},-} #{s/[ \r\n]/_/:session_name}"
 
 // parsePane reads one line of list-panes in paneFormat: the server's
 // process id, the pane's id and the pane.
@@ -267,7 +267,7 @@ var errGone = errors.New("tmux: the window is gone")
 // one, and a pane that one listing leaves out is looked up by its id before
 // it counts as gone (#497).
 func (h *Holder) find(ctx context.Context, r ref) (pane, error) {
-	out, err := h.tmux(ctx, r, nil, "list-panes", "-a", "-F", paneFormat)
+	out, err := h.formatted(ctx, r, "list-panes", "-a", "-F", paneFormat)
 	if noServer(err) {
 		return pane{}, serverGone(r)
 	}
@@ -298,7 +298,7 @@ func (h *Holder) find(ctx context.Context, r ref) (pane, error) {
 	// display-message on a pane that has gone exits 0 with its fields
 	// empty, and up to tmux 3.1 says that it cannot find it; on one that is
 	// there it prints the pane's id.
-	out, err = h.tmux(ctx, r, nil, "display-message", "-p", "-t", r.Pane, "#{pane_id}")
+	out, err = h.formatted(ctx, r, "display-message", "-p", "-t", r.Pane, "#{pane_id}")
 	if err != nil && !noPane(err, r.Pane) {
 		return pane{}, err
 	}
@@ -306,6 +306,31 @@ func (h *Holder) find(ctx context.Context, r ref) (pane, error) {
 		return pane{}, fmt.Errorf("tmux: list-panes left out the pane %s, which display-message finds as %q", r.Pane, got)
 	}
 	return pane{}, fmt.Errorf("%w: the server does not have the pane %s, among its %d", errGone, r.Pane, lines)
+}
+
+// formatEnd is expanded last, even when a display has no target pane. A
+// literal alone would still print after tmux's 100 ms format budget expired.
+const formatEnd = " hataori-format-complete=#{==:1,1}"
+const formatDone = " hataori-format-complete=1"
+
+// formatted reads a format in the last argument. A cut answer is unknown,
+// never evidence that a pane disappeared or changed its program. Each line
+// must be complete: silently dropping one could hide the pane being sought.
+func (h *Holder) formatted(ctx context.Context, r ref, args ...string) ([]byte, error) {
+	args[len(args)-1] += formatEnd
+	out, err := h.tmux(ctx, r, nil, args...)
+	if err != nil {
+		return out, err
+	}
+	lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+	for i, line := range lines {
+		var whole bool
+		lines[i], whole = strings.CutSuffix(line, formatDone)
+		if !whole {
+			return nil, fmt.Errorf("tmux: incomplete %s format: %.200q", args[0], out)
+		}
+	}
+	return []byte(strings.Join(lines, "\n") + "\n"), nil
 }
 
 // Encodings of the named keys: tmux's name for each, which send-keys
@@ -340,7 +365,7 @@ func newBuffer() (string, error) {
 //     the other panes too, which are a person's;
 //   - its foreground process changed as the input was handed over, in a
 //     window hataori did not start: a shell would run the text as a command.
-var ErrTakesNoInput = errors.New("tmux: the window's pane takes no input as it is: its program has ended, it is in a mode such as copy mode, its input is off, the window's panes are synchronized, or its foreground process changed")
+var ErrTakesNoInput = errors.New("tmux: the window's pane takes no input as it is: its program has ended, it is in a mode such as copy mode, its input is off, the window's panes are synchronized, or its foreground process changed, or tmux could not finish checking these conditions")
 
 // errNotPasted refuses an Enter whose paste was refused.
 var errNotPasted = errors.New("tmux: the paste before this Enter was not handed over")
@@ -524,7 +549,7 @@ func (h *Holder) takes(ctx context.Context, r ref, w holder.Window) ([]string, e
 	if _, err := look(); err != nil {
 		return nil, err
 	}
-	out, nameErr := h.tmux(ctx, r, nil, "list-panes", "-t", r.Pane, "-F", "#{pane_id} #{pane_pid} #{pane_current_command}")
+	out, nameErr := h.formatted(ctx, r, "list-panes", "-t", r.Pane, "-F", "#{pane_id} #{pane_pid} #{pane_current_command}")
 	p, err := look()
 	if err != nil {
 		return nil, err
@@ -785,7 +810,7 @@ func (h *Holder) CheckTakeIn(ctx context.Context, w holder.Window) error {
 	if _, err := h.foreground(ctx, r, w.Process); err != nil {
 		return err
 	}
-	out, err := h.tmux(ctx, r, nil, "display-message", "-p", "-t", r.Pane, "#{version}")
+	out, err := h.formatted(ctx, r, "display-message", "-p", "-t", r.Pane, "#{version}")
 	if err != nil {
 		return err
 	}

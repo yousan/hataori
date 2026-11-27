@@ -1,0 +1,1 @@
+{"kind":"reply","id":"request-health","binding":{"main":"main-A","worker":"worker-A"},"op":"health","body":{"boot":"boot-A","ready":true,"agents":[{"agent":"fake","config":"default","installed":true,"login":"logged_in"}],"telemetry":{"observed_ms":1000,"valid_ms":5000,"known":true,"memory_free":1024,"load":0.5}}}

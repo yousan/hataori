@@ -29,8 +29,8 @@ Only sizing/spacing or overflow containment changes; no new layout structure or 
 
 ## Validation
 
-Pinned Node install/check (173 tests)/build pass; build committed. Baseline browser target check fails on ordinary 24.19 px and attention 40.98 px rows. All ten fictional thread rows are now 44 px; all three terminal rows are 46.98 px in both languages/themes. Desktop captures confirm unchanged density. gofmt, go vet and focused page tests pass; no local tmux tests.
+Pinned Node check script (all 173 tests, Node test-concurrency=1) and build pass; generated assets rebuilt after integrating current main. gofmt, go vet (Go p=1) and focused page-serving/origin tests (-parallel=1) pass. Baseline row target check fails at 24.19/40.98 px; the integrated fix passes at >=44 px in English/Japanese and both themes. Fresh synthetic captures retain the already-merged filter fix. No local tmux test.
 
-Fresh independent Codex review: no findings.
+Fresh independent Codex review: no findings; a second fresh Codex session reviewed the current-main integration and confirmed phone-only geometry and unchanged roles/actions/permissions.
 
-Concurrency: Open PR #1026 shares styles.css and built page files but changes the phone filter, not row sizing. No other open PR overlaps those files. Old #990 shares CSS but is merged; remote branches were checked before editing.
+Concurrency: Resumed after checking all open PRs and recent remote branches. Remaining design PRs share styles.css/generated assets; #1013 and #1054 share generated assets. Current main 5285fcde is integrated, preserving #1014; the final diff contains only #1015.

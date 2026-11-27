@@ -98,8 +98,8 @@ func TestHookCallWithAServerField(t *testing.T) {
 }
 
 // An interrupt while the input is held back ends its turn and drops it: no
-// key is pressed, and neither the report nor the deadline writes it. What
-// came after it goes as it would have.
+// key is pressed, and neither the report nor the deadline writes it or
+// any input queued after it (#903).
 func TestInterruptOfHeldInput(t *testing.T) {
 	for _, after := range []string{"the report", "the deadline"} {
 		c := awaiting(firstStart(t))
@@ -109,19 +109,22 @@ func TestInterruptOfHeldInput(t *testing.T) {
 		c.Input(agent.Input{ID: "first", Text: firstText})
 		c.Input(agent.Input{ID: "2", Text: "and then"})
 		a := c.Interrupt()
-		if len(a.Keys) != 0 || len(a.Events) != 1 {
-			t.Fatalf("pressed %q, events %+v, want the turn's end alone", a.Keys, a.Events)
+		if len(a.Keys) != 0 || len(a.Events) != 2 {
+			t.Fatalf("pressed %q, events %+v, want both inputs interrupted", a.Keys, a.Events)
 		}
 		if e := a.Events[0]; e.Kind != agent.TurnEnded || e.Status != agent.Interrupted || e.Input != "first" || e.Seq == 0 {
 			t.Fatalf("event %+v, want the turn of the first input interrupted", e)
+		}
+		if e := a.Events[1]; e.Kind != agent.TurnEnded || e.Status != agent.Interrupted || e.Input != "2" {
+			t.Fatalf("second input not interrupted: %+v", e)
 		}
 		if after == "the report" {
 			a = c.Decode(agent.Hook, report("m1", "hataori"))
 		} else {
 			a = c.Tick(now.Add(mcpWait))
 		}
-		if len(a.Keys) != 1 || a.Keys[0] != (agent.Part{Paste: "and then"}) {
-			t.Fatalf("after %s: writes %q, want the second input", after, a.Keys)
+		if len(a.Keys) != 0 {
+			t.Fatalf("after %s: writes stopped input %q", after, a.Keys)
 		}
 		if a := c.Interrupt(); len(a.Keys) != 1 || len(a.Events) != 0 {
 			t.Fatalf("after %s: an interrupt of written input presses %q, events %+v", after, a.Keys, a.Events)
