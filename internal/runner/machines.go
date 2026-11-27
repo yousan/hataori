@@ -9,14 +9,19 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yousan/hataori/internal/agent"
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/holder"
+	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/machineio"
+	"github.com/yousan/hataori/internal/placement"
 	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/workerproto"
 )
@@ -24,6 +29,9 @@ import (
 // RemoteMachine is configured authority, never populated from worker output.
 // Open verifies the pinned binding independently on each new connection.
 type RemoteMachine struct {
+	Status            func() control.MachineAvailability
+	Observe           func(context.Context, string) (placement.Observation, error)
+	Admission         *workerproto.Admission
 	Binding           workerproto.Binding
 	Destination, Root string
 	Open              func(context.Context) (net.Conn, *workerproto.Connection, error)
@@ -35,6 +43,25 @@ func runID() string {
 		panic(err)
 	}
 	return hex.EncodeToString(b[:])
+}
+
+// PlacementEnded never probes a remote path or interprets worker metadata as a
+// local holder. Remote release comes only from bound complete inventory.
+func (r *Runner) PlacementEnded(ctx context.Context, id int64) (bool, error) {
+	remote, err := r.isRemote(ctx, id)
+	if err != nil || remote {
+		return false, err
+	}
+	ids, err := r.priorPlacementSessions(ctx, id, true)
+	if err != nil {
+		return false, err
+	}
+	for _, sid := range ids {
+		if !r.alive(StateDir(r.Root, sid)).Ended() {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (r *Runner) isRemote(ctx context.Context, id int64) (bool, error) {
@@ -113,11 +140,30 @@ func (r *Runner) MakeRemoteWorkspace(ctx context.Context, id int64, repo string)
 	if err := r.prepareRemote(ctx, remote); err != nil {
 		return "", err
 	}
+	var machine string
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT machine FROM session_machine_runs WHERE session_id=?`, id).Scan(&machine); err != nil {
+		return "", err
+	}
+	if r.Remotes[machine].Admission != nil {
+		q, err := remote.Request("resolve_repository", "", workerproto.RepositoryReference{Repository: repo})
+		if err != nil {
+			return "", err
+		}
+		reply, err := remote.Call(ctx, q)
+		if err != nil {
+			return "", err
+		}
+		var ref workerproto.RepositoryReference
+		if err := json.Unmarshal(reply.Body, &ref); err != nil {
+			return "", err
+		}
+		repo = ref.Repository
+	}
 	m, err := remote.Request("clone", "clone-"+remote.Target.Run, workerproto.Clone{Repository: repo})
 	if err != nil {
 		return "", err
 	}
-	effect, err := remote.Effect(ctx, m)
+	effect, err := r.storageEffect(ctx, id, remote, "clone", m.Key, workerproto.Clone{Repository: repo})
 	if err != nil {
 		return "", err
 	}
@@ -149,7 +195,8 @@ func (r *Runner) launchRemote(ctx context.Context, id int64, name string, spec a
 	if confined || spec.Confine != nil {
 		return agent.Spec{}, errors.New("runner: confined sessions must stay local")
 	}
-	if err := r.Store.DB.QueryRowContext(ctx, `SELECT no_project_settings FROM threads WHERE id=?`, int64(thread)).Scan(&spec.NoProjectSettings); err != nil {
+	var machine string
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT no_project_settings,machine FROM threads WHERE id=?`, int64(thread)).Scan(&spec.NoProjectSettings, &machine); err != nil {
 		return agent.Spec{}, err
 	}
 	if err := r.reserveRun(ctx, id); err != nil {
@@ -197,11 +244,11 @@ func (r *Runner) launchRemote(ctx context.Context, id int64, name string, spec a
 			return agent.Spec{}, err
 		}
 	}
-	m, err := remote.Request("start", "start-"+remote.Target.Run, workerproto.Start{AgentConfig: workerproto.AgentConfig{Agent: name, Config: config}, Holder: "own", Workspace: workspace, Model: spec.Model, Effort: spec.Effort, Resume: spec.ResumeID, NoProjectSettings: spec.NoProjectSettings})
+	m, err := remote.Request("start", "start-"+remote.Target.Run, workerproto.Start{Admission: r.Remotes[machine].Admission, AgentConfig: workerproto.AgentConfig{Agent: name, Config: config}, Holder: "own", Workspace: workspace, Model: spec.Model, Effort: spec.Effort, Resume: spec.ResumeID, NoProjectSettings: spec.NoProjectSettings})
 	if err != nil {
 		return agent.Spec{}, err
 	}
-	if _, err := remote.Effect(ctx, m); err != nil {
+	if err := r.startEffect(ctx, id, remote, m); err != nil {
 		return agent.Spec{}, err
 	}
 	metadata, err := remote.Metadata(ctx)
@@ -213,7 +260,7 @@ func (r *Runner) launchRemote(ctx context.Context, id int64, name string, spec a
 	fb, _ := json.Marshal(first)
 	sb, _ := json.Marshal(storedSpec{Agent: name, Spec: spec})
 	err = r.Store.Update(ctx, func(tx *store.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET spec=?,first_input=?,launch=0,host_pid=0 WHERE id=?`, string(sb), string(fb), id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET spec=?,first_input=?,launch=0,host_pid=0,io_error=CASE WHEN io_error=? THEN '' ELSE io_error END WHERE id=?`, string(sb), string(fb), core.ErrPlacementWait.Error(), id); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `UPDATE session_machine_runs SET phase='running' WHERE session_id=? AND run=?`, id, remote.Target.Run)
@@ -693,4 +740,70 @@ func (r *Runner) startRemoteCleanup() {
 			}
 		}
 	}()
+}
+
+// Superseding a conversation never grants room for a second local host. End
+// only this thread's recorded earlier runs and require positive holder proof.
+func (r *Runner) priorPlacementSessions(ctx context.Context, id int64, includeCurrent bool) ([]int64, error) {
+	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id FROM sessions WHERE thread_id=(SELECT thread_id FROM sessions WHERE id=?) AND (id<? OR (? AND id=?)) AND spec!='' ORDER BY id`, id, id, includeCurrent, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var sid int64
+		if err := rows.Scan(&sid); err != nil {
+			return nil, err
+		}
+		ids = append(ids, sid)
+	}
+	return ids, rows.Err()
+}
+func (r *Runner) endPriorPlacements(ctx context.Context, id int64) error {
+	remote, err := r.isRemote(ctx, id)
+	if err != nil || remote {
+		return err
+	}
+	ids, err := r.priorPlacementSessions(ctx, id, false)
+	if err != nil {
+		return err
+	}
+	for _, sid := range ids {
+		if err := r.endEarlier(ctx, sid, StateDir(r.Root, sid)); err != nil {
+			return fmt.Errorf("%w: earlier local host end is unconfirmed", core.ErrPlacementWait)
+		}
+	}
+	return nil
+}
+
+// PlacementRecovered recognizes only the original phase-two host. Its own
+// resource use must not block reconnecting it. Matching the prior run's PID
+// does not prove this new launch happened, even if the old run has ended.
+func (r *Runner) PlacementRecovered(ctx context.Context, id int64) (bool, error) {
+	remote, err := r.isRemote(ctx, id)
+	if err != nil || remote {
+		return false, err
+	}
+	var phase, recorded int
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT launch,host_pid FROM sessions WHERE id=?`, id).Scan(&phase, &recorded); err != nil {
+		return false, err
+	}
+	if phase != 2 {
+		return false, nil
+	}
+	dir := StateDir(r.Root, id)
+	b, err := os.ReadFile(filepath.Join(dir, host.HostPIDFile))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 1 || pid == recorded {
+		return false, nil
+	}
+	l := r.alive(dir)
+	return l.State == holder.Running || l.Ended(), nil
 }

@@ -443,7 +443,7 @@ func (r *Resident) recover() error {
 			} else {
 				rec.Receipt.State = "unknown"
 			} // never stop a later turn on recovery
-		case "clone", "fetch", "remove", "restore", "acknowledge", "purge", "upload":
+		case "clone", "fetch", "remove", "restore", "acknowledge", "purge", "upload", "remake_workspace":
 			if err := r.recoverFileOperation(rec); err != nil {
 				rec.Receipt.State = "unknown"
 				r.ready = false

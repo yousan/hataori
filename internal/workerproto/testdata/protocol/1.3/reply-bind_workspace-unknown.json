@@ -1,0 +1,1 @@
+{"kind":"reply","id":"request-bind_workspace","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"bind_workspace","key":"key-bind_workspace","body":{"operation":"bind_workspace","key":"key-bind_workspace","request_hash":"ee6fc21dbe51e2cc96222e0944c0ee4242727485d3fc52a6d3e9a6a8c69dad88","state":"unknown"}}

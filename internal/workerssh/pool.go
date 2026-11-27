@@ -36,6 +36,7 @@ type Options struct {
 }
 
 type Observation struct {
+	Placement bool
 	Health    workerproto.Health
 	Inventory workerproto.Inventory
 }

@@ -215,6 +215,8 @@ func (f *FrontEnd) show(ctx context.Context) error {
 
 // eventData holds the fields of the event kinds the front end shows.
 type eventData struct {
+	Machine   string   `json:"machine"`
+	Pending   bool     `json:"pending"`
 	Text      string   `json:"text"`
 	Target    int64    `json:"target"`
 	Principal string   `json:"principal"`
@@ -254,6 +256,9 @@ func proposalText(d eventData) string {
 	}
 	if d.Effort != "" {
 		with = append(with, "effort "+d.Effort)
+	}
+	if d.Machine != "" {
+		with = append(with, "machine "+d.Machine)
 	}
 	what := fmt.Sprintf("start a thread in %s", d.Repo)
 	if d.Research {
@@ -364,7 +369,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		}
 		return []Row{f.failedRow(sf, conv, first, repo)}, nil
 	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out", "approval_asked", "approval_answered",
-		"proposal_made", "proposal_answered", "input_failed", "input_waiting":
+		"proposal_made", "proposal_answered", "input_failed", "input_waiting", "placement":
 	default:
 		return nil, nil // a kind the front end does not show, or does not know
 	}
@@ -415,6 +420,14 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		return row(f.questionMessage(d.Request, text, choices, false)), nil
 	case "proposal_answered":
 		return row(surface.Message{Text: proposalDone(d)}), nil
+	case "placement":
+		if d.Pending {
+			return row(surface.Message{Text: "Waiting for machine placement: " + d.Reason}), nil
+		}
+		if d.Reason != "" {
+			return row(surface.Message{Text: d.Reason}), nil
+		}
+		return row(surface.Message{Text: "Placed on machine " + d.Machine + "."}), nil
 	case "thread_created":
 		r.first[e.Thread] = e.Pos
 		r.session[e.Thread] = sessionOf(e)

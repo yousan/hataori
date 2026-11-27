@@ -52,6 +52,9 @@ func (a *api) CloseThread(ctx context.Context, id control.ThreadID) error {
 	if err != nil {
 		return err
 	}
+	if canceled, err := a.c.cancelUnplaced(ctx, id, sid, a.caller.Principal, "waiting start canceled"); err != nil || canceled {
+		return err
+	}
 	// The runner applies the Close, so that nothing the agent reports after
 	// it is read. Which states may be closed is the machine's to decide, in
 	// the same transaction as the change: a thread that is running, waiting
@@ -105,8 +108,12 @@ func (a *api) RemoveThread(ctx context.Context, id control.ThreadID) error {
 // the state change to removed, or removal_refused with the reason.
 func (c *Core) remove(ctx context.Context, id control.ThreadID, principal control.Principal, trigger string) error {
 	defer c.locks.lock(threadLock(id))()
-	if err := c.requireLocalWorkspace(ctx, id); err != nil {
-		return fmt.Errorf("%w: %w", ErrRemovalRefused, err)
+	machine, err := c.workspaceMachine(ctx, id)
+	if err != nil {
+		return err
+	}
+	if machine != store.LocalMachine {
+		return c.removeOnWorker(ctx, id, principal, trigger)
 	}
 	sid, state, err := c.current(ctx, c.Store.DB, id)
 	if err != nil {

@@ -1,0 +1,1 @@
+{"version":"1.3","binding":{"main":"main-A","worker":"worker-A"},"capabilities":["health","host","lifecycle","login","placement","receipts","replay","runner","terminal","transfer","workspace"]}

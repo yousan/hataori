@@ -234,6 +234,7 @@ func (w *Worker) probeContext(parent context.Context, g *generation) error {
 		return err
 	}
 	var observation Observation
+	observation.Placement = stream.Protocol.CanPlace()
 	if json.Unmarshal(reply.Body, &observation.Health) != nil || !observation.Health.Ready {
 		return unavailable(Reconciliation)
 	}

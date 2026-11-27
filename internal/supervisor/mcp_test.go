@@ -122,6 +122,19 @@ func TestClaudeCodeToolsList(t *testing.T) {
 			if names := toolNames(t, r["result"]); !slices.Equal(names, current) {
 				t.Fatalf("tools/list gives %v, want the current tools %v", names, current)
 			}
+			// Keep the external capture immutable. Placement adds exactly one
+			// optional schema property; all previously captured fields match.
+			for _, tool := range r["result"].(map[string]any)["tools"].([]any) {
+				x := tool.(map[string]any)
+				if x["name"] == ToolStart {
+					props := x["inputSchema"].(map[string]any)["properties"].(map[string]any)
+					machine, ok := props["machine"].(map[string]any)
+					if !ok || machine["type"] != "string" {
+						t.Fatal("start lacks typed machine option")
+					}
+					delete(props, "machine")
+				}
+			}
 			a, _ := json.Marshal(r["result"])
 			b, _ := json.Marshal(want[string(id)]["result"])
 			if !bytes.Equal(a, b) {

@@ -252,6 +252,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 			c.LocalAgents = machine.Agents
 		}
 	}
+	configurePlacement(abs, cfg, c, r, grants, adapters)
 	// Also for threads a supervisor started that the config no longer names.
 	c.SupervisorOf = supervisor.StartedBy
 	for _, s := range cfg.Scopes {
@@ -498,6 +499,12 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	}
 	if err := c.Recover(ctx); err != nil {
 		return err
+	}
+	if c.Placement != nil {
+		placeCtx, placeCancel := context.WithCancel(ctx)
+		placeDone := make(chan struct{})
+		defer func() { placeCancel(); <-placeDone }()
+		go func() { defer close(placeDone); c.RunPlacements(placeCtx) }()
 	}
 	// The login relay (section 4.7). It starts flows only once a client of
 	// the owner takes its updates: the chat front end sets Notify.

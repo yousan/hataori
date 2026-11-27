@@ -88,8 +88,12 @@ func openSupervisor(ctx context.Context, q querier, scope string, id control.Thr
 // refusal changes nothing and writes one log line.
 func (c *Core) reopen(ctx context.Context, id control.ThreadID, scope string, principal control.Principal) (control.Reopened, error) {
 	defer c.locks.lock(threadLock(id))()
-	if err := c.requireLocalWorkspace(ctx, id); err != nil {
+	machine, err := c.workspaceMachine(ctx, id)
+	if err != nil {
 		return control.Reopened{}, err
+	}
+	if machine != store.LocalMachine {
+		return c.reopenOnWorker(ctx, id, principal)
 	}
 	// Taken last, after the thread's, as the start of a supervisor's own
 	// thread takes it after its key's: none of the scope starts while this

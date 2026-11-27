@@ -46,6 +46,9 @@ import (
 
 // Runner runs the sessions of one instance. It implements core.Runner.
 type Runner struct {
+	Admit       func(context.Context, int64) error
+	resumeLocks sync.Map
+
 	// heldMu, by state directory, serialises the start, the stop and the
 	// letting go of a held window (startHeld, endHeld); heldSeen is the
 	// last time a held window was seen running, so that tmux is not asked
@@ -295,7 +298,22 @@ func (r *Runner) confinement(ctx context.Context, id int64) (control.ThreadID, s
 
 // Start starts the agent of a new session through a session host. The
 // first input is sent once the agent reports that it is ready.
-func (r *Runner) Start(ctx context.Context, l core.Launch) error {
+func (r *Runner) Start(ctx context.Context, l core.Launch) (result error) {
+	if r.Admit != nil {
+		if err := r.endPriorPlacements(ctx, l.Session); err != nil {
+			return err
+		}
+		if err := r.Admit(ctx, l.Session); err != nil {
+			return err
+		}
+	}
+	defer func() {
+		if result != nil {
+			r.startedMu.Lock()
+			delete(r.started, l.Session)
+			r.startedMu.Unlock()
+		}
+	}()
 	// Once per session in this process: replace may start a session that
 	// Recover finds to launch as well, when a follower of Reconnect
 	// replaces one while Recover runs (#508).
@@ -309,7 +327,7 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 	}
 	spec := agent.Spec{Dir: l.Dir, StateDir: StateDir(r.Root, l.Session), Model: l.Model, Effort: l.Effort,
 		Instructions: r.Instructions, Approvals: agent.AllowAll}
-	first := firstInput{Principal: l.Principal, From: l.From, Key: l.Key, Text: l.Input.Text, Context: l.Context, Link: l.Input.Link,
+	first := firstInput{AcceptedOperation: cmp.Or(l.AcceptedOperation, control.OpStart), Principal: l.Principal, From: l.From, Key: l.Key, Text: l.Input.Text, Context: l.Context, Link: l.Input.Link,
 		Before: l.Input.Before, After: l.Input.After, Via: l.Input.Via, NoInput: l.NoInput}
 	if remote, err := r.isRemote(ctx, l.Session); err != nil {
 		return err
@@ -462,6 +480,11 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		string(sb), string(fb), model, effort, first.Context, first.Context, id); err != nil {
 		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
+	if r.Admit != nil {
+		if err := r.Admit(ctx, id); err != nil {
+			return agent.Spec{}, err
+		}
+	}
 	r.at("before host start")
 	hs := holder.Spec{Argv: launch.Argv, Env: launch.Env, Terminal: launch.Terminal, Dir: spec.Dir, Cols: r.Cols, Rows: r.Rows}
 	if before == 2 {
@@ -481,7 +504,7 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		return agent.Spec{}, err
 	}
 	r.at("after host start")
-	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET host_pid = ?, launch = 0 WHERE id = ?`, w.Process, id); err != nil {
+	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET host_pid = ?, launch = 0, io_error=CASE WHEN io_error=? THEN '' ELSE io_error END WHERE id = ?`, w.Process, core.ErrPlacementWait.Error(), id); err != nil {
 		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
 	return spec, nil
@@ -650,7 +673,19 @@ func (r *Runner) Resume(ctx context.Context, id int64, f core.FirstInput) error 
 // Wake starts the agent of an asleep session again, resuming its
 // conversation, and gives it no input: the session becomes idle.
 func (r *Runner) Wake(ctx context.Context, id int64, principal control.Principal) error {
-	return r.resume(ctx, id, firstInput{Principal: principal, Wake: true, NoInput: true})
+	first := firstInput{AcceptedOperation: control.OpAttach, Principal: principal, Wake: true, NoInput: true}
+	var raw string
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT first_input FROM sessions WHERE id=?`, id).Scan(&raw); err != nil {
+		return err
+	}
+	var accepted firstInput
+	if err := json.Unmarshal([]byte(raw), &accepted); err != nil {
+		return err
+	}
+	if accepted.Wake && accepted.NoInput {
+		first.From, first.Via = accepted.From, accepted.Via
+	}
+	return r.resume(ctx, id, first)
 }
 
 // hostEndWait bounds how long a wake waits for the host of the session's
@@ -748,6 +783,24 @@ func (r *Runner) endEarlier(ctx context.Context, id int64, dir string) error {
 }
 
 func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
+	lock, _ := r.resumeLocks.LoadOrStore(id, &sync.Mutex{})
+	mu := lock.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+	if r.Admit != nil {
+		var launch int
+		if err := r.Store.DB.QueryRowContext(ctx, `SELECT launch FROM sessions WHERE id=?`, id).Scan(&launch); err != nil {
+			return err
+		}
+		if launch == 0 {
+			return nil
+		}
+	}
+	if r.Admit != nil {
+		if err := r.Admit(ctx, id); err != nil {
+			return err
+		}
+	}
 	if remote, err := r.isRemote(ctx, id); err != nil {
 		return err
 	} else if remote {
@@ -2527,7 +2580,7 @@ func (r *Runner) replaceTx(ctx context.Context, tx *store.Tx, lv *live) (*replac
 			return nil, err
 		}
 	}
-	first := firstInput{Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
+	first := firstInput{AcceptedOperation: old.AcceptedOperation, Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
 		Before: old.Before, After: old.After, Via: old.Via, Context: earlier, Dir: dir, NoInput: old.NoInput}
 	fb, _ := json.Marshal(first)
 	now := time.Now().UnixMilli()
@@ -2555,9 +2608,14 @@ func (r *Runner) launchReplacement(rep replacement) {
 	ctx := context.Background()
 	l, first := rep.l, rep.first
 	r.at("after replace")
+	l.AcceptedOperation = first.AcceptedOperation
 	l.Dir, l.Principal, l.From, l.Key, l.Context = first.Dir, first.Principal, first.From, first.Key, first.Context
 	l.Input, l.NoInput = first.Input(), first.NoInput
 	if err := r.Start(ctx, l); err != nil {
+		if errors.Is(err, core.ErrPlacementWait) || r.Admit != nil {
+			_, _ = r.Store.DB.Exec(`UPDATE sessions SET io_error=? WHERE id=?`, "waiting for room on the recorded machine", l.Session)
+			return
+		}
 		r.Log.Error("starting the new session", "session", l.Session, "err", err)
 		if err := r.Machine.Apply(ctx, l.Session, session.Input{Kind: session.Exit, Reason: "start: " + err.Error()}); err != nil {
 			r.Log.Error("recording a failed start", "session", l.Session, "err", err)

@@ -80,7 +80,7 @@ A complete example for one Discord channel and Claude Code, with the owner, one 
 | `effort` | string | empty | The effort of a thread of the default agent (`agent`) whose order, scope and adapter section name none. Empty leaves it to the agent's own default. |
 | `context_bytes` | integer | `8192` | When the agent no longer has a thread's conversation and a new session replaces it, the thread's earlier inputs and final answers are given to the new session, cut to this many bytes. Must be greater than 0. |
 | `login_relay` | boolean | `true` | When turns fail because the agent is logged out, the owner gets one direct message about it. With `true`, hataori also runs the agent's login command, sends the owner the sign-in link, and passes the code the owner replies with back to it, or, for a login that takes no code back (Codex), shows the code to enter on the page. `false` keeps the alert and switches the relay off. |
-| `machines` | array | implicit `local` | Machine configuration and durable identity records (below). Worker execution and scheduling are not available yet. |
+| `machines` | array | implicit `local` | Machine configuration, identity and deterministic admission (below). |
 | `scopes` | array | empty | The channels hataori serves, one object each (below). A channel that is not listed, or not enabled, starts nothing. When a scope is taken out, its threads stay: the owner still reads, stops, closes and removes them, with the `hataori` command and in the dashboard, and nothing starts in them until the scope is back. |
 | `drivers` | object | empty | One section per chat surface, by name. This binary has one: `discord` (below). A name it does not have is refused at start. |
 | `forges` | object | empty | One section per forge, by name. This binary has one: `github` (below). A name this binary does not have is refused at start. |
@@ -129,21 +129,33 @@ configure its allowed agents and admission limits; it cannot have `ssh` or
 |---|---|---|---|
 | `key` | string | required | Stable, unique machine identity: starts with `a`–`z`, then only `a`–`z`, digits and `-`. Case changes and surrounding whitespace are refused. `local` is reserved for the main machine. |
 | `installation` | string | absent | Explicit worker installation ID from `worker init`, required for first contact. The verified handshake pins it durably. A different ID after pinning is refused; removing/re-adding a machine does not replace it. Never set on `local`. |
-| `ssh` | string | required for workers | System OpenSSH destination (`[user@]host` or an SSH configuration alias), without whitespace, options, slashes or port syntax. Configure the port through OpenSSH. Absent for `local`. No SSH connection is made by this foundation. |
+| `ssh` | string | required for workers | System OpenSSH destination (`[user@]host` or an SSH configuration alias), without whitespace, options, slashes or port syntax. Configure the port through OpenSSH. Absent for `local`. The main connects through system OpenSSH to the registered private resident socket. |
 | `root` | string | required for workers | Canonical absolute POSIX directory on the worker, other than `/`; no `..`, redundant separators or control characters. Never opened or resolved as a path on the main. Absent for `local`. |
 | `agents` | array of strings | all configured adapters | Allowed agent names from `adapters`; unknown or duplicate names are refused. An explicit empty array permits no ordinary starts on the machine. |
-| `max_resident` | positive integer | unset | Resident slot admission limit, counting idle/waiting/running agents. Parsed now; enforced by the later placement implementation. |
-| `max_starting` | positive integer | unset | Concurrent starting/reserved slot limit. Parsed now; enforced by later placement. Zero is refused; omit for no limit. |
-| `max_load` | positive finite number | unset | Maximum one-minute load divided by logical CPUs for admitting work. Parsed now; enforced by later placement. |
-| `min_free_memory_bytes` | nonnegative integer | `0` | Required free memory for admitting work. Parsed now; enforced by later placement. |
-| `min_free_disk_bytes` | nonnegative integer | `0` | Required free disk room for admitting work. Parsed now; enforced by later placement. |
+| `max_resident` | positive integer | unset | Resident slot admission limit, counting idle/waiting/running agents. Enforced before placement and immediately before resident launch. |
+| `max_starting` | positive integer | unset | Concurrent starting/reserved slot limit. Enforced before placement and immediately before resident launch. Zero is refused; omit for no limit. |
+| `max_load` | positive finite number | unset | Maximum one-minute load divided by logical CPUs for admitting work. Enforced before placement and immediately before resident launch. |
+| `min_free_memory_bytes` | nonnegative integer | `0` | Required free memory for admitting work. Enforced before placement and immediately before resident launch. |
+| `min_free_disk_bytes` | nonnegative integer | `0` | Required free disk room for admitting work. Enforced before placement and immediately before resident launch. |
 
 `scopes[].machines` restricts ordinary new threads: omitted permits all configured
 machines, `[]` permits none, and a list permits only its named machines. Unknown,
-duplicate or noncanonical references are refused. Until placement ships, new
-ordinary starts run on `local` only when both the scope and its agent allowlist
-permit it; otherwise the start is refused before creating a chat thread or
-workspace. There is no remote fallback or capacity-waiting behavior yet.
+duplicate or noncanonical references are refused. Ordinary placement requires
+ready, identity-verified, reconciled machines, fresh installed/logged-in agent
+health and known resource measurements. Reserved starts and live idle/waiting
+agents count as residents; unknown away hosts retain room until positive end
+proof. Order: largest remaining-slot fraction, lowest normalized load, most
+free memory, then machine key. Zero slot limits are unlimited. An explicit
+`Start.machine` or `/new machine` refuses with its reason when ineligible;
+automatic no-capacity starts wait durably and dispatch oldest first. A chosen
+machine never changes for sleep/wake, replacement, removal or reopen.
+
+The implicit single `local` with no resource/slot limits preserves existing
+single-machine behavior. Configuring another machine or a local limit enables
+admission. Unknown resource telemetry refuses new admission (including the
+currently unsupported Darwin worker memory/load measurements); this is not a
+claim of macOS worker runtime support.
+
 Supervisors, conversations with them and look-ups stay local in their existing
 shared directories, independently of these ordinary-work restrictions. Machine
 configuration adds no person or scope permissions.
@@ -170,13 +182,14 @@ directory, so identical path spellings on two machines stay distinct. The curren
 without summing account allowances. Remote login relay is unavailable; a remote
 outage cannot start a login command on the main.
 
-Tested here: config validation, ordinary-start restrictions, confined local
-identity, binding removal/re-add/refusal, reopen and stale reservation replies,
-separate health/outage/usage keys, and migration of a copy produced by the
-previous store version. SSH transport, resident execution, machine choice,
-capacity enforcement and automatic reconsideration follow in #959–#965. Remote
-login, upgrades, dashboard machine views and full macOS worker conformance are
-later steps of #956. Configuring a worker installs or restarts no service.
+Isolation fixtures cover placement gates/order, durable waiting, reservations,
+bound worker execution and workspace identity guards. CI on Linux and macOS
+checks the code and fixtures; it does not establish real macOS worker runtime
+support. Away actions follow in #964 and the combined first-worker gate in
+#965. Remote login, upgrades, dashboard machine views and full macOS worker
+conformance are later steps of #956. Configuration installs or restarts no
+service and increases no provider quota. A worker requires a compatible manual
+installation, configured repository grants and an existing agent login.
 
 ### `scopes[]`
 

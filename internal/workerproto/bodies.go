@@ -18,37 +18,40 @@ type Operation struct {
 }
 
 var operations = map[string]Operation{
-	"health":          {"health", "health", false, false, 0},
-	"inventory":       {"inventory", "health", false, false, 0},
-	"probe":           {"probe", "health", false, false, 0},
-	"prepare":         {"prepare", "host", true, true, 0},
-	"start":           {"start", "host", true, true, 0},
-	"end_host":        {"end_host", "lifecycle", true, true, 1},
-	"describe":        {"describe", "runner", true, false, 2},
-	"bind_workspace":  {"bind_workspace", "runner", true, true, 2},
-	"stop":            {"stop", "host", true, true, 0},
-	"input":           {"input", "host", true, true, 0},
-	"answer":          {"answer", "host", true, true, 0},
-	"receipt":         {"receipt", "receipts", true, false, 0},
-	"attach":          {"attach", "terminal", true, false, 0},
-	"keys":            {"keys", "terminal", true, false, 0},
-	"resize":          {"resize", "terminal", true, false, 0},
-	"detach":          {"detach", "terminal", true, false, 0},
-	"follow":          {"follow", "replay", true, false, 0},
-	"read":            {"read", "replay", true, false, 0},
-	"history_release": {"history_release", "replay", true, true, 0},
-	"clone":           {"clone", "workspace", true, true, 0},
-	"fetch":           {"fetch", "workspace", true, true, 0},
-	"inspect":         {"inspect", "workspace", true, false, 0},
-	"remove":          {"remove", "workspace", true, true, 0},
-	"restore":         {"restore", "workspace", true, true, 0},
-	"acknowledge":     {"acknowledge", "workspace", true, true, 0},
-	"purge":           {"purge", "workspace", true, true, 0},
-	"upload":          {"upload", "transfer", true, true, 0},
-	"download":        {"download", "transfer", true, false, 0},
-	"login_start":     {"login_start", "login", false, false, 0},
-	"login_input":     {"login_input", "login", false, false, 0},
-	"login_cancel":    {"login_cancel", "login", false, false, 0},
+	"workspace_status":   {"workspace_status", "placement", true, false, 3},
+	"resolve_repository": {"resolve_repository", "placement", true, false, 3},
+	"remake_workspace":   {"remake_workspace", "placement", true, true, 3},
+	"health":             {"health", "health", false, false, 0},
+	"inventory":          {"inventory", "health", false, false, 0},
+	"probe":              {"probe", "health", false, false, 0},
+	"prepare":            {"prepare", "host", true, true, 0},
+	"start":              {"start", "host", true, true, 0},
+	"end_host":           {"end_host", "lifecycle", true, true, 1},
+	"describe":           {"describe", "runner", true, false, 2},
+	"bind_workspace":     {"bind_workspace", "runner", true, true, 2},
+	"stop":               {"stop", "host", true, true, 0},
+	"input":              {"input", "host", true, true, 0},
+	"answer":             {"answer", "host", true, true, 0},
+	"receipt":            {"receipt", "receipts", true, false, 0},
+	"attach":             {"attach", "terminal", true, false, 0},
+	"keys":               {"keys", "terminal", true, false, 0},
+	"resize":             {"resize", "terminal", true, false, 0},
+	"detach":             {"detach", "terminal", true, false, 0},
+	"follow":             {"follow", "replay", true, false, 0},
+	"read":               {"read", "replay", true, false, 0},
+	"history_release":    {"history_release", "replay", true, true, 0},
+	"clone":              {"clone", "workspace", true, true, 0},
+	"fetch":              {"fetch", "workspace", true, true, 0},
+	"inspect":            {"inspect", "workspace", true, false, 0},
+	"remove":             {"remove", "workspace", true, true, 0},
+	"restore":            {"restore", "workspace", true, true, 0},
+	"acknowledge":        {"acknowledge", "workspace", true, true, 0},
+	"purge":              {"purge", "workspace", true, true, 0},
+	"upload":             {"upload", "transfer", true, true, 0},
+	"download":           {"download", "transfer", true, false, 0},
+	"login_start":        {"login_start", "login", false, false, 0},
+	"login_input":        {"login_input", "login", false, false, 0},
+	"login_cancel":       {"login_cancel", "login", false, false, 0},
 }
 
 func Operations() []Operation {
@@ -132,12 +135,21 @@ type Prepare struct {
 
 type Start struct {
 	AgentConfig
-	Holder            string `json:"holder"`
-	Workspace         string `json:"workspace"`
-	Model             string `json:"model,omitempty"`
-	Resume            string `json:"resume,omitempty"`              // opaque adapter conversation ID
-	Effort            string `json:"effort,omitempty"`              // 1.2
-	NoProjectSettings bool   `json:"no_project_settings,omitempty"` // 1.2
+	Admission         *Admission `json:"admission,omitempty"` // 1.3, requires placement capability
+	Holder            string     `json:"holder"`
+	Workspace         string     `json:"workspace"`
+	Model             string     `json:"model,omitempty"`
+	Resume            string     `json:"resume,omitempty"`              // opaque adapter conversation ID
+	Effort            string     `json:"effort,omitempty"`              // 1.2
+	NoProjectSettings bool       `json:"no_project_settings,omitempty"` // 1.2
+}
+
+type Admission struct {
+	MaxResident   int     `json:"max_resident,omitempty"`
+	MaxStarting   int     `json:"max_starting,omitempty"`
+	MaxLoad       float64 `json:"max_load,omitempty"`
+	MinFreeMemory uint64  `json:"min_free_memory,omitempty"`
+	MinFreeDisk   uint64  `json:"min_free_disk,omitempty"`
 }
 
 // RunMetadata carries codec context, never an address on the main. The worker
@@ -284,6 +296,16 @@ type Inspection struct {
 	Identity  string   `json:"identity"`
 	Clean     bool     `json:"clean"` // diagnostic only; removal always reproves
 	Reasons   []string `json:"reasons"`
+}
+
+type WorkspaceStatus struct {
+	Workspace string `json:"workspace"`
+	State     string `json:"state"` // present, trashed, purged; never inferred from absence
+	Trash     string `json:"trash,omitempty"`
+}
+
+type RepositoryReference struct {
+	Repository string `json:"repository"`
 }
 
 type Trash struct {
@@ -433,6 +455,12 @@ func validateBody(m Message) error {
 			})
 		}
 		switch m.Op {
+		case "resolve_repository":
+			return body(m, func(b RepositoryReference) bool { return identifier(b.Repository) })
+		case "workspace_status":
+			return body(m, func(b WorkspaceStatus) bool {
+				return identifier(b.Workspace) && oneOf(b.State, "present", "trashed", "purged") && (b.Trash == "" || identifier(b.Trash))
+			})
 		case "health":
 			return body(m, func(b Health) bool {
 				if !identifier(b.Boot) || !telemetry(b.Telemetry) || len(b.Agents) > 128 {
@@ -503,7 +531,7 @@ func validateBody(m Message) error {
 		return body(m, func(b Prepare) bool { return len(b.Instructions) <= MaxChunk && handles(b.Policy...) })
 	case "start":
 		return body(m, func(b Start) bool {
-			return agent(b.AgentConfig) && b.Holder == "own" && identifier(b.Workspace) && len(b.Model) <= 128 && len(b.Resume) <= 256 && len(b.Effort) <= 128
+			return (b.Admission == nil || b.Admission.MaxResident >= 0 && b.Admission.MaxStarting >= 0 && b.Admission.MaxLoad >= 0 && !math.IsNaN(b.Admission.MaxLoad) && !math.IsInf(b.Admission.MaxLoad, 0)) && agent(b.AgentConfig) && b.Holder == "own" && identifier(b.Workspace) && len(b.Model) <= 128 && len(b.Resume) <= 256 && len(b.Effort) <= 128
 		})
 	case "stop":
 		return body(m, func(b Stop) bool { return identifier(b.Turn) })
@@ -529,7 +557,9 @@ func validateBody(m Message) error {
 		return body(m, func(b HistoryRelease) bool { return b.Retired })
 	case "clone":
 		return body(m, func(b Clone) bool { return identifier(b.Repository) })
-	case "fetch", "inspect", "remove":
+	case "resolve_repository":
+		return body(m, func(b RepositoryReference) bool { return len(b.Repository) > 0 && len(b.Repository) <= 8192 })
+	case "fetch", "inspect", "remove", "workspace_status", "remake_workspace":
 		return body(m, func(b Workspace) bool { return identifier(b.Workspace) })
 	case "bind_workspace":
 		return body(m, func(b BindWorkspace) bool { return validTarget(b.Previous) && identifier(b.Workspace) })

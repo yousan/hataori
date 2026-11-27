@@ -1,0 +1,95 @@
+[
+  {
+    "guard": "ready gate",
+    "command": "go test -p 1 ./internal/placement -run ^TestEveryEligibilityGate/away$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestEveryEligibilityGate (0.00s)",
+      "--- FAIL: TestEveryEligibilityGate/away (0.00s)",
+      "placement_test.go:53: refusal \"\", want \"ready\"",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/placement\t0.003s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "reservation before workspace",
+    "command": "go test -p 1 ./internal/core -run ^TestPlacementConcurrentExplicitStartsReserveBeforeWorkspace$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementConcurrentExplicitStartsReserveBeforeWorkspace (0.14s)",
+      "placement_test.go:97: refusals=0 workspaces=2",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.149s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "original accepted operation",
+    "command": "go test -p 1 ./internal/core -run ^TestPlacementWorkspaceRecordPreservesAcceptedOperation$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementWorkspaceRecordPreservesAcceptedOperation (0.13s)",
+      "placement_test.go:395: workspace rewrite lost accepted operation {\"principal\":\"owner\",\"key\":\"\",\"text\":\"\",\"no_input\":true,\"dir\":\"dir\"}",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.140s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "resident admission",
+    "command": "go test -p 1 ./internal/worker -run ^TestPlacementResidentRechecksEveryLimit$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementResidentRechecksEveryLimit (0.33s)",
+      "--- FAIL: TestPlacementResidentRechecksEveryLimit/resident (0.08s)",
+      "placement_test.go:41: limit admitted start: {\"operation\":\"start\",\"key\":\"limited-start\",\"request_hash\":\"5e89a714760e488000e1d4067f217a274ec2ea1464f12a0a2d350732fdccfdef\",\"state\":\"complete\",\"result\":{\"host\":\"ef409f0c48b780d00b55b7ffb6460fa2\"}}",
+      "--- FAIL: TestPlacementResidentRechecksEveryLimit/starting (0.07s)",
+      "placement_test.go:41: limit admitted start: {\"operation\":\"start\",\"key\":\"limited-start\",\"request_hash\":\"89248e7239a3ac25d0bbbeafa85e30d54c3d81b9a9ddc23b55c6032c2ba5112c\",\"state\":\"complete\",\"result\":{\"host\":\"8eeb0bbd8510a247fb9dbefc121e5a1b\"}}",
+      "--- FAIL: TestPlacementResidentRechecksEveryLimit/load (0.06s)"
+    ]
+  },
+  {
+    "guard": "earlier local holder proof",
+    "command": "go test -p 1 ./internal/runner -run ^TestPlacementLocalPriorUnknownBlocksReplacementAndRelease$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementLocalPriorUnknownBlocksReplacementAndRelease (0.12s)",
+      "placement_test.go:42: unknown prior host admitted replacement <nil>",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.133s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "original phase2 host recovery",
+    "command": "go test -p 1 ./internal/runner -run ^TestPlacementLocalRecoveryUsesOriginalHostBeforeNewAdmission$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementLocalRecoveryUsesOriginalHostBeforeNewAdmission (0.12s)",
+      "placement_test.go:75: original completed host blocked by current resource use waiting for room on the recorded machine: local: machine is not ready",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.134s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "terminal trash history",
+    "command": "go test -p 1 ./internal/worker -run ^TestPlacementRestoredWorkspaceTransfersAndRestarts$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementRestoredWorkspaceTransfersAndRestarts (4.75s)",
+      "placement_test.go:143: worker: invalid trash workspace identity",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/worker\t4.771s",
+      "FAIL"
+    ]
+  }
+]
