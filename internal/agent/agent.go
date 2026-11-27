@@ -184,6 +184,13 @@ type InputRefuser interface {
 	RefuseInput(ids []string, reason Reason) Actions
 }
 
+// HookReconciler withdraws requests whose original waiting host hook expired.
+// The caller supplies only a verified inventory of this session's live hooks,
+// after draining retained output. Native pipe requests do not implement it.
+type HookReconciler interface {
+	ReconcileHooks(waiting []string) Actions
+}
+
 // Actions is what the caller of a Codec does next.
 type Actions struct {
 	Events []Event // for the core

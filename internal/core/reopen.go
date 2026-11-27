@@ -34,6 +34,9 @@ func (a *api) ReopenThread(ctx context.Context, id control.ThreadID) (control.Re
 	if err := a.left(name, scope); err != nil {
 		return control.Reopened{}, err
 	}
+	if err := a.c.requireCheckedMachine(ctx, id); err != nil {
+		return control.Reopened{}, err
+	}
 	return a.c.reopen(ctx, id, scope, a.caller.Principal)
 }
 

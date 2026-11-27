@@ -215,6 +215,7 @@ func (f *FrontEnd) show(ctx context.Context) error {
 
 // eventData holds the fields of the event kinds the front end shows.
 type eventData struct {
+	State     string   `json:"state"`
 	Machine   string   `json:"machine"`
 	Pending   bool     `json:"pending"`
 	Text      string   `json:"text"`
@@ -370,7 +371,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		}
 		return []Row{f.failedRow(sf, conv, first, repo)}, nil
 	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out", "approval_asked", "approval_answered",
-		"proposal_made", "proposal_answered", "input_failed", "input_waiting", "placement":
+		"proposal_made", "proposal_answered", "input_failed", "input_waiting", "placement", "machine_action", "machine_availability":
 	default:
 		return nil, nil // a kind the front end does not show, or does not know
 	}
@@ -429,6 +430,16 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 			return row(surface.Message{Text: d.Reason}), nil
 		}
 		return row(surface.Message{Text: "Placed on machine " + d.Machine + "."}), nil
+	case "machine_action":
+		if d.State == "pending" {
+			return row(surface.Message{Text: d.Reason}), nil
+		}
+		if d.State == "refused" {
+			return row(surface.Message{Text: "Queued machine action refused: " + d.Reason}), nil
+		}
+		return nil, nil
+	case "machine_availability":
+		return nil, nil // one held-action notice per thread/absence reports waiting
 	case "thread_created":
 		r.first[e.Thread] = e.Pos
 		r.session[e.Thread] = sessionOf(e)

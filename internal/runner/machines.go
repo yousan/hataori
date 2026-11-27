@@ -29,6 +29,8 @@ import (
 // RemoteMachine is configured authority, never populated from worker output.
 // Open verifies the pinned binding independently on each new connection.
 type RemoteMachine struct {
+	Failed            func(error)
+	Connection        func() Connection
 	Status            func() control.MachineAvailability
 	Observe           func(context.Context, string) (placement.Observation, error)
 	Admission         *workerproto.Admission
@@ -398,7 +400,21 @@ func (r *Runner) inheritWorkspace(ctx context.Context, id int64, workspace strin
 
 // actRemote persists the exact effect before sending it. The main's written
 // input marker is already durable. Replay rebuilds codecs without this method.
-func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) error {
+func (r *Runner) actRemote(lv *live, a agent.Actions, failed func(bool)) (result error) {
+	if r.AwayEnabled && !r.sessionChecked(lv.id) {
+		return core.ErrMachineUnchecked
+	}
+	defer func() {
+		if result != nil && r.AwayEnabled {
+			key, err := r.sessionMachine(lv.id)
+			if err == nil {
+				if m := r.Remotes[key]; m.Failed != nil {
+					m.Failed(result)
+				}
+			}
+			r.noteRemoteReadFailure(lv)
+		}
+	}()
 	remote, ok := lv.io.(*machineio.Remote)
 	if !ok {
 		return errors.New("runner: remote effect transport is unavailable")
@@ -681,6 +697,9 @@ func (r *Runner) remoteTerminal(ctx context.Context, id int64, run string, after
 // Cleanup retries only the durable current targets of terminal sessions. A
 // disconnected worker never turns Unknown into Gone or grants a local path.
 func (r *Runner) cleanupRemoteSleeper(ctx context.Context, id int64) {
+	if !r.sessionChecked(id) {
+		return
+	}
 	var run string
 	if err := r.Store.DB.QueryRowContext(ctx, `SELECT x.run FROM session_machine_runs x JOIN sessions s ON s.id=x.session_id WHERE s.id=? AND s.state IN ('asleep','closed','failed')`, id).Scan(&run); err != nil {
 		return

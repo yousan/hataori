@@ -46,9 +46,13 @@ import (
 
 // Runner runs the sessions of one instance. It implements core.Runner.
 type Runner struct {
-	Admit            func(context.Context, int64) error
-	RevalidateLaunch func(context.Context, int64) (bool, error)
-	resumeLocks      sync.Map
+	RevalidateInitial func(context.Context, *store.Tx, int64) error
+	RevalidatePending func(context.Context, int64, int64) error
+	AwayEnabled       bool
+	AwayGrace         time.Duration
+	Admit             func(context.Context, int64) error
+	RevalidateLaunch  func(context.Context, int64) (bool, error)
+	resumeLocks       sync.Map
 
 	// heldMu, by state directory, serialises the start, the stop and the
 	// letting go of a held window (startHeld, endHeld); heldSeen is the
@@ -134,18 +138,20 @@ var _ core.Runner = (*Runner)(nil)
 
 // live is a session the runner follows.
 type live struct {
-	id      int64
-	dir     string
-	adapter agent.Adapter
-	spec    agent.Spec
-	codec   agent.Codec
-	client  *host.Client // to the session host: the relay of hook calls, and the first sign that it answers
-	started time.Time
-	ready   bool  // the session left creating; no start check any more
-	resend  bool  // after a reconnect: send a first input that was not confirmed
-	pending bool  // after a reconnect: hand over pending input once the logs are read
-	held    bool  // lv.mu is held from follow until the loop's first step has handed over the pending input
-	upTo    int64 // the last pending input there was at the reconnect; later ones are handed over by their call
+	catchingUp   bool
+	catchupToken string
+	id           int64
+	dir          string
+	adapter      agent.Adapter
+	spec         agent.Spec
+	codec        agent.Codec
+	client       *host.Client // to the session host: the relay of hook calls, and the first sign that it answers
+	started      time.Time
+	ready        bool  // the session left creating; no start check any more
+	resend       bool  // after a reconnect: send a first input that was not confirmed
+	pending      bool  // after a reconnect: hand over pending input once the logs are read
+	held         bool  // lv.mu is held from follow until the loop's first step has handed over the pending input
+	upTo         int64 // the last pending input there was at the reconnect; later ones are handed over by their call
 	// drain is until when the agent, its session asleep, is still read
 	// before it is stopped: an agent may record a turn's last usage after
 	// the turn's end (agent.Event.Late). Zero: not asleep by hataori's hand.
@@ -229,7 +235,7 @@ func (r *Runner) background(ctx context.Context, tx *store.Tx, id int64) (n int,
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
-	if err == nil && outcome == session.Failure && time.Since(time.UnixMilli(updated)) >= r.backgroundWait() {
+	if err == nil && outcome == session.Failure && r.activeAge(ctx, tx, id, time.UnixMilli(updated)) >= r.backgroundWait() {
 		n = 0
 	}
 	return n, reason == session.ReasonInterrupted && by != "", err
@@ -956,6 +962,9 @@ func (r *Runner) skipRest(ctx context.Context, id int64, dir string) error {
 // sleep, has its agent stopped. One launched with another config, and idle,
 // is put to sleep.
 func (r *Runner) Reconnect(ctx context.Context) error {
+	if err := r.observeMachines(ctx); err != nil {
+		return err
+	}
 	r.startRemoteCleanup()
 	if err := r.stopSleepers(ctx); err != nil {
 		return err
@@ -1125,9 +1134,9 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 		rows.Close()
 	}
 	var replies []agent.HookReply
-	if resumed {
+	if resumed && r.beginCatchup(lv) {
 		replies = r.warm(lv)
-		if lv.remote && lv.readErr == nil {
+		if lv.remote && !lv.catchingUp && lv.readErr == nil {
 			if err := r.reconcileMachineActions(lv); err != nil {
 				r.pauseIO(lv, err)
 				lv.warmPending = true
@@ -1135,7 +1144,7 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 		}
 		// Before any new line is read: input written before the restart,
 		// so that the report of it, if it comes, is known for what it is.
-		if lv.readErr == nil {
+		if !lv.catchingUp && lv.readErr == nil {
 			r.handOverWritten(lv)
 		}
 	}
@@ -1335,6 +1344,21 @@ func (r *Runner) setWritten(lv *live, ids []string, written bool, text map[strin
 // host has taken it. One the codec refuses is removed, and its error
 // returned. lv.mu is held.
 func (r *Runner) handOver(lv *live, pending int64, answer bool, f func() (agent.Actions, error)) error {
+	if r.RevalidatePending != nil {
+		if err := r.RevalidatePending(context.Background(), lv.id, pending); err != nil {
+			data, _ := json.Marshal(map[string]any{"action": "pending input", "state": "refused", "reason": "authorization or scope changed; queued delivery was withdrawn"})
+			r.Store.Update(context.Background(), func(tx *store.Tx) error {
+				var id control.ThreadID
+				if e := tx.QueryRowContext(context.Background(), `SELECT thread_id FROM sessions WHERE id=?`, lv.id).Scan(&id); e != nil {
+					return e
+				}
+				_, e := tx.Append(context.Background(), control.Event{Thread: id, Kind: "machine_action", Data: data})
+				return e
+			})
+			r.dropPending(pending)
+			return err
+		}
+	}
 	a, err := f()
 	if err == nil {
 		if err = r.do(lv, a); err != nil && !answer && a.KeysFailed != nil {
@@ -1566,9 +1590,12 @@ func (r *Runner) loop(lv *live) {
 			return
 		}
 		if time.Since(lastTick) >= time.Second && lv.readErr == nil {
+			if !r.sessionChecked(lv.id) || lv.catchingUp {
+				continue
+			}
 			lastTick = time.Now()
 			lv.mu.Lock()
-			r.do(lv, lv.codec.Tick(time.Now()))
+			r.do(lv, lv.codec.Tick(r.codecNow(lv)))
 			lv.mu.Unlock()
 			r.checkIdle(lv)
 		}
@@ -1617,6 +1644,9 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 			lv.ended = true
 		}
 	}()
+	if !r.beginCatchup(lv) {
+		return true
+	}
 	if lv.asleep {
 		return !r.polled(lv.dir).Ended()
 	}
@@ -1626,19 +1656,27 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 		if lv.readErr != nil {
 			return true
 		}
-		if lv.remote {
+		if lv.remote && !lv.catchingUp {
 			if err := r.reconcileMachineActions(lv); err != nil {
 				r.pauseIO(lv, err)
 				return true
 			}
 		}
 		lv.warmPending = false
-		r.handOverWritten(lv)
+		if !lv.catchingUp {
+			r.handOverWritten(lv)
+		}
 	}
 	exited := r.polled(lv.dir).Ended() // looked at before reading, so nothing written before the exit is missed
 	b := r.read(lv)
 	if b.err != nil {
+		if r.confirmedGone(lv) {
+			r.exit(lv)
+			r.finishSessionCatchup(lv)
+			return false
+		}
 		r.pauseIO(lv, b.err)
+		r.noteRemoteReadFailure(lv)
 		lv.warmPending = true
 		return true
 	}
@@ -1687,6 +1725,25 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 			go r.stop(lv.dir, time.Second, 2*time.Second)
 		}
 	}
+	if lv.catchingUp {
+		if err := r.reconcileMachineActions(lv); err != nil {
+			r.pauseIO(lv, err)
+			return true
+		}
+		for _, a := range b.actions {
+			lv.replayReplies = append(lv.replayReplies, a.Reply...)
+		}
+		if !r.finishSessionCatchup(lv) {
+			return true
+		}
+		// Catch-up did not hand a first/pending input over. Reconsider those
+		// only in a fresh read step after every owned session is reconciled.
+		lv.resend = true
+		r.handOverWritten(lv)
+		lv.pending = true
+		r.Store.DB.QueryRow(`SELECT coalesce(max(id),0) FROM pending_inputs WHERE session_id=?`, lv.id).Scan(&lv.upTo)
+		return true
+	}
 	for _, a := range b.actions {
 		r.act(lv, a)
 	}
@@ -1723,7 +1780,7 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 				lv.late = true
 			}
 		}
-		if lv.late || !time.Now().Before(lv.drain) {
+		if lv.late || r.activeAge(context.Background(), r.Store.DB, lv.id, lv.drain.Add(-r.usageDrain())) >= r.usageDrain() {
 			lv.asleep = true
 			go r.stop(lv.dir, time.Second, 2*time.Second)
 		}
@@ -1914,7 +1971,9 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 	})
 	if err == nil {
 		lv.seq = seq
-		lv.resend = false
+		if !lv.catchingUp {
+			lv.resend = false
+		}
 		if slept {
 			r.Log.Info("the conversation of one input ended with its turn; the session sleeps", "session", lv.id)
 			lv.drain = time.Now().Add(r.usageDrain())
@@ -1938,8 +1997,19 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 	if err := clearReported(ctx, tx, lv.id, b.events); err != nil {
 		return err
 	}
+	if lv.catchingUp {
+		return nil
+	}
 	if fi == "" {
 		return nil
+	}
+	if r.RevalidateInitial != nil {
+		if err := r.RevalidateInitial(ctx, tx, lv.id); err != nil {
+			if errors.Is(err, core.ErrForbidden) {
+				return nil
+			}
+			return err
+		}
 	}
 	var f firstInput
 	if err := json.Unmarshal([]byte(fi), &f); err != nil {
@@ -2244,14 +2314,14 @@ func (r *Runner) exit(lv *live) {
 func (r *Runner) checkIdle(lv *live) {
 	lv.mu.Lock()
 	defer lv.mu.Unlock()
-	if lv.asleep || lv.failed || lv.taken != nil { // a window taken in runs as its person keeps it
+	if !r.sessionChecked(lv.id) || lv.catchingUp || lv.asleep || lv.failed || lv.taken != nil { // a window taken in runs as its person keeps it
 		return
 	}
 	ctx := context.Background()
 	var state string
 	var updated int64
 	if err := r.Store.DB.QueryRowContext(ctx, `SELECT state, updated_at FROM sessions WHERE id = ?`, lv.id).Scan(&state, &updated); err != nil ||
-		control.State(state) != control.Idle || time.Since(time.UnixMilli(updated)) < r.idlePeriod() {
+		control.State(state) != control.Idle || r.activeAge(ctx, r.Store.DB, lv.id, time.UnixMilli(updated)) < r.idlePeriod() {
 		return
 	}
 	if r.attached(lv) {
@@ -2265,7 +2335,7 @@ func (r *Runner) checkIdle(lv *live) {
 		if err := tx.QueryRowContext(ctx, `SELECT state, updated_at FROM sessions WHERE id = ?`, lv.id).Scan(&state, &updated); err != nil {
 			return err
 		}
-		if control.State(state) != control.Idle || time.Since(time.UnixMilli(updated)) < r.idlePeriod() {
+		if control.State(state) != control.Idle || r.activeAge(ctx, tx, lv.id, time.UnixMilli(updated)) < r.idlePeriod() {
 			return nil
 		}
 		var open int
@@ -2642,7 +2712,7 @@ const KindSessionReplaced control.EventKind = "session_replaced"
 // checkStart fails a session that has not reported its start in time,
 // with the end of its terminal log for a person, and stops its processes.
 func (r *Runner) checkStart(lv *live) {
-	if lv.ready || time.Since(lv.started) < r.startTimeout() {
+	if !r.sessionChecked(lv.id) || lv.catchingUp || lv.ready || r.activeAge(context.Background(), r.Store.DB, lv.id, lv.started) < r.startTimeout() {
 		return
 	}
 	var state string
@@ -2683,6 +2753,11 @@ func (r *Runner) Deliver(ctx context.Context, id, pending int64, in control.Inpu
 	if lv.ended {
 		return nil
 	}
+	if r.AwayEnabled {
+		if err := r.dispatchAllowed(lv); err != nil {
+			return err
+		}
+	}
 	if current, err := r.pendingCurrent(ctx, id, pending, ""); err != nil || !current {
 		return err
 	}
@@ -2703,6 +2778,11 @@ func (r *Runner) Answer(ctx context.Context, id, pending int64, req string, ans 
 	defer lv.mu.Unlock()
 	if lv.ended {
 		return nil
+	}
+	if r.AwayEnabled {
+		if err := r.dispatchAllowed(lv); err != nil {
+			return err
+		}
 	}
 	if current, err := r.pendingCurrent(ctx, id, pending, req); err != nil || !current {
 		return err
@@ -2778,6 +2858,12 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stop
 	// none starts (a Send starts one only when none is open). Once it has
 	// ended the watch is over, even when the next turn has started.
 	lv.mu.Lock()
+	if r.AwayEnabled {
+		if err := r.dispatchAllowed(lv); err != nil {
+			lv.mu.Unlock()
+			return err
+		}
+	}
 	var turn int64
 	r.Store.DB.QueryRow(`SELECT coalesce(max(id), 0) FROM turns WHERE session_id = ? AND ended_at IS NULL`, id).Scan(&turn)
 	if named != 0 && named != turn {
@@ -2818,8 +2904,13 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stop
 		return nil // no turn runs: nothing to stop later
 	}
 	go func() {
-		deadline := time.Now().Add(r.interruptGrace())
-		for time.Now().Before(deadline) {
+		began := time.Now()
+		for !r.sessionChecked(id) || r.activeAge(context.Background(), r.Store.DB, id, began) < r.interruptGrace() {
+			select {
+			case <-lv.stop:
+				return
+			default:
+			}
 			r.at("interrupt watch")
 			var state string
 			if r.Store.DB.QueryRow(`SELECT state FROM sessions WHERE id = ?`, id).Scan(&state) == nil &&

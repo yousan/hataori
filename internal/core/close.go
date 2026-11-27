@@ -48,6 +48,9 @@ func (a *api) CloseThread(ctx context.Context, id control.ThreadID) error {
 		return err
 	}
 	defer a.c.locks.lock(threadLock(id))()
+	if err := a.c.requireCheckedMachine(ctx, id); err != nil {
+		return err
+	}
 	sid, state, err := a.c.current(ctx, a.c.Store.DB, id)
 	if err != nil {
 		return err
@@ -108,6 +111,9 @@ func (a *api) RemoveThread(ctx context.Context, id control.ThreadID) error {
 // the state change to removed, or removal_refused with the reason.
 func (c *Core) remove(ctx context.Context, id control.ThreadID, principal control.Principal, trigger string) error {
 	defer c.locks.lock(threadLock(id))()
+	if err := c.requireCheckedMachine(ctx, id); err != nil {
+		return err
+	}
 	machine, err := c.workspaceMachine(ctx, id)
 	if err != nil {
 		return err

@@ -37,8 +37,10 @@ func text(name string, t FieldType) Field {
 // of its data. docs/protocol.md describes the same, field by field, and a
 // test keeps the two equal. The store refuses an event that does not match.
 var EventKinds = map[EventKind][]Field{
-	"placement":      {req("machine", String), req("pending", Boolean), req("reason", String)},
-	"approval_asked": {req("request", String), req("action", String), req("target", Integer), req("turn", Integer), text("reason", String), opt("principal", String), opt("from", String)},
+	"machine_availability": {req("machine", String), req("state", String), req("since", Integer), req("reason", String)},
+	"machine_action":       {req("action", String), req("state", String), req("reason", String)},
+	"placement":            {req("machine", String), req("pending", Boolean), req("reason", String)},
+	"approval_asked":       {req("request", String), req("action", String), req("target", Integer), req("turn", Integer), text("reason", String), opt("principal", String), opt("from", String)},
 	"approval_answered": {req("request", String), req("allow", Boolean), req("outcome", String), req("target", Integer), opt("principal", String), opt("from", String), opt("link", Object),
 		opt("via", String)},
 	// proposal_made: a caller with Propose proposed a send or a start

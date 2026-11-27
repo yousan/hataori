@@ -431,6 +431,7 @@ var codes = []struct {
 	{"proposed", control.ErrProposed},                // since 3.26
 	{"reopen_refused", control.ErrReopenRefused},     // since 3.31
 	{"not_supported", ErrNotSupported},
+	{"action_held", control.ErrActionHeld},
 }
 
 func encodeError(err error) *wireError {

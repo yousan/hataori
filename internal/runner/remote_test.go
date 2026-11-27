@@ -31,7 +31,7 @@ import (
 	"github.com/yousan/hataori/internal/workerproto"
 )
 
-func remoteFixture(t *testing.T, terminal bool) (*fixture, *worker.Resident) {
+func remoteFixture(t *testing.T, terminal bool, configure ...func(*fake.Config)) (*fixture, *worker.Resident) {
 	t.Helper()
 	f := newFixture(t, options{terminal: terminal, poll: 30 * time.Millisecond})
 	t.Cleanup(func() {
@@ -63,7 +63,11 @@ func remoteFixture(t *testing.T, terminal bool) (*fixture, *worker.Resident) {
 			t.Fatal(err)
 		}
 	}
-	settings, _ := json.Marshal(fake.Config{Conversations: filepath.Join(root, "conversations"), Record: filepath.Join(root, "records"), Command: []string{os.Args[0], "role", "fake"}, Hataori: os.Args[0], Terminal: terminal})
+	config := fake.Config{Conversations: filepath.Join(root, "conversations"), Record: filepath.Join(root, "records"), Command: []string{os.Args[0], "role", "fake"}, Hataori: os.Args[0], Terminal: terminal}
+	for _, f := range configure {
+		f(&config)
+	}
+	settings, _ := json.Marshal(config)
 	resident, err := worker.Open(root, binding, worker.Options{Config: &worker.Config{Agents: []worker.Configuration{{Agent: "fake", Name: "default", Settings: settings, NoProjectSettings: false}}, Workspaces: worker.WorkspaceConfig{Repositories: map[string]string{"fixture": (&url.URL{Scheme: "file", Path: repo}).String()}}}, HostCommand: host.Command{Path: os.Args[0], Args: []string{"role", "host"}, Env: []string{}}, Telemetry: func() workerproto.Telemetry {
 		return workerproto.Telemetry{Known: true, ObservedMS: time.Now().UnixMilli(), ValidMS: 10000, MemoryFree: 1 << 30, DiskFree: 1 << 30}
 	}, NewAdapter: func(_ string, b []byte) (agent.Adapter, error) { return fake.New(b) }})

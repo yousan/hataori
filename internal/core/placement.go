@@ -62,6 +62,9 @@ func (c *Core) RunPlacements(ctx context.Context) {
 	tick := time.NewTicker(3 * time.Second)
 	defer tick.Stop()
 	for {
+		if err := c.DispatchHeld(ctx); err != nil && ctx.Err() == nil {
+			c.Log.Error("dispatching held machine actions", "err", err)
+		}
 		if err := c.DispatchPlacements(ctx); err != nil && ctx.Err() == nil {
 			c.Log.Error("dispatching placements", "err", err)
 		}

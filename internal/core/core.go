@@ -299,6 +299,7 @@ type AgentDefaults struct{ Model, Effort string }
 // As to get an API bound to a caller.
 type Core struct {
 	Placement *MachinePlacement
+	Away      *MachineAway
 
 	// LocalAgents is local's agent allowlist; nil permits configured agents.
 	// Confined threads are independent of ordinary machine restrictions.
@@ -474,9 +475,10 @@ func (c *Core) AsFresh(caller control.Caller) control.API {
 var ErrAwake = errors.New("the thread is not asleep")
 
 type api struct {
-	c      *Core
-	caller control.Caller
-	fresh  bool // AsFresh
+	heldReplay bool
+	c          *Core
+	caller     control.Caller
+	fresh      bool // AsFresh
 }
 
 // check is the one authorization function: the caller must be allowed op,
@@ -943,6 +945,22 @@ func (a *api) summary(ctx context.Context, t *control.ThreadInfo) (int64, error)
 	}
 	if t.Machine != "" && a.c.Placement != nil && a.c.Placement.Status != nil {
 		status := a.c.Placement.Status(t.Machine)
+		t.Availability = &status
+	}
+	if a.c.Away != nil && t.Machine != "" && t.Machine != store.LocalMachine {
+		status, err := a.c.Away.Status(ctx, t.Machine)
+		if err != nil {
+			return 0, err
+		}
+		if status.State != "ready" {
+			status.LastKnownState = t.State
+			var at int64
+			if err := db.QueryRowContext(ctx, `SELECT updated_at FROM sessions WHERE id=?`, sid).Scan(&at); err != nil {
+				return 0, err
+			}
+			knownAt := time.UnixMilli(at)
+			status.LastKnownAt = &knownAt
+		}
 		t.Availability = &status
 	}
 	var (
@@ -2305,6 +2323,9 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		// Nothing is sent: a person decides (Caller.Propose).
 		return a.proposeSend(ctx, scope, id, key, in)
 	}
+	if held, err := a.hold(ctx, id, "send", key, "", heldAction{Input: in, Busy: busy}); err != nil || held {
+		return err
+	}
 	asked := busy
 	if a.caller.RefuseBusy {
 		busy = control.Refuse
@@ -2461,9 +2482,15 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				return err
 			}
 			pending, err = pend(ctx, tx, sid, question, control.Answer{Text: given.Text}, "")
+			if err == nil {
+				err = a.c.keepPendingAuthority(ctx, tx, pending, a.caller, control.OpSend)
+			}
 			return err
 		}
 		pending, hand, err = a.c.sendTx(ctx, tx, sid, marked)
+		if err == nil {
+			err = a.c.keepPendingAuthority(ctx, tx, pending, a.caller, control.OpSend)
+		}
 		return err
 	}
 	for {
@@ -2592,6 +2619,9 @@ func (c *Core) sendTx(ctx context.Context, tx *store.Tx, sid int64, in FirstInpu
 		}
 	}
 	pending, err = pend(ctx, tx, sid, "", session.PendingInput{Input: hand, Origin: origin}, earlier)
+	if err == nil {
+		err = c.keepPendingAuthority(ctx, tx, pending, control.Caller{Principal: in.Principal, From: in.From, Via: in.Via}, control.OpSend)
+	}
 	hand.Text = earlier + hand.Text
 	return pending, hand, err
 }
@@ -2699,6 +2729,9 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 	if state != session.RequestOpen {
 		return fmt.Errorf("core: answer %q: the request is %s: %w", req, state, ErrNotOpen)
 	}
+	if held, err := a.hold(ctx, thread, "answer", string(req), string(req), heldAction{Answer: ans}); err != nil || held {
+		return err
+	}
 	// The machine refuses it, atomically, if it was closed since.
 	var pending int64
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
@@ -2711,6 +2744,9 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 			return err
 		}
 		pending, err = pend(ctx, tx, sid, agentReq, ans, "")
+		if err == nil {
+			err = a.c.keepPendingAuthority(ctx, tx, pending, a.caller, control.OpAnswer)
+		}
 		return err
 	})
 	if err != nil {
@@ -2739,6 +2775,16 @@ func (a *api) Stop(ctx context.Context, id control.ThreadID, turn int64) error {
 			return fmt.Errorf("core: stop turn %d of thread %d: it is not running: %w", turn, id, session.ErrRefused)
 		}
 		return nil
+	}
+	request := ""
+	if turn != 0 {
+		request = fmt.Sprint(turn)
+	}
+	if held, err := a.hold(ctx, id, "stop", "", request, heldAction{}); err != nil || held {
+		if err != nil {
+			return err
+		}
+		return ErrActionHeld
 	}
 	// Who asked goes on the turn the runner interrupts, chosen in the same
 	// step, so that the reader of that turn's end can tell it was stopped.
@@ -3100,6 +3146,12 @@ func (a *api) attachmentSession(ctx context.Context, id control.ThreadID, name s
 }
 
 func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.Attachment, error) {
+	if _, err := a.actThread(ctx, control.OpAttach, "AttachTerminal", id); err != nil {
+		return control.Attachment{}, err
+	}
+	if err := a.c.requireCheckedMachine(ctx, id); err != nil {
+		return control.Attachment{}, err
+	}
 	sid, err := a.attachmentSession(ctx, id, "AttachTerminal", false)
 	if err != nil {
 		return control.Attachment{}, err
@@ -3114,6 +3166,12 @@ func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.
 }
 
 func (a *api) AttachWorker(ctx context.Context, id control.ThreadID) (control.WorkerAttachment, error) {
+	if _, err := a.actThread(ctx, control.OpAttach, "AttachWorker", id); err != nil {
+		return control.WorkerAttachment{}, err
+	}
+	if err := a.c.requireCheckedMachine(ctx, id); err != nil {
+		return control.WorkerAttachment{}, err
+	}
 	sid, err := a.attachmentSession(ctx, id, "AttachWorker", true)
 	if err != nil {
 		return control.WorkerAttachment{}, err

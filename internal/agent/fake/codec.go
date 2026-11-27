@@ -47,6 +47,22 @@ type written struct {
 	at time.Time // the first Tick after writing it
 }
 
+func (c *codec) ReconcileHooks(waiting []string) agent.Actions {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.terminal {
+		return agent.Actions{}
+	}
+	var events []agent.Event
+	for id := range c.asked {
+		if !slices.Contains(waiting, id) {
+			delete(c.asked, id)
+			events = append(events, agent.Event{Kind: agent.RequestWithdrawn, Request: &agent.RequestInfo{ID: id}})
+		}
+	}
+	return c.events(events...)
+}
+
 // DefaultInputTimeout is how long written input may go unreported.
 const DefaultInputTimeout = 30 * time.Second
 

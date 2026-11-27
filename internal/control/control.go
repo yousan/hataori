@@ -49,6 +49,7 @@ var (
 	// ErrNotInterrupted: the agent's window did not take the interrupt of a
 	// Stop or a Send, such as while a person has scrolled back in it.
 	ErrNotInterrupted = errors.New("the agent's window did not take the interrupt; the turn goes on")
+	ErrActionHeld     = errors.New("the action is waiting for machine reconciliation; nothing has been stopped")
 )
 
 // ReopenRefused is why a ReopenThread was refused: a sentence for a
@@ -829,9 +830,11 @@ type ThreadInfo struct {
 
 // MachineAvailability is an observation, never a session state or authority.
 type MachineAvailability struct {
-	State  string    `json:"state"`
-	At     time.Time `json:"at"`
-	Reason string    `json:"reason,omitempty"`
+	LastKnownState State      `json:"last_known_state,omitempty"`
+	LastKnownAt    *time.Time `json:"last_known_at,omitempty"`
+	State          string     `json:"state"`
+	At             time.Time  `json:"at"`
+	Reason         string     `json:"reason,omitempty"`
 }
 
 // Attachment is the result of AttachTerminal.

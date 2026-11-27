@@ -49,7 +49,8 @@ type Config struct {
 	Scopes       []Scope
 	// Machines includes the implicit local machine. These are configuration
 	// and identity records; worker execution and placement are separate.
-	Machines []Machine
+	Machines         []Machine
+	MachineAwayGrace time.Duration
 	// LoginRelay is whether a login outage starts the agent's login
 	// command for the owner (section 4.7); "login_relay": false switches it
 	// off, and the alert stays.
@@ -407,28 +408,29 @@ type fileWeb struct {
 
 // The config as written in the file.
 type fileConfig struct {
-	Owner      string                     `json:"owner"`
-	Agent      string                     `json:"agent"`
-	People     *[]filePerson              `json:"people"`
-	Trigger    string                     `json:"trigger"`
-	Idle       string                     `json:"idle"`
-	Model      string                     `json:"model"`
-	Effort     string                     `json:"effort"`
-	Context    *int                       `json:"context_bytes"`
-	LoginRelay *bool                      `json:"login_relay"`
-	HostTerms  bool                       `json:"host_terminals"`
-	HostInput  bool                       `json:"host_input"`
-	InputIdle  string                     `json:"host_input_idle"`
-	Holder     string                     `json:"holder"`
-	TermSize   *fileTerminalSize          `json:"terminal_size"`
-	Scopes     []fileScope                `json:"scopes"`
-	Machines   []fileMachine              `json:"machines"`
-	Dashboard  *fileDashboard             `json:"dashboard"`
-	Cleanup    *fileCleanup               `json:"cleanup"`
-	Forges     map[string]json.RawMessage `json:"forges"`
-	Drivers    map[string]json.RawMessage `json:"drivers"`
-	Adapters   map[string]json.RawMessage `json:"adapters"`
-	Plugins    []json.RawMessage          `json:"plugins"`
+	MachineAwayGrace string                     `json:"machine_away_grace"`
+	Owner            string                     `json:"owner"`
+	Agent            string                     `json:"agent"`
+	People           *[]filePerson              `json:"people"`
+	Trigger          string                     `json:"trigger"`
+	Idle             string                     `json:"idle"`
+	Model            string                     `json:"model"`
+	Effort           string                     `json:"effort"`
+	Context          *int                       `json:"context_bytes"`
+	LoginRelay       *bool                      `json:"login_relay"`
+	HostTerms        bool                       `json:"host_terminals"`
+	HostInput        bool                       `json:"host_input"`
+	InputIdle        string                     `json:"host_input_idle"`
+	Holder           string                     `json:"holder"`
+	TermSize         *fileTerminalSize          `json:"terminal_size"`
+	Scopes           []fileScope                `json:"scopes"`
+	Machines         []fileMachine              `json:"machines"`
+	Dashboard        *fileDashboard             `json:"dashboard"`
+	Cleanup          *fileCleanup               `json:"cleanup"`
+	Forges           map[string]json.RawMessage `json:"forges"`
+	Drivers          map[string]json.RawMessage `json:"drivers"`
+	Adapters         map[string]json.RawMessage `json:"adapters"`
+	Plugins          []json.RawMessage          `json:"plugins"`
 }
 
 type fileTerminalSize struct {
@@ -553,6 +555,14 @@ func ParseConfig(data []byte) (*Config, error) {
 		return nil, fmt.Errorf("config: key %q: %q is not a positive duration such as \"30m\"", "idle", idle)
 	}
 	c.Idle = d
+	c.MachineAwayGrace = 30 * time.Second
+	if f.MachineAwayGrace != "" {
+		v, err := time.ParseDuration(f.MachineAwayGrace)
+		if err != nil || v <= 0 || v > time.Hour {
+			return nil, fmt.Errorf("config: machine_away_grace must be a positive duration no greater than 1h")
+		}
+		c.MachineAwayGrace = v
+	}
 	if c.HostInput && !c.HostTerminals {
 		return nil, fmt.Errorf("config: key %q is true, which needs key %q to be true as well", "host_input", "host_terminals")
 	}
