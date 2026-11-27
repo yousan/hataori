@@ -2,6 +2,8 @@
 import json, os, subprocess, sys
 from pathlib import Path
 cases = [
+ ("waiting launch operation", "internal/core/places.go", "l := Launch{AcceptedOperation: in.AcceptedOperation, Session: w.session", "l := Launch{Session: w.session", "./internal/core", "^TestWhatWaitedIsLaunchedAsWithoutAWait$"),
+ ("startup retry operation", "internal/core/trust.go", "first := FirstInput{AcceptedOperation: old.AcceptedOperation, Principal: old.Principal", "first := FirstInput{Principal: old.Principal", "./internal/core", "^TestConversationRetryWaitsForAPlace$"),
  ("ready gate", "internal/placement/placement.go", "case !o.Ready:", "case false:", "./internal/placement", "^TestEveryEligibilityGate/away$"),
  ("reservation before workspace", "internal/core/placement.go", "func reservePlacement(ctx context.Context, tx *store.Tx, thread int64, machine, agent string, now time.Time) error {", "func reservePlacement(ctx context.Context, tx *store.Tx, thread int64, machine, agent string, now time.Time) error { return nil", "./internal/core", "^TestPlacementConcurrentExplicitStartsReserveBeforeWorkspace$"),
  ("original accepted operation", "internal/core/core.go", "f.AcceptedOperation, f.NoInput = l.AcceptedOperation, l.NoInput", "f.NoInput = l.NoInput", "./internal/core", "^TestPlacementWorkspaceRecordPreservesAcceptedOperation$"),
@@ -28,7 +30,7 @@ for name, filename, old, new, package, pattern in cases:
   run=subprocess.run(command,env={**os.environ,"GOMAXPROCS":"1"},capture_output=True,text=True,timeout=55)
   output=run.stdout+run.stderr
   proved=run.returncode!=0 and "--- FAIL: Test" in output and "build failed" not in output
-  results.append({"guard":name,"command":" ".join(command),"expected_failure":proved,"exit_code":run.returncode,"evidence":[line.strip() for line in output.splitlines() if "FAIL" in line or "placement_test.go:" in line][:6]})
+  results.append({"guard":name,"command":" ".join(command),"expected_failure":proved,"exit_code":run.returncode,"evidence":[line.strip() for line in output.splitlines() if "FAIL" in line or "_test.go:" in line][:6]})
   print(name+": "+("expected test failure" if proved else "NOT PROVED"),flush=True)
   if not proved: raise RuntimeError(output[-2500:])
  finally: path.write_text(original)

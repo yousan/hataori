@@ -29,12 +29,15 @@ Focused evidence before CI:
   including a completed launch whose first follower never started. Restored
   permission cannot revive a canceled intent. Removing the last configured limit
   preserves this authorization mode; never-enabled local defaults stay intact.
+- Confined conversation admission and startup-dialog retries preserve the
+  original accepted operation through their durable waiting inputs and launch.
+  Command-status E2E expectations include the displayed local machine.
 - Local unknown prior holders block replacement/release. Phase-two recovery
   recognizes the original host independently of fresh new-start resource gates.
 - Worker fixtures cover every admission limit, exact registered repository
   resolution, occupied-place refusal, purged remake, restore/transfer/restart and
   repeated purge/remake. Existing removal proof and purge crash checks pass.
-- `negative-guards.json` records ten test failures with individual guards
+- `negative-guards.json` records twelve test failures with individual guards
   removed. `negative_guards.py` restores every candidate in `finally`.
 - Serial focused checks pass for placement, core, runner, worker, wire, chat,
   supervisor, store and workerproto. Protocol documentation/golden checks,

@@ -325,7 +325,7 @@ func (c *Core) again(ctx context.Context, tx *store.Tx, id control.ThreadID, sco
 	if dir == "" {
 		dir = workspace.String
 	}
-	first := FirstInput{Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
+	first := FirstInput{AcceptedOperation: old.AcceptedOperation, Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
 		Before: old.Before, After: old.After, Via: old.Via, Context: old.Context, Dir: dir, NoInput: old.NoInput}
 	if old.Wake {
 		// A woken session's agent would have resumed the conversation; the
@@ -375,6 +375,7 @@ func (c *Core) again(ctx context.Context, tx *store.Tx, id control.ThreadID, sco
 			return l, false, err
 		}
 	}
+	l.AcceptedOperation = first.AcceptedOperation
 	l.Dir, l.Principal, l.From, l.Key, l.Context, l.NoInput = first.Dir, first.Principal, first.From, first.Key, first.Context, first.NoInput
 	l.Input = control.Input{Text: first.Text, Link: first.Link, Before: first.Before, After: first.After, Via: first.Via}
 	return l, waits, nil

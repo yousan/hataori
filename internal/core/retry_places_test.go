@@ -82,7 +82,7 @@ func TestConversationRetryWaitsForAPlace(t *testing.T) {
 				k.ends(t, older)
 				want(t, "retry gets its place", k.pass(t), "start retry")
 				got := r.launches[len(r.launches)-1]
-				if got.Thread != id || got.Session == sid || got.Dir != first.Dir || got.Key != first.Key ||
+				if got.AcceptedOperation != first.AcceptedOperation || got.Thread != id || got.Session == sid || got.Dir != first.Dir || got.Key != first.Key ||
 					got.Principal != first.Principal || got.From != first.From || got.Context != first.Context || !reflect.DeepEqual(got.Input, first.Input()) || !got.Confined {
 					t.Fatalf("retry launch %+v, want original input %+v", got, first)
 				}

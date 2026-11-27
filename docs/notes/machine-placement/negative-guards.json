@@ -133,5 +133,32 @@
       "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.186s",
       "FAIL"
     ]
+  },
+  {
+    "guard": "waiting launch operation",
+    "command": "go test -p 1 ./internal/core -run ^TestWhatWaitedIsLaunchedAsWithoutAWait$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestWhatWaitedIsLaunchedAsWithoutAWait (0.17s)",
+      "places_test.go:334: with no wait {AcceptedOperation:2 Session:3 Thread:3 Agent:fake Dir:/tmp/TestWhatWaitedIsLaunchedAsWithoutAWait3886319217/002/scope Model:m-default Effort:e-default Principal:owner From:chat:U1 Key:waited Input:{Text:waited Link:0x1bc56e00c8d0 Before: After: Via:} Context: NoInput:false Confined:true placed:<nil>}, after one {AcceptedOperation:0 Session:3 Thread:3 Agent:fake Dir:/tmp/TestWhatWaitedIsLaunchedAsWithoutAWait3886319217/002/scope Model:m-default Effort:e-default Principal:owner From:chat:U1 Key:waited Input:{Text:waited Link:0x1bc56e00c8d0 Before: After: Via:} Context: NoInput:false Confined:true placed:<nil>}",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.172s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "startup retry operation",
+    "command": "go test -p 1 ./internal/core -run ^TestConversationRetryWaitsForAPlace$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestConversationRetryWaitsForAPlace (0.69s)",
+      "--- FAIL: TestConversationRetryWaitsForAPlace/trust/occupied=true (0.19s)",
+      "retry_places_test.go:87: retry launch {AcceptedOperation:0 Session:4 Thread:1 Agent:fake Dir:/tmp/TestConversationRetryWaitsForAPlacetrustoccupied=true1180076748/002/scope Model:m-default Effort:e-default Principal:owner From:chat:U1 Key:retry Input:{Text:retry Link:0x3e5a491a5ad0 Before:before After:after Via:chat} Context:earlier context NoInput:false Confined:true placed:<nil>}, want original input {AcceptedOperation:2 Principal:owner From:chat:U1 Key:retry Text:retry Sent:false Written:false WrittenText:<nil> Current:false Wake:false NoInput:false Dir:/tmp/TestConversationRetryWaitsForAPlacetrustoccupied=true1180076748/002/scope Link:0x3e5a49160ff0 Via:chat Context:earlier context Before:before After:after Placed:<nil>}",
+      "--- FAIL: TestConversationRetryWaitsForAPlace/trust/occupied=false (0.19s)",
+      "retry_places_test.go:87: retry launch {AcceptedOperation:0 Session:4 Thread:1 Agent:fake Dir:/tmp/TestConversationRetryWaitsForAPlacetrustoccupied=false2795589032/002/scope Model:m-default Effort:e-default Principal:owner From:chat:U1 Key:retry Input:{Text:retry Link:0x3e5a492015c0 Before:before After:after Via:chat} Context:earlier context NoInput:false Confined:true placed:<nil>}, want original input {AcceptedOperation:2 Principal:owner From:chat:U1 Key:retry Text:retry Sent:false Written:false WrittenText:<nil> Current:false Wake:false NoInput:false Dir:/tmp/TestConversationRetryWaitsForAPlacetrustoccupied=false2795589032/002/scope Link:0x3e5a491cd260 Via:chat Context:earlier context Before:before After:after Placed:<nil>}",
+      "--- FAIL: TestConversationRetryWaitsForAPlace/without_settings/occupied=true (0.17s)"
+    ]
   }
 ]
