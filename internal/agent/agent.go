@@ -414,6 +414,11 @@ type Event struct {
 	StartedBy Starter // TurnStarted
 	Input     string  // TurnStarted, InputTaken: the Input.ID of the input this turn reports; TurnEnded with NotDelivered or NotTaken: of the input never reported; TurnEnded with Interrupted: of the input that is not written any more; "" when none or not known
 
+	// RetainInput, on TurnEnded, keeps Input pending for a later report even
+	// though the turn failed. Its text may still be in the terminal editor;
+	// reconnecting must preserve the codec's protection against appending to it.
+	RetainInput bool
+
 	Tool string // ToolStarted, ToolEnded: the tool's name or label; SubagentStarted, SubagentEnded: the subagent's name or type
 	ID   string // ToolStarted, ToolEnded, SubagentStarted, SubagentEnded: pairs start and end
 	// Parent is, for ToolStarted and ToolEnded, the ID of the subagent the

@@ -66,6 +66,7 @@ type codec struct {
 	queue         []queued      // input held until the CLI can take it
 	sent          *sentInput    // input written, not yet reported
 	leftover      []string      // the inputs whose older paste may be in the box (Input): nothing is written, and they do not end, until each one's prompt is reported or the session ends
+	unconfirmed   []string      // attempted pastes not yet acknowledged: no later paste or idle key until their prompt or SessionEnd
 	timeout       time.Duration // for sent; DefaultInputTimeout when zero
 	mcp           mcpState      // the MCP servers input waits for (mcpwait.go)
 	tasks         tasks         // the background tasks that run (background.go)
@@ -214,12 +215,9 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if in.Written {
-		// Pasted before a restart: its prompt is still to come.
-		// Nothing is written for it, Enter neither: if the restart came
-		// between the paste and its Enter, it ends "not delivered". Only
-		// when another turn runs meanwhile, which Enter waits for (track),
-		// it is pressed after that turn, unless it is a leftover, which
-		// does not end.
+		// A reconnect cannot tell whether the paste or its Enter reached
+		// the CLI, or what a person has typed since. Do not write or submit it;
+		// retain it until the matching prompt or the CLI session's end.
 		typed := c.pasteText(in.Text)
 		if in.WrittenText != nil {
 			typed = *in.WrittenText
@@ -243,6 +241,10 @@ func (c *codec) Input(in agent.Input) (Actions, error) {
 			}
 		}
 		c.pasted = append(c.pasted, q)
+		// Written proves a paste was attempted, not that Enter reached the
+		// CLI. Keep the input pending until its prompt (or SessionEnd) proves
+		// the editor was consumed, including across another reconnect.
+		c.holdBox(in.ID)
 		if c.sent == nil {
 			c.sent = &sentInput{text: text, typed: typed, id: in.ID, pressed: true}
 		}
@@ -391,7 +393,7 @@ func cleanPaste(text string) string {
 // Input is one bracketed paste; Tick presses Enter after it (tickInput).
 // It counts as delivered only when UserPromptSubmit reports the same text.
 func (c *codec) flush() Actions {
-	if len(c.leftover) > 0 && len(c.queue) > 0 {
+	if c.holdsBox() && len(c.queue) > 0 {
 		// Written after the box's text, it would be submitted with it.
 		var a Actions
 		for _, q := range c.queue {
@@ -421,6 +423,9 @@ func (c *codec) paste() Actions {
 			return
 		}
 		s.unsure, s.refused = !nothing, nothing
+		if !nothing {
+			c.holdBox(s.id)
+		}
 		if nothing {
 			c.forget(s.text)
 		}
@@ -432,14 +437,32 @@ func (c *codec) paste() Actions {
 	return a
 }
 
+// holdBox prevents any later paste or idle key from acting on an editor
+// that may still hold this input. tickHeld leaves the input pending so a
+// new codec reconstructs the same protection from Written.
+func (c *codec) holdBox(id string) {
+	if !slices.Contains(c.unconfirmed, id) {
+		c.unconfirmed = append(c.unconfirmed, id)
+	}
+}
+
+func (c *codec) holdsBox() bool { return len(c.leftover) > 0 || len(c.unconfirmed) > 0 }
+
 // enter presses Enter for c.sent. One that was not handed over is pressed on
 // a later Tick: the CLI holds the text.
 func (c *codec) enter(now time.Time) Actions {
 	s := c.sent
 	s.pressed, s.entered = true, now
 	return c.press(confirm, func(nothing bool) {
-		if c.sent == s && nothing {
+		if c.sent != s {
+			return
+		}
+		if nothing {
 			s.pressed, s.owed = false, true
+		} else {
+			// An uncertain Enter may have consumed this editor already. Never
+			// retry it against an old screen while a person can type another text.
+			c.holdBox(s.id)
 		}
 	})
 }
@@ -538,7 +561,7 @@ func (c *codec) tickInput(now time.Time) Actions {
 	if c.running {
 		return Actions{}
 	}
-	if len(c.leftover) > 0 {
+	if c.holdsBox() {
 		return c.tickHeld(now)
 	}
 	switch s := c.sent; {
@@ -576,15 +599,17 @@ func (c *codec) tickInput(now time.Time) Actions {
 		}
 		return Actions{}
 	}
-	c.forget(c.sent.text)
-	return c.unsent(agent.NotDelivered)
+	// A handed-over Enter need not have submitted the editor (first input
+	// settling, or an uncertain handoff). Expiry is not evidence of an empty
+	// box: retain the input and refuse messages that would append to it.
+	c.holdBox(c.sent.id)
+	return c.tickHeld(now)
 }
 
-// tickHeld waits without Enter for the report of c.sent while the box may
-// hold what an older hataori pasted. After the input timeout the turn that
-// it was to start ends as failed, "not delivered", as any; but an input that
-// is held does not end: that turn's end names no input, so that the caller
-// keeps it, and the codec still holds it (#914).
+// tickHeld waits without Enter while the editor may contain a previous
+// paste. The turn fails after its timeout, but its input stays pending for
+// reconnects (RetainInput); legacy unsafe pastes retain their unnamed end.
+// A matching prompt or SessionEnd releases the protection.
 func (c *codec) tickHeld(now time.Time) Actions {
 	if c.sent.at.IsZero() {
 		c.sent.at = now
@@ -596,11 +621,12 @@ func (c *codec) tickHeld(now time.Time) Actions {
 	id := c.sent.id
 	if slices.Contains(c.leftover, id) {
 		id = "" // still known by its prompt (c.pasted)
-	} else {
+	} else if !slices.Contains(c.unconfirmed, id) {
 		c.forget(c.sent.text)
 	}
+	retained := id != "" && slices.Contains(c.unconfirmed, id)
 	c.sent = nil
-	a := c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: id}))
+	a := c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: id, RetainInput: retained}))
 	return merge(a, c.flush())
 }
 
@@ -636,6 +662,9 @@ const DefaultInputTimeout = 30 * time.Second
 func (c *codec) Interrupt() Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if !c.running && c.holdsBox() {
+		return Actions{NotInterrupted: true}
+	}
 	if !c.running && c.sent == nil && len(c.queue) > 0 {
 		q := c.queue[0]
 		c.queue = c.queue[1:]
@@ -773,7 +802,7 @@ func (c *codec) track(prompt string, a Actions) Actions {
 			}
 		case agent.SessionEnded:
 			c.ready, c.running = false, false
-			if len(c.leftover) > 0 {
+			if c.holdsBox() {
 				// What was pasted and not reported went with the box's text
 				// and its conversation, since a prompt is reported before the
 				// session ends: each such input ends as not delivered, naming
@@ -790,7 +819,7 @@ func (c *codec) track(prompt string, a Actions) Actions {
 				for _, q := range c.pasted {
 					ended = merge(ended, c.events(c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: agent.NotDelivered, Input: q.id})))
 				}
-				c.sent, c.pasted, c.leftover = nil, nil, nil
+				c.sent, c.pasted, c.leftover, c.unconfirmed = nil, nil, nil, nil
 			}
 		}
 	}
@@ -1103,6 +1132,7 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		// before the paste: the others stay held.
 		if by == agent.ByCaller {
 			c.leftover = slices.DeleteFunc(c.leftover, func(h string) bool { return h == id })
+			c.unconfirmed = slices.DeleteFunc(c.unconfirmed, func(h string) bool { return h == id })
 		}
 		started := agent.Event{Kind: agent.TurnStarted, StartedBy: by, Input: id}
 		if by == agent.ByTerminal {
@@ -1324,7 +1354,7 @@ func (c *codec) starter(prompt string) (agent.Starter, string) {
 	// although it is not known by it (#916): the prompt may be that one's.
 	shadowed := false
 	for i, p := range c.pasted {
-		held := slices.Contains(c.leftover, p.id)
+		held := slices.Contains(c.leftover, p.id) || slices.Contains(c.unconfirmed, p.id)
 		if held && (notification(prompt) || shadowed) {
 			// A notification starts a turn with the box as it is, also
 			// one that is the text of the input that may be in it; and a
@@ -1337,7 +1367,7 @@ func (c *codec) starter(prompt string) (agent.Starter, string) {
 		// reports of that, since nothing else releases it. Prompts come in
 		// the order of the pastes, as c.pasted is, and the prompt of an
 		// input pasted after one in the box would have that one in it too.
-		if p.older == nil && p.text == text || slices.Contains(p.older, text) || held && p.shows(text) {
+		if p.older == nil && p.text == text || slices.Contains(p.older, text) || slices.Contains(c.leftover, p.id) && p.shows(text) {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
 			if c.sent != nil && c.sent.text == p.text {
 				c.sent = nil // delivered
