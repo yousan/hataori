@@ -212,7 +212,7 @@ func (h *Holder) setUp(r ref) (keep, run string) {
 	keep = strings.Join([]string{
 		"set-option -w -t " + r.Pane + " remain-on-exit on",
 		onPane,
-		"pipe-pane -O -t " + r.Pane + " " + quote("exec "+quote(h.Hataori)+" pipe "+quote(r.Dir)),
+		"pipe-pane -O -t " + r.Pane + " " + quote(pipeCommand(h.Hataori, r.Dir)),
 	}, " ; ")
 	return keep, strings.Join([]string{
 		"respawn-pane -k -t " + r.Pane + " " + quote("exec "+quote(h.Hataori)+" exec "+quote(r.Dir)),
@@ -220,6 +220,18 @@ func (h *Holder) setUp(r ref) (keep, run string) {
 		"set-option -w -u -t " + r.Pane + " remain-on-exit",
 		onPane,
 	}, " ; ")
+}
+
+// pipeCommand is shell-quoted first, then escaped for pipe-pane's extra
+// format_expand_time pass. Shell quoting alone protects neither # nor %.
+func pipeCommand(program, stateDir string) string {
+	word := func(s string) string {
+		// tmux preserves runs of # before [ as style markers. Adjacent
+		// empty shell quotes separate them for tmux and rejoin the path
+		// for the shell, so the normal ## escape works on every version.
+		return strings.NewReplacer("#", "##", "%", "%%", "[", "''[").Replace(quote(s))
+	}
+	return "exec " + word(program) + " pipe " + word(stateDir)
 }
 
 // serverCmd runs a tmux command on the server Server names, or the default
