@@ -1162,7 +1162,7 @@ func (c *codec) decodeHook(k call, p payload) Actions {
 		))
 	case "StopFailure":
 		c.listed(p)
-		return merge(merge(c.withdrawAll(), c.end(p.PromptID, "")), c.events(
+		return merge(merge(c.withdrawAll(), c.end(p.PromptID, p.LastMessage)), c.events(
 			c.tasks.at(agent.Event{Kind: agent.TurnEnded, Status: agent.Failed, Reason: failureReason(p.Error), Text: p.LastMessage})))
 	case "PreToolUse":
 		if p.ToolName == askTool {
@@ -1453,10 +1453,12 @@ func normalize(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// failureReason maps StopFailure's error type. Only model_not_found has
-// been seen from the real CLI; the others are the documented values.
+// failureReason maps StopFailure's error type. Subscription entitlement
+// rejection is distinct from an expired login and from a usage limit.
 func failureReason(e string) agent.Reason {
 	switch e {
+	case "oauth_org_not_allowed":
+		return agent.Unavailable
 	case "rate_limit", "billing_error":
 		return agent.Limit
 	case "authentication_failed", "oauth_token_expired", "unauthorized":

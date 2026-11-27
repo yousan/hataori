@@ -406,6 +406,7 @@ const (
 	Limit          Reason = "limit"
 	Login          Reason = "login"
 	APIError       Reason = "api_error"
+	Unavailable    Reason = "unavailable" // provider rejects access; not a quota reset or a login flow
 	Crashed        Reason = "crashed"
 	BlockedAtStart Reason = "blocked at start"
 	NotDelivered   Reason = "not delivered"            // input the agent never reported receiving
@@ -424,7 +425,7 @@ type Event struct {
 	Model     string // SessionReady: the model the agent reports
 	Effort    string // SessionReady: the effort the agent reports
 
-	Text  string // Text: the text; Unknown: the line; SessionEnded before the session was ready: what a person may read about why; TurnStarted by ByTerminal: the prompt typed, when the agent reports it
+	Text  string // Text: the text; Unknown: the line; SessionEnded before the session was ready: what a person may read about why; TurnStarted by ByTerminal: the prompt typed, when the agent reports it; TurnEnded with Failed: the provider's explanation
 	Final bool   // Text: the turn's final answer
 
 	StartedBy Starter // TurnStarted
