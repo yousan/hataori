@@ -83,6 +83,30 @@ The check skips when Codex is not installed or is not signed in. It uses the ins
 
 The check ends every process it starts, also after a failed step, provided `go test` does not stop it first: it keeps two minutes of the `-timeout` for that, and refuses to start when the time left is too short for its steps. It never writes the user's Codex configuration. It compares the checksum of `config.toml` in the Codex home before and after the check; the adapter passes its trust override on the command line.
 
+### Confined Codex supervisor
+
+```sh
+HATAORI_REAL_CODEX_SUPERVISOR=1 go test -p 1 -count=1 -run '^TestRealCodexSupervisor$' -v -timeout 18m ./cmd/hataori
+```
+
+Linux only, codex-cli 0.163.0, model `gpt-6-luna`, existing ChatGPT CLI
+file authentication and bubblewrap. No terminal or other provider runs. The
+actual adapter launches a disposable daemon/scope with a fake chat surface
+and two fake workers. It checks composed instruction delivery and refresh,
+direct MCP management and file access, actual catalog search outputs with no
+code-mode/custom tool calls, daemon restart,
+process resume, conversation and fresh wake launches, question answering,
+authorized next-stage dispatch, a real five-minute reminder and no duplicate
+worker/stage after restart. The conversation step calls the existing
+`Sessions.Converse` entry point as a chat adapter would; it does not add or
+claim mention routing in a front end.
+
+`HATAORI_CODEX_SUPERVISOR_CAPTURE` may name a new directory for only the
+fixture's output and selected response items, with its generated MCP token
+redacted. Never export authentication, generated credential config or the
+database. Scrub paths and identifiers before committing captures. See the
+[confinement evidence and operator switching procedure](notes/codex-supervisor-1088/README.md).
+
 ### Codex criteria (Appendix E) and their tests
 
 | Criterion | Capture-based tests | Live step in `TestRealCodex` |

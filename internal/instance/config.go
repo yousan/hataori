@@ -140,7 +140,7 @@ type Scope struct {
 // Supervisor is the "supervisor" section of a scope.
 type Supervisor struct {
 	Agent        string // "agent": the adapter that runs it; the instance's when empty
-	Model        string // "model": what the default agent's model order gives a thread of the scope when empty
+	Model        string // "model": the selected agent's model order when empty
 	Effort       string // "effort": supervisor.DefaultEffort when empty
 	Instructions string // "instructions": the config's instructions, last in the config's layer of the supervisor's (#656)
 	// Quiet is how long the supervisor's waker waits after the first event

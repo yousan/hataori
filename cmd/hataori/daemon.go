@@ -94,15 +94,17 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	}
 	agentName := cfg.Agent
 	// The scopes that name a supervisor (design, section 7.1). It runs on the
-	// default adapter.
+	// explicitly selected adapter, or the instance default.
 	supervisors := map[string]supervisor.Scope{}
 	for i, s := range cfg.Scopes {
 		sv := s.Supervisor
 		if sv == nil {
 			continue
 		}
-		if sv.Agent != "" && sv.Agent != agentName {
-			return fmt.Errorf("config: key %q: %q is not the default agent adapter %q", fmt.Sprintf("scopes[%d].supervisor.agent", i), sv.Agent, agentName)
+		if sv.Agent != "" {
+			if _, ok := adapters[sv.Agent]; !ok {
+				return fmt.Errorf("config: key %q: no configured agent adapter %q", fmt.Sprintf("scopes[%d].supervisor.agent", i), sv.Agent)
+			}
 		}
 		// Each entry must be an address a thread's workspace can be cloned
 		// from, as an order's repo: must.
@@ -113,7 +115,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 			}
 			repos = append(repos, supervisor.Repo{Address: r.Address, Forge: r.Forge})
 		}
-		supervisors[s.Key] = supervisor.Scope{Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos,
+		supervisors[s.Key] = supervisor.Scope{Agent: sv.Agent, Model: sv.Model, Effort: sv.Effort, Instructions: sv.Instructions, Repos: repos,
 			Autonomy: sv.Autonomy, Trusted: sv.TrustedAuthors,
 			Limits:       supervisor.Limits{Turns: sv.TurnsPerHour, Sends: sv.SendsPerHour, Tokens: sv.TokensPerDay},
 			RemindersMax: sv.RemindersMax, Report: sv.Report, ReportEvery: sv.ReportEvery, Mention: sv.Mention, QuietHours: sv.QuietHours,
