@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.44**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.45**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -1428,7 +1428,8 @@ Exactly one per turn.
 | `principal` | string | optional | as in `turn_started` |
 | `from` | string | optional | as in `turn_started`; since 1.6 |
 | `outcome` | string | required | `completion`, `blocked` (on a question) or `failure` |
-| `reason` | string | optional | for a failure: `limit`, `login`, `api_error`, `crashed`, `interrupted`, `not delivered`, `the window took no input`, ... |
+| `reason` | string | optional | for a failure: `limit`, `login`, `api_error`, `crashed`, `interrupted`, `not delivered`, `the window took no input`, ...; since 3.45, `unavailable` means the provider rejected access, distinct from quota exhaustion or an expired login |
+| `detail` | string | optional | the agent's explanation of a failed turn, when supplied; text, omitted for a reader that may not read it; since 3.45 |
 | `background` | integer | required | background tasks still running; a reader that wants "really finished" waits for 0. After a failure it is the last count the agent gave, with the starts and ends learned since, an estimate until a turn completes |
 | `subagents` | array | optional | the ids of the subagents among the `background` tasks, as in their `subagent_started`; absent for none, or when the agent does not tell. A reader that follows the subagents takes an open one that is not named here as ended with the turn, except where `outcome` is `blocked`: that end says nothing of them; since 3.37 |
 

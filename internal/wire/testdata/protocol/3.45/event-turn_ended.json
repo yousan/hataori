@@ -1,0 +1,1 @@
+{"id":1,"event":{"pos":42,"thread":7,"scope":"C0123","time":"2026-01-02T03:04:05.678Z","kind":"turn_ended","data":{"background":1,"by":"caller","detail":"Provider rejected access; check account settings.","from":"discord:W1","outcome":"failure","principal":"dispatch","reason":"unavailable","session":3,"subagents":["agent_1"],"turn":12}}}

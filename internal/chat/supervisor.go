@@ -29,6 +29,7 @@ import (
 // svThread is what the front end looked up about a thread.
 type svThread struct {
 	sv    bool   // a supervisor's thread
+	own   bool   // the supervisor's own thread, whose outage stops worker management
 	scope string // its scope
 }
 
@@ -47,6 +48,7 @@ func (f *FrontEnd) svThread(ctx context.Context, r *reader, thread control.Threa
 		return svThread{}, fmt.Errorf("chat: whether thread %d is a supervisor's: %w", thread, err)
 	}
 	t.sv = kind.Confined()
+	t.own = kind == control.KindSupervisor
 	if r.sv == nil {
 		r.sv = map[control.ThreadID]svThread{}
 	}
