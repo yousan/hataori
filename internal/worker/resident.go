@@ -509,8 +509,13 @@ func (r *Resident) inventory() workerproto.Inventory {
 	i := workerproto.Inventory{Boot: r.boot, Complete: true, Hosts: []workerproto.HostRecord{}}
 	for _, run := range r.state.Runs {
 		rec := workerproto.HostRecord{Target: run.Target, State: run.State, Turn: run.Turn}
-		if rec.State == "prepared" {
+		switch rec.State {
+		case "prepared":
 			rec.State = "reserved"
+		case "preparing", "starting":
+			// These are internal intent states. Until recovery reconciles the
+			// effect they cannot claim a reserved or running public host.
+			rec.State = "unknown"
 		}
 		if run.State == "running" {
 			c, err := r.owned(run)

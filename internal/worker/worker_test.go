@@ -889,3 +889,30 @@ func TestRootMovedDuringProbeRefusesPathBasedLaunch(t *testing.T) {
 		t.Fatalf("replacement touched: %v %v", entries, err)
 	}
 }
+
+func TestInventoryAfterLostIntentReplyUsesPublicUnknownState(t *testing.T) {
+	for _, op := range []string{"prepare", "start"} {
+		t.Run(op, func(t *testing.T) {
+			f := newFixture(t, false)
+			var m workerproto.Message
+			if op == "start" {
+				f.prepare()
+				m = f.startRequest()
+			} else {
+				m = f.request("prepare", "lost-prepare", &f.target, workerproto.Prepare{})
+			}
+			f.r.options.checkpoint = func(point string) error {
+				if point == op+"_intent" {
+					return errors.New("lost intent reply")
+				}
+				return nil
+			}
+			refused(t, f.call(m), "unavailable")
+			reply := f.call(f.request("inventory", "", nil, workerproto.Empty{}))
+			var inv workerproto.Inventory
+			if err := json.Unmarshal(reply.Body, &inv); err != nil || inv.Complete || len(inv.Hosts) != 1 || inv.Hosts[0].State != "unknown" {
+				t.Fatalf("inventory: %s %v", reply.Body, err)
+			}
+		})
+	}
+}
