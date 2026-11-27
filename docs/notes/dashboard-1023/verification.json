@@ -1,0 +1,10 @@
+{
+  "case": "feedback",
+  "failures": [],
+  "captures": 38,
+  "matrices": [
+    "HTTP pointer24",
+    "HTTP keyboard4",
+    "HTTPS pointer10"
+  ]
+}
