@@ -39,7 +39,13 @@ TEXTS = [
     ("link_outside", "Look at this\n{cwd}/{p}-link.png"),
     ("link_inside", "Look at this\n{cwd}/{p}-inside-link.png"),
     ("quoted", 'Look at this\n"{cwd}/{p} spaces.PNG"'),
+    ("single_quoted", "Look at this\n'{cwd}/{p} single.png'"),
     ("escaped", "Look at this\n{cwd}/{p}\\ escaped.PNG"),
+    ("escaped_extension", "Look at this\n{cwd}/{p}-extension.p\\ng"),
+    ("jpg", "Look at this\n{cwd}/{p}-image.jpg"),
+    ("jpeg", "Look at this\n{cwd}/{p}-image.jpeg"),
+    ("gif", "Look at this\n{cwd}/{p}-image.gif"),
+    ("webp", "Look at this\n{cwd}/{p}-image.webp"),
     ("two_paths", "Look at these\n{out}/{p}-one.png {out}/{p}-two.png"),
     ("relative", "Look at this\n{p}-relative.png"),
     ("wake", "A turn ended.\n> {cwd}/{p}-wake.png"),
@@ -80,6 +86,8 @@ class World:
         self.images = {}
         for p in ("start", "resume"):
             for d, names in ((self.cwd, [p + "-whole.png", p + "-line.png", p + " spaces.PNG", p + " escaped.PNG",
+                                         p + " single.png", p + "-extension.png", p + "-image.jpg", p + "-image.jpeg",
+                                         p + "-image.gif", p + "-image.webp",
                                          p + "-inside-linked.png", p + "-relative.png", p + "-wake.png"]),
                              (self.out, [p + "-outside.png", p + "-line-outside.png", p + "-one.png", p + "-two.png", p + "-linked.png"])):
                 for name in names:
