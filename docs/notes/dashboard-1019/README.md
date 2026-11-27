@@ -37,8 +37,8 @@ Choose A: a 16ch minimum keeps a useful title while retaining more metadata in v
 
 ## Validation
 
-Pinned Node install/check (173 tests)/build, gofmt, go vet and focused page tests pass. Baseline title-width regression fails at 800 px (46.30 px). The fixed title is 149.59 px with a 138.16 px minimum, and real pane scroll reaches offscreen columns. At 1440 px the title remains 200.89 px and fits; phone list is unchanged. Both themes captured. Fresh Codex review found no issues. No local tmux tests.
+Pinned Node 24.22.1: npm ci --ignore-scripts, complete npm check (173 tests) with Node test-concurrency=1, npm run build; generated page rebuilt after main integration. gofmt, go vet (Go p=1) and focused TestThePage tests (-parallel=1) pass. Six refreshed synthetic captures cover 1440/800/390 px in both themes; desktop/tablet title minimum and actual pane scrolling checks pass, with phone list preserved. Baseline-failing evidence is preserved. No local tmux tests.
 
-Fresh independent Codex review: no findings.
+Fresh independent Codex review: landing_review_1019: fresh independent Codex review after current-main integration found no actionable findings; only title min-width and explanatory comment, existing scrolling/ellipsis and prior fixes preserved, no permission/input changes.
 
-Concurrency: Open PRs #1032, #1029, #1028, #1027, #1026, #1013 share styles.css/generated page files; each finding uses a separate source hunk and starts from current main. Old #990 shares CSS but is merged; remote branches were checked before the source edit.
+Concurrency: Resumed existing PR after rechecking open PRs and remote branches. Shared dashboard CSS/generated assets: #1054, #1050, #1047, #1042, #1039, #1013. Main fabd07b2 is integrated; previous findings stay on main and only this finding remains in this PR’s diff.

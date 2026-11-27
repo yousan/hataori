@@ -1,0 +1,1 @@
+{"kind":"reply","id":"request-answer","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"answer","key":"key-answer","body":{"operation":"answer","key":"key-answer","request_hash":"9e333ff1396ae6ed43d8982914d0fe97aa163f9931309b864ab86e4d64cf2a9e","state":"complete","result":{}}}

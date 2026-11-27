@@ -1,0 +1,1 @@
+{"kind":"request","id":"request-health","binding":{"main":"main-A","worker":"worker-A"},"op":"health","body":{}}

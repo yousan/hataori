@@ -160,6 +160,9 @@ func storedReader(t *testing.T, codec agent.Codec) *reader {
 func (x *reader) commitStep() batch {
 	x.t.Helper()
 	b := x.r.read(x.lv)
+	if b.err != nil {
+		x.t.Fatalf("read fixture: %v, files=%v", b.err, b.files)
+	}
 	ctx := context.Background()
 	if err := x.r.Store.Update(ctx, func(tx *store.Tx) error { return saveRead(ctx, tx, x.lv.id, b) }); err != nil {
 		x.t.Fatal(err)
@@ -278,12 +281,12 @@ func TestWarmAfterASleepGivesOnlyTheWokenAgentsLines(t *testing.T) {
 	if got, want := replayed(), "two h4 h5"; got != want {
 		t.Fatalf("replayed %q, want %q", got, want)
 	}
-	// Without the stored ranges (the query fails), the lines still begin
-	// where the woken agent's do, in the order used before ranges.
+	// Missing replay ordering is an explicit pause; guessing the old source
+	// order could rebuild another codec state and release a wrong answer.
 	if _, err := x.r.Store.DB.Exec(`DROP TABLE session_reads`); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := replayed(), "h4 h5 two"; got != want {
+	if got, want := replayed(), ""; got != want {
 		t.Fatalf("without the ranges, replayed %q, want %q", got, want)
 	}
 }

@@ -364,7 +364,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		}
 		return []Row{f.failedRow(sf, conv, first, repo)}, nil
 	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out", "approval_asked", "approval_answered",
-		"proposal_made", "proposal_answered", "input_failed":
+		"proposal_made", "proposal_answered", "input_failed", "input_waiting":
 	default:
 		return nil, nil // a kind the front end does not show, or does not know
 	}
@@ -377,6 +377,8 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 	}
 	row := func(m surface.Message) []Row { return []Row{{Event: e.Pos, Conv: conv, Message: m}} }
 	switch e.Kind {
+	case "input_waiting":
+		return row(surface.Message{Text: "The message is waiting: " + d.Reason + "."}), nil
 	case "input_failed":
 		m := surface.Message{Text: "The input was not delivered: " + d.Reason + "."}
 		if d.Text != "" {
