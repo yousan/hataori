@@ -1,8 +1,9 @@
 # Worker resident
 
-The resident, SSH transport, workspace registration, remote runner and durable
-placement through #963 are foundations of #956's first-worker gate. Away
-actions (#964) and the combined product gate (#965) follow. It never
+The resident, SSH transport, workspace registration, remote runner, durable
+placement and away handling form #956's first-worker path. See
+[First Linux worker](first-worker.md) for the combined manual setup and limits.
+The resident never
 loads the main's configuration, starts a bot or accepts a control-socket hello.
 No deployment or service-manager operation is part of the implementation.
 
@@ -144,14 +145,15 @@ No service manager has been operated as part of this change.
 ## Recovery and available operations
 
 The worker protocol is independent of `docs/protocol.md`. This resident requires
-worker protocol 1.1's `lifecycle` and `receipts` capabilities. It implements
-`health`, `inventory`, `probe`, `receipt`, `prepare`, `start`, `end_host`, `input`
-and `answer`. Whole-host termination is `end_host`; 1.0 `stop` means a named turn
-interrupt and remains unsupported here. Replay, terminal attachment, transfers,
-login automation and workspace operations are not advertised or implemented.
-Uploaded policy handles refuse until the transfer gate exists. Only the own
-holder is accepted. #961 must register a local workspace before a real launch;
-a main-supplied path or guessed handle never supplies one.
+worker protocol 1.3's lifecycle, receipt, terminal, workspace and transfer
+capabilities. It implements bound preparation/start, named turn interrupts,
+whole-host termination, input/answers, retained capture replay, checked terminal
+attachment and worker-local workspace/transfer operations. The main reconciles
+these through the remote runner before dispatching held actions. Remote login
+automation and uploaded policy handles remain unavailable. Only the own holder
+is accepted; the worker registers a local workspace before launch, and a
+main-supplied path or guessed handle never supplies one. See the
+[first-worker guide](first-worker.md) for the combined shipped path.
 
 A run has a worker-generated opaque host identity, private ownership marker and
 exact installation/thread/session/run binding. A PID file or stored socket

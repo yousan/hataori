@@ -5,10 +5,12 @@ It is written from the code. When the two disagree, the code is right and this f
 
 ## Worker protocol status
 
-The separately versioned [worker protocol](worker-protocol.md) has an encoding
-and validation foundation. It adds no configuration fields, command, resident
-or SSH connection yet. Local-only operation remains the shipped default;
-worker installation and platform support require the later gates in #956.
+The separately versioned [worker protocol](worker-protocol.md) connects the
+main to resident Linux workers through system SSH. The shipped machine,
+placement, workspace and away fields are documented below. Local-only operation
+remains the default. Follow [First Linux worker](first-worker.md) for compatible
+manual installation and an existing worker-local agent login. Actual macOS
+worker runtime support remains gated by #969; CI is separate evidence.
 
 ## The instance root
 
@@ -187,9 +189,9 @@ outage cannot start a login command on the main.
 Isolation fixtures cover placement gates/order, durable waiting, reservations,
 bound worker execution and workspace identity guards. CI on Linux and macOS
 checks the code and fixtures; it does not establish real macOS worker runtime
-support. Away actions follow in #964 and the combined first-worker gate in
-#965. Remote login, upgrades, dashboard machine views and full macOS worker
-conformance are later steps of #956. Configuration installs or restarts no
+support. Durable away handling and the [first-worker guide](first-worker.md)
+describe the shipped recovery and combined integration path. Remote login,
+upgrades, dashboard machine views and full macOS worker conformance are later steps of #956. Configuration installs or restarts no
 service and increases no provider quota. A worker requires a compatible manual
 installation, configured repository grants and an existing agent login.
 
@@ -670,14 +672,15 @@ this instance configuration or uses `HATAORI_ROOT`. Its private
 choices. Worker adapters ignore ambient `pass_env` for probes and launches.
 See [Worker resident](worker-resident.md) for the exact schema, explicit
 installation binding, user-service templates, recovery behavior and limits.
-Workspace registration is available through the worker workspace capability;
-main integration ships separately. macOS worker support remains unavailable pending #969.
+Workspace registration and main routing use the worker workspace capability.
+See [First Linux worker](first-worker.md) for the combined setup. macOS worker
+support remains unavailable pending #969.
 
 ## Worker SSH transport configuration
 
 The worker SSH library maps existing `machines[].ssh`, `machines[].root` and
-pinned installation bindings to a shared private Unix forward; daemon routing
-ships separately in #962. No new JSON fields or transport CLI ship in #960.
+pinned installation bindings to a shared private Unix forward. The daemon
+configures it from those shipped fields; there is no separate transport CLI.
 The library requires an explicit private connection run directory, system
 OpenSSH and context-aware receiver-owned inventory/recovery callbacks. It uses
 operator keys/configuration for authentication, with strict host-key checks,
@@ -685,8 +688,8 @@ noninteractive bounded connection attempts, agent/X11 forwarding disabled and
 no credential/config writes. It never launches an agent or service through SSH.
 See [Worker SSH transport](worker-ssh.md) for the exact API mapping, timing bounds,
 readiness/failure categories, tested isolated Linux/macOS scenarios and limits.
-Worker workspace operations and placement remain separate; macOS worker support
-is still gated by #969.
+Worker workspace operations and placement use this transport; actual macOS worker
+runtime support is still gated by #969.
 
 ## Worker workspace and transfer configuration
 
@@ -703,7 +706,8 @@ canonical identity/root trust boundary, independent-destination restrictions,
 crash/acknowledgment/retention behavior and tested file/journal limits. Transfers
 use session handles, 64 KiB chunks and an 8 MiB per-file maximum; retained receipt
 capacity can limit later uploads without blocking unrelated operations.
-Main routing/placement remains #962 and later work; macOS support remains #969.
+Main routing/placement uses the same registered worker handles; macOS runtime
+support remains gated by #969.
 
 ## Machine session I/O
 
@@ -723,8 +727,9 @@ binaries manually, and enter the resulting worker ID in `machines[].installation
 The main uses the configured SSH alias and existing local OpenSSH authentication;
 no bot/forge/supervisor credential is copied to the resident.
 
-This is the runner boundary in #962, not the first-worker product gate. Placement
-and away queues follow in #963/#964, and the combined guide/gate is #965.
+The combined setup and recovery path is documented in
+[First Linux worker](first-worker.md), with isolated acceptance evidence in
+[the first-worker gate](notes/first-worker/README.md).
 Retained history currently has a 64 MiB per-run budget and at most 128 sources;
 exhaustion pauses the session rather than discarding codec reconstruction bytes.
 A read step drains up to 64 MiB per source before decoding later hooks; an

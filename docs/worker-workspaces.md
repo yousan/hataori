@@ -3,10 +3,11 @@
 The #961 resident implements the worker protocol's existing `workspace` and
 `transfer` capabilities. Clone, fetch, inspect, remove, restore, acknowledge,
 purge, upload and download resolve receiver-registered targets and opaque
-handles on the selected worker. The main supplies neither a repository URL nor
-an OS pathname. Main routing/placement and attachment presentation in the remote
-runner ship in #962 and later first-worker steps; this foundation does not
-make a configured machine usable by the chat daemon. No directory is migrated.
+handles on the selected worker. Clone/removal use registered handles rather than
+main-supplied OS paths; repository resolution accepts an opaque ID or an exact
+address from this worker's catalog. The main routes placement and attachment to
+the selected worker. See [First Linux worker](first-worker.md) for combined setup.
+No directory is migrated.
 
 ## Local configuration
 
@@ -135,8 +136,9 @@ relative regular file from the exact registered workspace, refuses traversal,
 symlink components and oversized/changing input, and returns only a session
 handle. Download reads that immutable registered snapshot in bounded chunks
 with size/digest checks. No worker pathname is returned for the main to open.
-Policy handles in `prepare` remain unsupported; remote-runner integration is
-separate from this transfer foundation.
+Policy handles in `prepare` remain unsupported. The remote runner uses these
+workspace and transfer operations through the bound worker connection; see the
+[first-worker guide](first-worker.md).
 
 Tests use independent temporary main/worker/repository roots and a fake agent.
 They cover independent clone/cache removal, declared independence, proof refusal

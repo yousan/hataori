@@ -37,11 +37,12 @@ type service struct {
 // inbound message goes to the attached daemon, or nowhere.
 func (s *service) Message(in surface.Inbound) { s.push(event{Message: &in}) }
 func (s *service) Choice(c surface.Selection) { s.push(event{Choice: &c}) }
-func (s *service) Command(surface.Command)    {}
+func (s *service) Command(c surface.Command)  { s.push(event{Command: &c}) }
 
 type event struct {
 	Message *surface.Inbound
 	Choice  *surface.Selection
+	Command *surface.Command
 }
 
 func (s *service) push(e event) {
@@ -229,6 +230,8 @@ func (d *remote) Run(ctx context.Context, sink surface.Sink) error {
 			sink.Message(*e.Message)
 		case e.Choice != nil:
 			sink.Choice(*e.Choice)
+		case e.Command != nil:
+			sink.Command(*e.Command)
 		}
 	}
 }
