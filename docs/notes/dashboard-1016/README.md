@@ -37,8 +37,8 @@ Only sizing/spacing or overflow containment changes; no new layout structure or 
 
 ## Validation
 
-Pinned Node install/check (173 tests)/build, gofmt, go vet and focused page-serving tests pass. Synthetic browser checks cover list, question, passkey dialog and stop confirmation at both widths/themes. The baseline fails on 19–33 px controls; every tested phone button/disclosure is now at least 44 × 44 px. Desktop captures remain unchanged. Fresh Codex review found no issues. No local tmux tests.
+Pinned Node check script (173 tests, test-concurrency=1), build, gofmt, go vet (Go p=1) and focused page/origin tests (-parallel=1) pass after integrating current main and rebuilding generated assets. Synthetic list, question, passkeys and stop captures at both widths/themes pass >=44 x44 px phone button/disclosure targets; desktop remains unchanged. Baseline fails on 19–33 px controls. Fresh independent Codex review reports no findings. No local tmux test.
 
-Fresh independent Codex review: no findings.
+Fresh independent Codex review: no findings; a second fresh Codex session reviewed the integrated 11-line CSS change and confirmed narrow scope and unchanged event/permission/input semantics.
 
-Concurrency: Open PRs #1027, #1026, #1013 share styles.css/generated page files; each finding uses a separate source hunk and starts from current main. Old #990 shares CSS but is merged; remote branches were checked before the source edit.
+Concurrency: Resumed existing PR after rechecking open PRs and remote branches. Shared dashboard CSS/generated assets: #1054, #1050, #1047, #1042, #1039, #1035, #1032, #1029, #1013. Main 6092ab61 is integrated; previous findings stay on main and only this finding remains in this PR’s diff.

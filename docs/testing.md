@@ -1,5 +1,31 @@
 # Testing
 
+## CI when no macOS runner is available
+
+Rerun a CI job by hand when GitHub cannot assign its hosted macOS runner
+(#733). The `test-macos` job can be cancelled before its first step with
+the annotation `The job was not acquired by Runner of type hosted even
+after multiple attempts`, sometimes accompanied by a macOS arm64 capacity
+warning. No test ran in that job; this is a runner availability failure.
+
+Check the failed run's `test-macos` annotation and steps in GitHub Actions
+before rerunning. For that annotation, use **Re-run failed jobs**, or:
+
+```sh
+gh run rerun <run-id> --failed
+```
+
+If the next attempt has the same annotation and still ran no steps, rerun
+the failed jobs again when capacity is available. A failure after steps
+started needs investigation of its own; the capacity annotation does not
+explain a failed test.
+
+This is a manual policy: CI does not retry automatically. A longer test
+timeout does not address a runner that was never assigned. Before merging,
+check that CI passed on the pull request's current head; after merging,
+check the separate push run on main's merge commit and rerun failed jobs
+there too if the same runner availability failure occurs.
+
 ## Phase 1 acceptance criteria and their tests
 
 Every acceptance criterion of phase 1 ([design, section 8](design/overview.md#phase-1-replace-c-lord-for-dispatched-orders-discord-and-claude-code)), and the tests that cover it with the fakes. `e2e` tests are in `cmd/hataori` and run the daemon (in the test process, or as a process of its own where a test kills it), a session host, the fake agent and the fake surface; the others are named with their package. A criterion that needs the real services says so, and why.
