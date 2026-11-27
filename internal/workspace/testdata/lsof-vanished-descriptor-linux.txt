@@ -1,0 +1,2 @@
+p12345\0K23456\0
+f8\0tunknown\0n/proc/12345/task/23456/fd/8 (readlink: No such file or directory)\0

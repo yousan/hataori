@@ -258,10 +258,22 @@ func TestRemovalPassRemovesAThreadClosedLongEnough(t *testing.T) {
 	r.connected(t)
 	th, _, ws := r.idleThread(t, 0, "first")
 	open, _, openWS := r.idleThread(t, 1, "second")
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("removal refusals: %v", r.events(t, "removal_refused", th))
+		}
+	})
 	if code, _, errOut := cli(t, "close", "--root", r.root, numberOf(t, r.root, th)); code != 0 {
 		t.Fatalf("hataori close: %d %q", code, errOut)
 	}
-	eventually(t, "the removal pass", r.within(30*time.Second), func() bool { return r.state(t, th) == "removed" })
+	// Polling the control socket opens and closes daemon descriptors during
+	// lsof's scan. Observe the rename without creating that churn, then ask
+	// for the state after the process proof has finished.
+	eventually(t, "the workspace moved to trash", r.within(30*time.Second), func() bool {
+		_, err := os.Lstat(ws)
+		return os.IsNotExist(err)
+	})
+	eventually(t, "the removed state", r.within(5*time.Second), func() bool { return r.state(t, th) == "removed" })
 	if _, err := os.Lstat(ws); !os.IsNotExist(err) {
 		t.Fatalf("the workspace is still in place: %v", err)
 	}

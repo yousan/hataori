@@ -2990,6 +2990,165 @@ func TestRefuseProcessUsingTheDirectory(t *testing.T) {
 	wantRefusal(t, x.check(), InUse, "")
 }
 
+// Captured from lsof on a Linux process with PR_SET_DUMPABLE=0. The PID
+// is replaced with 12345 and NUL bytes are written as \0 in the capture.
+func TestRefuseUnreadableLsofCapture(t *testing.T) {
+	data, err := os.ReadFile("testdata/lsof-nondumpable-linux.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, noFD := range []bool{false, true} {
+		t.Run(fmt.Sprintf("NOFD only=%v", noFD), func(t *testing.T) {
+			x := newRemoval(t)
+			capture := string(data)
+			if noFD {
+				var lines []string
+				for _, line := range strings.Split(capture, "\n") {
+					if strings.HasPrefix(line, "p") || strings.HasPrefix(line, "fNOFD") {
+						lines = append(lines, line)
+					}
+				}
+				capture = strings.Join(lines, "\n") + "\n"
+			}
+			bin := filepath.Join(x.tmp, "bin")
+			if err := os.Mkdir(bin, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(bin, "lsof"), []byte("#!/bin/sh\nprintf '"+capture+"'\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
+			err := x.check()
+			wantRefusal(t, err, UnknownUse, "")
+			if detail := err.(*Refusal).Detail; !strings.Contains(detail, "process 12345 ") || !strings.Contains(detail, "Permission denied") {
+				t.Fatalf("refusal must explain the unreadable process: %s", detail)
+			}
+		})
+	}
+}
+
+// A descriptor closing during lsof's scan invalidates that whole proof.
+// A fresh, complete proof may succeed; persistent failures still refuse.
+func TestRetryProcessProofAfterADescriptorVanishes(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux procfs descriptor captures")
+	}
+	lsof, err := exec.LookPath("lsof")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, capture, calls string
+		refuse               bool
+		wantCalls            int
+	}{
+		{"before", "lsof-vanished-descriptor-linux.txt", "1", false, 4},
+		{"after", "lsof-vanished-descriptor-linux.txt", "2", false, 4},
+		{"every before", "lsof-vanished-descriptor-linux.txt", "1|3|5", true, 6},
+		{"every after", "lsof-vanished-descriptor-linux.txt", "2|4|6", true, 6},
+		{"permission denied", "lsof-nondumpable-linux.txt", "1", true, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			x := newRemoval(t)
+			data, err := os.ReadFile(filepath.Join("testdata", tc.capture))
+			if err != nil {
+				t.Fatal(err)
+			}
+			capture := filepath.Join(x.tmp, "capture")
+			if err := os.WriteFile(capture, bytes.ReplaceAll(data, []byte(`\0`), []byte{0}), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			bin := filepath.Join(x.tmp, "bin")
+			if err := os.Mkdir(bin, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			calls := filepath.Join(x.tmp, "calls")
+			script := "#!/bin/sh\necho >>'" + calls + "'\ncase $(wc -l <'" + calls + "') in\n" +
+				tc.calls + ") cat '" + capture + "';;\nesac\nexec '" + lsof + "' \"$@\"\n"
+			if err := os.WriteFile(filepath.Join(bin, "lsof"), []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(filepath.ListSeparator)+os.Getenv("PATH"))
+			err = x.check()
+			if tc.refuse {
+				wantRefusal(t, err, UnknownUse, "")
+				if detail := err.(*Refusal).Detail; !strings.Contains(detail, "process 12345") {
+					t.Fatal(detail)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			data, err = os.ReadFile(calls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := bytes.Count(data, []byte{'\n'}); got != tc.wantCalls {
+				t.Fatalf("lsof called %d times, want %d", got, tc.wantCalls)
+			}
+		})
+	}
+}
+
+func TestRefuseProcessWhoseFilesCannotBeRead(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("PR_SET_DUMPABLE is Linux only")
+	}
+	for _, inside := range []bool{true, false} {
+		t.Run(fmt.Sprintf("inside=%v", inside), func(t *testing.T) {
+			x := newRemoval(t)
+			if err := x.check(); err != nil {
+				t.Fatalf("before the unreadable process: %v", err)
+			}
+			dir := x.clone
+			if !inside {
+				dir = x.tmp
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "python3", "-c", `
+import ctypes, os, sys, time
+assert ctypes.CDLL(None).prctl(4, 0) == 0
+os.chdir(sys.argv[1])
+print("ready", flush=True)
+time.sleep(60)
+`, dir)
+			cmd.Dir = "/"
+			cmd.Stderr = os.Stderr
+			out, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { cmd.Process.Kill(); cmd.Wait() }()
+			if ready, err := bufio.NewReader(out).ReadString('\n'); err != nil || ready != "ready\n" {
+				t.Fatalf("process readiness: %q, %v", ready, err)
+			}
+			pid := strconv.Itoa(cmd.Process.Pid)
+			if _, err := os.Readlink("/proc/" + pid + "/cwd"); err == nil {
+				t.Skip("this environment can inspect the nondumpable process")
+			} else if !errors.Is(err, fs.ErrPermission) {
+				t.Fatal(err)
+			}
+			to, err := x.r.Remove(ctx, x.clone)
+			wantRefusal(t, err, UnknownUse, "")
+			if detail := err.(*Refusal).Detail; !strings.Contains(detail, "process "+pid+" ") || !strings.Contains(detail, "Permission denied") {
+				t.Fatalf("refusal must identify the unreadable process and why: %s", detail)
+			}
+			if to != "" {
+				t.Fatalf("refused removal returned a trash path: %s", to)
+			}
+			if _, err := os.Stat(x.clone); err != nil {
+				t.Fatalf("refused workspace must remain: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(x.root, TrashDir)); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("refused removal must not create trash: %v", err)
+			}
+		})
+	}
+}
+
 // lsof writes a byte that is not printable in its locale as \xNN, and a
 // backslash as two.
 func TestRefuseProcessUsingAWorkspaceWhosePathLsofEscapes(t *testing.T) {

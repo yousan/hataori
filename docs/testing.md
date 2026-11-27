@@ -1,5 +1,14 @@
 # Testing
 
+On Linux, removal refuses when `lsof` cannot inspect any process it lists,
+including processes unrelated to hataori. Run the suite in a private PID
+namespace with its own `/proc` when the host has protected processes. CI
+does this with `unshare` and `tini`, dropping privileges to the runner's
+user before starting the reaper and tests. The reaper collects orphaned
+children so their zombies do not block later removal tests. Packages run
+serially so another package's protected helpers cannot block a removal. This
+isolates the tests; the application's removal check has no exception for tests.
+
 ## CI when no macOS runner is available
 
 Rerun a CI job by hand when GitHub cannot assign its hosted macOS runner
