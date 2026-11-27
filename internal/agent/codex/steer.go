@@ -19,7 +19,7 @@ func (c *codec) flushSteers(a *agent.Actions) bool {
 	for len(c.queue) > 0 {
 		in := c.queue[0]
 		c.queue = c.queue[1:]
-		id := c.write(a, "turn/steer", map[string]any{"threadId": c.session, "expectedTurnId": c.turnID, "input": []any{map[string]any{"type": "text", "text": in.Text}}}, true)
+		id := c.write(a, "turn/steer", map[string]any{"threadId": c.session, "expectedTurnId": c.turnID, "input": []any{c.textInput(in.Text)}}, true)
 		a.Inputs = append(a.Inputs, in.ID)
 		c.sent = append(c.sent, &pendingInput{input: in, request: id, steer: true})
 	}
@@ -56,7 +56,7 @@ func (c *codec) matchWrittenSteer(a *agent.Actions, p params) {
 		parts = append(parts, v.Text)
 	}
 	for i, s := range c.sent {
-		if s.input.Written && normalize(s.input.Text) == normalize(strings.Join(parts, "")) {
+		if s.input.Written && normalize(c.inputText(s.input.Text)) == normalize(strings.Join(parts, "")) {
 			c.emit(a, agent.Event{Kind: agent.InputTaken, Input: s.input.ID})
 			c.sent = append(c.sent[:i], c.sent[i+1:]...)
 			return

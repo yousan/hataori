@@ -7,15 +7,35 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
 )
+
+func TestWorkerAttachmentRefusesOldDaemonBeforeSending(t *testing.T) {
+	var sent atomic.Bool
+	path := fakeDaemon(t, "3.42", func(message) []string { sent.Store(true); return nil })
+	c, err := dialPath(path, Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := c.AttachWorker(ctx, 1); err == nil || !strings.Contains(err.Error(), "3.44") {
+		t.Fatalf("compatibility refusal: %v", err)
+	}
+	if sent.Load() {
+		t.Fatal("sent a remote attachment to an incompatible daemon")
+	}
+}
 
 // Major versions must be equal; minor versions may differ.
 func TestVersions(t *testing.T) {
@@ -47,7 +67,12 @@ func TestVersions(t *testing.T) {
 // answers each line with the function's lines (none when nil).
 func fakeDaemon(t *testing.T, version string, answer func(req message) []string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "d.sock")
+	dir, err := os.MkdirTemp("/tmp", "hw") // Keep Unix socket addresses short on macOS.
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "d.sock")
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)

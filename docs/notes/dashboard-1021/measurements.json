@@ -582,19 +582,19 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 16.796875,
+        "height": 44,
         "width": 370
       },
       {
@@ -604,12 +604,12 @@
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -655,39 +655,39 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 72.71875
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 100.34375
       },
       {
         "class": "",
-        "height": 42.375,
+        "height": 44,
         "width": 370
       },
       {
         "class": "",
-        "height": 24.1875,
+        "height": 44,
         "width": 128.984375
       },
       {
         "class": "",
-        "height": 24.1875,
+        "height": 44,
         "width": 120.828125
       },
       {
@@ -697,12 +697,12 @@
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -738,19 +738,19 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 16.796875,
+        "height": 44,
         "width": 370
       },
       {
@@ -760,12 +760,12 @@
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]
@@ -811,39 +811,39 @@
     "pane": null,
     "status": {
       "width": 390,
-      "height": 81.390625,
+      "height": 106.59375,
       "scrollWidth": 390,
       "clientWidth": 390
     },
     "controls": [
       {
         "class": "narrow-back",
-        "height": 28.1875,
+        "height": 44,
         "width": 119.4375
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 72.71875
       },
       {
         "class": "",
-        "height": 22.796875,
+        "height": 44,
         "width": 100.34375
       },
       {
         "class": "",
-        "height": 42.375,
+        "height": 44,
         "width": 370
       },
       {
         "class": "",
-        "height": 24.1875,
+        "height": 44,
         "width": 128.984375
       },
       {
         "class": "",
-        "height": 24.1875,
+        "height": 44,
         "width": 120.828125
       },
       {
@@ -853,12 +853,12 @@
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 86.40625
       },
       {
         "class": "passkeys-open",
-        "height": 18.796875,
+        "height": 44,
         "width": 67.8125
       }
     ]

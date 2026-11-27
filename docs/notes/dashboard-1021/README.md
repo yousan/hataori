@@ -29,8 +29,8 @@ Only sizing/spacing or overflow containment changes; no new layout structure or 
 
 ## Validation
 
-Pinned Node check (173 tests)/build, gofmt, go vet and focused page tests pass. Baseline phone composer and answer textareas fail at 13 px. Both now measure 16 px at 390 px and remain 13 px at 1440 px in both themes. Eight synthetic captures are included. Fresh Codex review found no issues. No local tmux tests.
+Pinned Node 24.22.1: npm ci --ignore-scripts, complete npm check (173 tests) with Node test-concurrency=1, npm run build; generated page rebuilt after main integration. gofmt, go vet (Go p=1) and focused TestThePage tests (-parallel=1) pass. Eight refreshed synthetic composer/question captures at1440/390px in both themes verify phone textarea16px and desktop13px. Baseline-failing evidence is retained; no mobile zoom measurement is claimed. No local tmux tests.
 
-Fresh independent Codex review: no findings.
+Fresh independent Codex review: landing_review_1021: fresh independent Codex source review after current-main integration found no actionable findings; only five CSS lines, narrow textareas16px/desktop13px, no input/permission changes, prior fixes preserved.
 
-Concurrency: Open PRs #1039, #1035, #1032, #1029, #1028, #1027, #1026, #1013 share styles.css/generated page files; each finding uses a separate source hunk and starts from current main. Old #990 shares CSS but is merged; remote branches were checked before the source edit.
+Concurrency: Resumed existing PR after rechecking open PRs and remote branches. Shared dashboard CSS/generated assets: #1054, #1050, #1047, #1013. Main 7bf1dbf6 is integrated; previous findings stay on main and only this finding remains in this PR’s diff.

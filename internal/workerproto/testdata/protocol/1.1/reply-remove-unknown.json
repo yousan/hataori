@@ -1,0 +1,1 @@
+{"kind":"reply","id":"request-remove","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"remove","key":"key-remove","body":{"operation":"remove","key":"key-remove","request_hash":"c44e73f043381cbd3ec85a830d9198472c92bbee5da32b9863dc3585885a537d","state":"unknown"}}
