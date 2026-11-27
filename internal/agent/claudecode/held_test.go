@@ -48,9 +48,13 @@ func quiet(t *testing.T, c *codec, now time.Time, d time.Duration, when string) 
 
 // heldTurnEnds ticks every 100 ms for d, and fails at any key, and unless
 // the turn that a held input was to start ends once, "not delivered",
-// naming no input, so that the input does not end.
+// retaining the input, either by its flag or the legacy unnamed end.
 func heldTurnEnds(t *testing.T, c *codec, now time.Time, d time.Duration, when string) time.Time {
 	t.Helper()
+	heldID := ""
+	if c.sent != nil {
+		heldID = c.sent.id
+	}
 	var evs []agent.Event
 	for end := now.Add(d); now.Before(end); now = now.Add(100 * time.Millisecond) {
 		a := c.Tick(now)
@@ -59,8 +63,8 @@ func heldTurnEnds(t *testing.T, c *codec, now time.Time, d time.Duration, when s
 		}
 		evs = append(evs, a.Events...)
 	}
-	if len(evs) != 1 || evs[0].Kind != agent.TurnEnded || evs[0].Status != agent.Failed || evs[0].Reason != agent.NotDelivered || evs[0].Input != "" {
-		t.Fatalf("%s: events %+v; want the turn's end, not delivered, naming no input", when, evs)
+	if len(evs) != 1 || evs[0].Kind != agent.TurnEnded || evs[0].Status != agent.Failed || evs[0].Reason != agent.NotDelivered || (evs[0].Input != "" && (!evs[0].RetainInput || evs[0].Input != heldID)) {
+		t.Fatalf("%s: events %+v; want the turn's end, not delivered, retaining its input", when, evs)
 	}
 	return now
 }
@@ -161,7 +165,7 @@ func TestHeldInputTimesOutAfterTheOwnTurn(t *testing.T) {
 }
 
 // A daemon restarted while the message waits in the box for the agent's own
-// turn to end: the rebuilt codec presses Enter after it.
+// turn to end: the rebuilt codec waits for its prompt, without Enter.
 func TestHeldInputAcrossARestart(t *testing.T) {
 	c := newTestCodec()
 	for _, f := range []string{"01-SessionStart", "02-UserPromptSubmit", "05-Stop", "07-UserPromptSubmit"} {
@@ -172,8 +176,8 @@ func TestHeldInputAcrossARestart(t *testing.T) {
 	}
 	now := quiet(t, c, time.Now(), 2*DefaultInputTimeout, "during the own turn")
 	decodeFile(t, c, "11", held+"11-Stop.json")
-	if _, n := enters(t, c, now, 2*time.Second); n != 1 {
-		t.Fatalf("Enter pressed %d times, want once", n)
+	if _, n := enters(t, c, now, 2*time.Second); n != 0 {
+		t.Fatalf("Enter pressed %d times after reconnect, want none", n)
 	}
 	a := decodeFile(t, c, "12", held+"12-UserPromptSubmit.json")
 	if summary(a) != "turn(caller)" || a.Events[0].Input != "in-7" {
@@ -181,33 +185,24 @@ func TestHeldInputAcrossARestart(t *testing.T) {
 	}
 }
 
-// In a confined session, what a hataori before #914 left in the box across
-// a restart, which this one would not paste as it is, is never submitted,
-// nor is anything pasted after it, until the CLI reports it as a prompt: the
-// turn it was to start ends after the input timeout, naming no input, the
-// next input ends "not delivered", and the one in the box does not end, so
-// that it is handed to the codec again after another restart. Another
-// prompt, which may have been before the paste, does not release it, nor
-// does the prompt of what this one would paste for it. One that this one
-// pastes the same, or that the older one pasted after the prefix, also past
-// a character that does not show, is submitted after the agent's own turn,
-// as ever, and so is any that this one pasted (Input.Earlier).
+// A reconnect holds both legacy unsafe pastes and current pastes: it cannot
+// prove their Enter arrived. No key is sent after an unrelated turn. Only
+// the matching prompt releases each input; other prompts leave it held.
 func TestOlderPasteIsNotSubmittedAfterARestart(t *testing.T) {
 	for _, tc := range []struct {
 		text    string
-		enter   int  // Enters after the agent's own turn
 		own     bool // the capture's next prompt, 12, is the input's own
 		current bool // this hataori pasted it
 	}{
-		{"\u001b[31m!id", 0, false, false},
-		{"#x", 0, false, false},
-		{heldText + "\r", 0, true, false},      // an older paste with a carriage return
-		{"\u0007" + heldText, 0, false, false}, // which this one pastes as the next prompt's text
-		{heldText, 1, true, false},
-		{"/add-dir x", 1, false, false},
-		{"\u200b/add-dir x", 1, false, false},
-		{"\u001b[31m!id", 1, false, true},
-		{"#x", 1, false, true},
+		{"\u001b[31m!id", false, false},
+		{"#x", false, false},
+		{heldText + "\r", true, false},      // an older paste with a carriage return
+		{"\u0007" + heldText, false, false}, // which this one pastes as the next prompt's text
+		{heldText, true, false},
+		{"/add-dir x", false, false},
+		{"\u200b/add-dir x", false, false},
+		{"\u001b[31m!id", false, true},
+		{"#x", false, true},
 	} {
 		c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
 		for _, f := range []string{"01-SessionStart", "02-UserPromptSubmit", "05-Stop", "07-UserPromptSubmit"} {
@@ -219,11 +214,8 @@ func TestOlderPasteIsNotSubmittedAfterARestart(t *testing.T) {
 		now := quiet(t, c, time.Now(), 2*DefaultInputTimeout, "during the own turn")
 		decodeFile(t, c, "11", held+"11-Stop.json")
 		now, n := enters(t, c, now, 2*time.Second)
-		if n != tc.enter {
-			t.Errorf("%q: Enter pressed %d times, want %d", tc.text, n, tc.enter)
-		}
-		if tc.enter != 0 {
-			continue
+		if n != 0 {
+			t.Errorf("%q: Enter pressed %d times after reconnect, want none", tc.text, n)
 		}
 		now = heldTurnEnds(t, c, now, 2*DefaultInputTimeout, "after the own turn")
 		a, _ := c.Input(agent.Input{ID: "in-8", Text: "list the threads"})
@@ -278,8 +270,8 @@ func TestOnlyItsOwnPromptReleasesAnInput(t *testing.T) {
 
 // An input that this hataori pasted before a restart, after which what an
 // older hataori pasted may be in the box, gets no Enter either: after the
-// input timeout its turn ends as not delivered, naming it, and a prompt the
-// same as its paste no longer counts as it; the older paste stays held (#914).
+// input timeout its turn ends as not delivered, retaining it. A later
+// matching prompt releases it, while the older paste stays held (#837).
 func TestOwnInputBeforeAnOlderPasteEnds(t *testing.T) {
 	c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
 	for _, f := range []string{"01-SessionStart", "02-UserPromptSubmit", "05-Stop", "07-UserPromptSubmit"} {
@@ -303,10 +295,9 @@ func TestOwnInputBeforeAnOlderPasteEnds(t *testing.T) {
 	if len(evs) != 1 || evs[0].Kind != agent.TurnEnded || evs[0].Reason != agent.NotDelivered || evs[0].Input != "in-6" {
 		t.Fatalf("events %+v; want the end of in-6's turn, not delivered", evs)
 	}
-	for _, e := range decodeFile(t, c, "12", held+"12-UserPromptSubmit.json").Events {
-		if e.Input != "" {
-			t.Errorf("the prompt of its paste names %q", e.Input)
-		}
+	a := decodeFile(t, c, "12", held+"12-UserPromptSubmit.json")
+	if len(a.Events) != 1 || a.Events[0].Input != "in-6" {
+		t.Fatalf("confirmed original paste: %+v", a.Events)
 	}
 	if !slices.Equal(c.leftover, []string{"in-7"}) {
 		t.Errorf("held %q, want in-7", c.leftover)
@@ -393,21 +384,23 @@ func TestClearEndsTheHeldInputs(t *testing.T) {
 	}
 }
 
-// Without a held input, the session's end leaves a written input waiting for
-// its report, as before (#914).
-func TestClearKeepsAnInputWithoutAHold(t *testing.T) {
+// A session end removes the editor and completes a reconnected input that
+// remained unconfirmed (#837).
+func TestClearEndsAReconnectedUnconfirmedInput(t *testing.T) {
 	c := (&Adapter{}).NewCodec(agent.Spec{Approvals: agent.AllowAll, Confine: &agent.Confinement{}}).(*codec)
 	decodeFile(t, c, "01", "clear/hooks/01-SessionStart.json")
-	if a, _ := c.Input(agent.Input{ID: "in-6", Text: "list the threads", Written: true}); len(a.Keys) != 0 {
-		t.Fatalf("written again: %q", a.Keys)
-	}
+	c.Input(agent.Input{ID: "in-6", Text: "list the threads", Written: true})
+	var ended []agent.Event
 	for _, e := range decodeFile(t, c, "04", "clear/hooks/04-SessionEnd.json").Events {
 		if e.Kind == agent.TurnEnded {
-			t.Fatalf("at the session's end: %+v", e)
+			ended = append(ended, e)
 		}
 	}
-	if c.sent == nil || c.sent.id != "in-6" {
-		t.Fatalf("waited for: %+v; want in-6", c.sent)
+	if len(ended) != 1 || ended[0].Input != "in-6" || ended[0].RetainInput || ended[0].Reason != agent.NotDelivered {
+		t.Fatalf("session end: %+v", ended)
+	}
+	if c.sent != nil || c.holdsBox() {
+		t.Fatalf("box retained after clear: %+v", c.sent)
 	}
 }
 
