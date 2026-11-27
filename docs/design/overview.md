@@ -2004,7 +2004,9 @@ a callback rebuilding accepted caller provenance from current grants.
 for current-grant recovery checks. `PlacementEnded` requires positive local
 holder proof, including superseded runs; `PlacementRecovered` recognizes an
 original phase-two host before applying new-start resource admission. Remote
-release uses bound inventory.
+release uses bound inventory. A canceled dispatch retains a distinct durable
+launch marker excluded from both recovery and reconnect, so later restarts
+cannot deliver input whose original authority was revoked.
 Optional `WorkerWorkspaces` routes removal, reopen and trash acknowledgement
 to typed resident operations; opaque worker handles are never main paths.
 

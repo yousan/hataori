@@ -33,6 +33,11 @@ type PlacementMachine struct {
 	Agents []string
 }
 
+// PlacementLaunchCanceled is a terminal dispatch marker, distinct from a
+// completed launch (zero). Reconnect must never follow its unsent first input.
+// The host and reservation remain owned until positive end reconciliation.
+const PlacementLaunchCanceled = 3
+
 var ErrPlacementWait = errors.New("waiting for room on the recorded machine")
 
 // waitForMachine retains both the committed launch and its reservation. An

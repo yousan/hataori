@@ -845,36 +845,11 @@ func TestPlacementCoreSelectsWorkerAndWaitsWithoutLocalFallback(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(f.root, "work")); !os.IsNotExist(err) {
 		t.Fatal("worker placement touched main workspace", err)
 	}
-	// A recovered successful launch clears only its own placement wait label.
-	var sid int64
-	if err := f.st.DB.QueryRow(`SELECT id FROM sessions WHERE thread_id=?`, int64(id)).Scan(&sid); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.st.DB.Exec(`UPDATE sessions SET io_error=? WHERE id=?`, core.ErrPlacementWait.Error(), sid); err != nil {
-		t.Fatal(err)
-	}
-	// Reconcile the existing completed start receipt, without another host.
-	var raw string
-	f.st.DB.QueryRow(`SELECT first_input FROM sessions WHERE id=?`, sid).Scan(&raw)
-	var first firstInput
-	if err := json.Unmarshal([]byte(raw), &first); raw != "" && err != nil {
-		t.Fatal(err)
-	}
-	remoteSession, err := f.run.remoteSession(ctx, sid)
+	remoteSession, err := f.run.remoteSession(ctx, int64(id))
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata, err := remoteSession.Metadata(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.run.launchRemote(ctx, sid, "fake", metadata.Spec, first); err != nil {
-		t.Fatal(err)
-	}
-	info, err = owner(f.core).Thread(ctx, id, 0, 0)
-	if err != nil || info.PlacementPending || info.IOPaused != "" {
-		t.Fatal(info, err)
-	}
+	waitFor(t, "placed turn completed", 8*time.Second, f.has("turn_ended", 1))
 	closer := f.core.As(control.Caller{From: ownerFrom, Scopes: []string{"s"}, May: all | control.OpClose | control.OpReopen})
 	if err := closer.CloseThread(ctx, id); err != nil {
 		t.Fatal(err)
@@ -1056,7 +1031,7 @@ func TestPlacementLostWorkerStartReplyKeepsReservation(t *testing.T) {
 		t.Fatal("lost reply duplicated worker", got)
 	}
 	info, err = owner(f.core).Thread(ctx, id, 0, 0)
-	if err != nil || info.PlacementPending || info.Machine != "build" {
+	if err != nil || info.PlacementPending || info.IOPaused != "" || info.Machine != "build" {
 		t.Fatal(info, err)
 	}
 	var starts int

@@ -1,5 +1,5 @@
 # Run serially against isolated fixtures; always restore each candidate edit.
-import json, os, subprocess
+import json, os, subprocess, sys
 from pathlib import Path
 cases = [
  ("ready gate", "internal/placement/placement.go", "case !o.Ready:", "case false:", "./internal/placement", "^TestEveryEligibilityGate/away$"),
@@ -9,8 +9,14 @@ cases = [
  ("earlier local holder proof", "internal/runner/machines.go", "func (r *Runner) endPriorPlacements(ctx context.Context, id int64) error {", "func (r *Runner) endPriorPlacements(ctx context.Context, id int64) error { return nil", "./internal/runner", "^TestPlacementLocalPriorUnknownBlocksReplacementAndRelease$"),
  ("original phase2 host recovery", "internal/runner/machines.go", "return l.State == holder.Running || l.Ended(), nil", "_ = l; return false, nil", "./internal/runner", "^TestPlacementLocalRecoveryUsesOriginalHostBeforeNewAdmission$"),
  ("terminal trash history", "internal/worker/workspace_ops.go", 'tr.State != "restored" && tr.State != "purged" && (!ok || w.Target != tr.Target || w.Device != tr.Device || w.Inode != tr.Inode)', '(!ok || w.Target != tr.Target || w.Device != tr.Device || w.Inode != tr.Inode)', "./internal/worker", "^TestPlacementRestoredWorkspaceTransfersAndRestarts$"),
+ ("canceled dispatch survives restarts", "internal/core/placement.go", "const PlacementLaunchCanceled = 3", "const PlacementLaunchCanceled = 0", "./internal/runner", "^TestPlacementRevocationStaysCanceledAcrossTwoRestarts$"),
 ]
-results=[]
+if len(sys.argv)>1:
+ cases=[c for c in cases if c[0] in sys.argv[1:]]
+ if not cases: raise RuntimeError("unknown guard selection")
+ previous=json.loads(Path("docs/notes/machine-placement/negative-guards.json").read_text())
+ results=[r for r in previous if r["guard"] not in {c[0] for c in cases}]
+else: results=[]
 for name, filename, old, new, package, pattern in cases:
  path=Path(filename); original=path.read_text()
  if original.count(old)!=1: raise RuntimeError("mutation anchor: "+name)

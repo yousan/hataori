@@ -91,5 +91,18 @@
       "FAIL\tgithub.com/yousan/hataori/internal/worker\t4.771s",
       "FAIL"
     ]
+  },
+  {
+    "guard": "canceled dispatch survives restarts",
+    "command": "go test -p 1 ./internal/runner -run ^TestPlacementRevocationStaysCanceledAcrossTwoRestarts$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementRevocationStaysCanceledAcrossTwoRestarts (0.14s)",
+      "placement_test.go:149: second restart followed canceled first input 1",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.149s",
+      "FAIL"
+    ]
   }
 ]

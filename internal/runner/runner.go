@@ -959,6 +959,8 @@ func (r *Runner) Reconnect(ctx context.Context) error {
 	if err := r.stopSleepers(ctx); err != nil {
 		return err
 	}
+	// Only completed launches (zero) can reconnect. A canceled placement
+	// intent keeps a distinct durable phase, including across later restarts.
 	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id, spec FROM sessions
 		WHERE state IN ('creating', 'idle', 'running', 'waiting') AND spec != '' AND launch = 0`)
 	if err != nil {

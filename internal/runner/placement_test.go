@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/placement"
@@ -80,5 +81,81 @@ func TestPlacementLocalRecoveryUsesOriginalHostBeforeNewAdmission(t *testing.T) 
 	}
 	if err := f.core.AdmitSession(ctx, 2); !errors.Is(err, core.ErrPlacementWait) {
 		t.Fatal("prior run PID admitted a new start", err)
+	}
+}
+
+func TestPlacementRevocationStaysCanceledAcrossTwoRestarts(t *testing.T) {
+	f := newFixture(t, options{})
+	ctx := context.Background()
+	f.core.Placement = &core.MachinePlacement{Machines: map[string]core.PlacementMachine{"local": {Limits: placement.Limits{MaxResident: 1}}}, Observe: func(context.Context, string, string) (placement.Observation, error) {
+		now := time.Now()
+		return placement.Observation{Ready: true, Reconciled: true, Known: true, Installed: true, LoggedIn: true, At: now, HealthAt: now, ValidFor: 10 * time.Second, Memory: 1 << 30, Disk: 1 << 30}, nil
+	}}
+	f.run.Admit = f.core.AdmitSession
+	lost := false
+	f.run.point = func(point string) {
+		if point == "after host start" {
+			panic("isolated lost start response")
+		}
+	}
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != "isolated lost start response" {
+				t.Fatalf("unexpected start recovery: %v", recovered)
+			}
+			lost = true
+		}()
+		f.start("reply revoked-input")
+	}()
+	if !lost {
+		t.Fatal("did not reach successful host start")
+	}
+	var phase int
+	if err := f.st.DB.QueryRow(`SELECT launch FROM sessions WHERE id=1`).Scan(&phase); err != nil || phase != 2 {
+		t.Fatal(phase, err)
+	}
+	var first string
+	f.st.DB.QueryRow(`SELECT first_input FROM sessions WHERE id=1`).Scan(&first)
+	f.core.Placement.Caller = func(context.Context, control.Caller, string, string) (control.Caller, error) {
+		return control.Caller{}, control.ErrForbidden
+	}
+	restart := func() {
+		f.run.Close()
+		next := &Runner{Store: f.st, Machine: f.core.Machine, Adapters: f.run.Adapters, Root: f.root, Host: f.run.Host, Log: f.run.Log, Poll: time.Millisecond, Admit: f.core.AdmitSession}
+		f.run = next
+		f.core.Runner = next
+	}
+	restart()
+	if err := f.run.Reconnect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.core.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.DB.QueryRow(`SELECT launch FROM sessions WHERE id=1`).Scan(&phase); err != nil || phase != core.PlacementLaunchCanceled {
+		t.Fatal("revocation did not retain canceled dispatch", phase, err)
+	}
+	restart()
+	if err := f.run.Reconnect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.core.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.run.mu.Lock()
+	followers := len(f.run.live)
+	f.run.mu.Unlock()
+	if followers != 0 {
+		t.Fatal("second restart followed canceled first input", followers)
+	}
+	got := counts(t, f.st)
+	if got["input"] != 0 || got["turn_started"] != 0 {
+		t.Fatal("revoked first input was delivered", got)
+	}
+	var retained string
+	f.st.DB.QueryRow(`SELECT first_input FROM sessions WHERE id=1`).Scan(&retained)
+	reservations, err := f.st.MachineReservations(ctx)
+	if err != nil || len(reservations) != 1 || retained != first {
+		t.Fatal("revocation lost host ownership or input audit", reservations, err)
 	}
 }
