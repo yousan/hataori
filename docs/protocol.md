@@ -1203,8 +1203,8 @@ Since 1.13. Since 4.0, this is a merged set of observations, not one complete re
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `agent` | string | required | the agent's registered name |
-| `at` | time | required | oldest retained window observation; initial receipt time when no window has ever been observed; since 4.0 |
-| `every` | integer | required | seconds: shortest retained expected refresh interval; initial report interval for a never-populated set; since 4.0 |
+| `at` | time | required | oldest retained window observation; latest accepted report receipt time when no window has ever been observed; since 4.0 |
+| `every` | integer | required | seconds: shortest retained expected refresh interval; latest accepted report interval for a never-populated set; since 4.0 |
 | `windows` | [`LimitWindow`] | required | retained observations in first-observed name order, new names appended; omission does not delete; may be empty; since 4.0 |
 
 ### Type `ClientState`
