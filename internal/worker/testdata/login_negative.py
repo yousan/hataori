@@ -11,6 +11,10 @@ import time
 
 ROOT = Path(__file__).resolve().parents[3]
 CASES = [
+    ("login_payload_utf8", "internal/workerproto/login.go",
+     "if !utf8.Valid(data) {", "if !utf8.Valid(data) && false {",
+     "./internal/workerproto", "^TestEphemeralLoginDataUTF8$",
+     "UTF-8 login payload validity = true, want false"),
     ("login_capability_minor_negotiation", "internal/workerproto/protocol.go",
      "if cap == LoginCapability && minor < 4 {", "if cap == LoginCapability && minor < 4 && false {",
      "./internal/workerproto", "^TestEphemeralLoginContractNegotiation$/old-peer$",

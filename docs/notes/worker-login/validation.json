@@ -27,11 +27,11 @@
     "internal/worker/login_stream_test.go": "2477ca0cb6f4bfafbbc81674a8877bf63229d5f2caf009bd49dbebbe37f04c4d",
     "internal/worker/resident.go": "340e92cf496e56cc488bbce2ceaceea6783401f099c0a9a460bb0900b54f2326",
     "internal/worker/server.go": "8a0b91c6efff006ba56e52698bc72cc02d2b7a2cec396ec4ef90ff538548797d",
-    "internal/worker/testdata/login_negative.py": "9d968c2df47fb1e1160dc21435f9dfd9cf21cad53f6970b4a0b083f55d660de0",
+    "internal/worker/testdata/login_negative.py": "7a7efbac3f5161310c14d904201a7eaf79fc3658f8c337ffa13a26b6001edb6a",
     "internal/workerproto/bodies.go": "45158e56f1e915c33f2f657f5f77d1cfaab147bf0c3a2409740aa9b3192bf15f",
     "internal/workerproto/golden_test.go": "4babcc0ba2e8801009a4d76c2bc7380e52c3b34fb67e1cf8ba986a88292ab1d0",
-    "internal/workerproto/login.go": "019d66f9dc856948df786d5848f61c3be4ada1d9440e195d1f8c8199a0bf2487",
-    "internal/workerproto/login_test.go": "2d8f8a3f0d105a5b72a306676303fbb87dccba4bef3e2606f30df73915a7f097",
+    "internal/workerproto/login.go": "8087f44928d0f221c3e15a7942cf10a2a3c79547318aea1a78d814c88c797891",
+    "internal/workerproto/login_test.go": "27729ccaa9033f99a8f5035af11203511c64078c37a25653ec243a63b7c18184",
     "internal/workerproto/protocol.go": "85ab06e9e2e0c51e21a1ae5221614b96f96fb8a74a9f42e7736e6571d9453c41",
     "internal/workerproto/protocol_test.go": "11b6c157e36cf8f4a9ea708578e1dfcaf28b35da2dc524fff88f41b16955cbcf",
     "internal/workerproto/testdata/protocol/1.4/hello-ephemeral-login-required.json": "b0f64d8918c82b9849771adf441f11d9e430c2f9db96f77bb50dff6c830326a3",
@@ -277,7 +277,7 @@
         "-timeout=90s"
       ],
       "exit_code": 0,
-      "output": "ok  \tgithub.com/yousan/hataori/cmd/hataori\t0.219s\nok  \tgithub.com/yousan/hataori/internal/chat\t3.906s\nok  \tgithub.com/yousan/hataori/internal/worker\t4.131s\nok  \tgithub.com/yousan/hataori/internal/session\t0.314s\nok  \tgithub.com/yousan/hataori/internal/agent/codex\t0.004s\nok  \tgithub.com/yousan/hataori/internal/relay\t0.208s\nok  \tgithub.com/yousan/hataori/internal/machineio\t0.008s\n"
+      "output": "ok  \tgithub.com/yousan/hataori/cmd/hataori\t0.179s\nok  \tgithub.com/yousan/hataori/internal/chat\t4.527s\nok  \tgithub.com/yousan/hataori/internal/worker\t4.123s\nok  \tgithub.com/yousan/hataori/internal/session\t0.302s\nok  \tgithub.com/yousan/hataori/internal/agent/codex\t0.004s\nok  \tgithub.com/yousan/hataori/internal/relay\t0.234s\nok  \tgithub.com/yousan/hataori/internal/machineio\t0.005s\n"
     },
     {
       "command": [
@@ -290,7 +290,7 @@
         "-timeout=45s"
       ],
       "exit_code": 0,
-      "output": "ok  \tgithub.com/yousan/hataori/internal/workerproto\t0.078s\n"
+      "output": "ok  \tgithub.com/yousan/hataori/internal/workerproto\t0.071s\n"
     },
     {
       "command": [
@@ -305,7 +305,7 @@
         "-timeout=60s"
       ],
       "exit_code": 0,
-      "output": "ok  \tgithub.com/yousan/hataori/internal/workerssh\t0.627s\n"
+      "output": "ok  \tgithub.com/yousan/hataori/internal/workerssh\t0.721s\n"
     },
     {
       "command": [
@@ -324,7 +324,7 @@
         "-timeout=90s"
       ],
       "exit_code": 0,
-      "output": "ok  \tgithub.com/yousan/hataori/cmd/hataori\t1.981s\nok  \tgithub.com/yousan/hataori/internal/chat\t10.949s\nok  \tgithub.com/yousan/hataori/internal/worker\t14.163s\nok  \tgithub.com/yousan/hataori/internal/machineio\t1.021s\n"
+      "output": "ok  \tgithub.com/yousan/hataori/cmd/hataori\t1.974s\nok  \tgithub.com/yousan/hataori/internal/chat\t10.668s\nok  \tgithub.com/yousan/hataori/internal/worker\t13.118s\nok  \tgithub.com/yousan/hataori/internal/machineio\t1.021s\n"
     },
     {
       "command": [

@@ -1,0 +1,25 @@
+{
+  "reviewed_head": "2956ce710b9dfc929d9253be62dbc35f878a5679",
+  "finding": "P2: raw invalid UTF-8 was replaced by JSON decoding in typed login data",
+  "command": [
+    "go",
+    "test",
+    "-p=1",
+    "-parallel=1",
+    "./internal/workerproto",
+    "-run",
+    "^TestEphemeralLoginDataUTF8$",
+    "-count=1",
+    "-timeout=45s"
+  ],
+  "environment": "GOMAXPROCS=1; isolated protocol test; no CLI/provider invocation",
+  "before_fix": {
+    "exit_code": 1,
+    "output": "--- FAIL: TestEphemeralLoginDataUTF8 (0.00s)\n    --- FAIL: TestEphemeralLoginDataUTF8/invalid-byte (0.00s)\n        login_test.go:17: UTF-8 login payload validity = true, want false\n        login_test.go:25: typed stream UTF-8 validity = true, want false\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/workerproto\t0.005s\nFAIL\n"
+  },
+  "after_fix": {
+    "exit_code": 0,
+    "output": "ok  \tgithub.com/yousan/hataori/internal/workerproto\t0.005s\n"
+  },
+  "repair": "Reject invalid raw UTF-8 before JSON decoding; preserve valid multibyte code. Direct and typed-stream assertions share the invalid-byte fixture. login_payload_utf8 negative control removes only the new check."
+}

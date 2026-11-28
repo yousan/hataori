@@ -47,6 +47,9 @@ func loginInput(b LoginInput) bool {
 }
 
 func DecodeLoginData(data []byte) (LoginData, error) {
+	if !utf8.Valid(data) {
+		return LoginData{}, refuse("invalid_message", "invalid login data encoding")
+	}
 	var d LoginData
 	if err := decode(data, &d); err != nil {
 		return LoginData{}, err

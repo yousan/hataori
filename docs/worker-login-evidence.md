@@ -84,10 +84,12 @@ in `notes/worker-login/negative-guards.json` record behavioral failures for
 guard removals/reversions. Separately identified persistence instrumentation
 controls write an encoded input frame or an actual device output frame into
 isolated files, or put a fixture marker into observed process arguments.
-The current inventory contains 39 behavioral guard removals/reversions and
+The current inventory contains 40 behavioral guard removals/reversions and
 three persistence instrumentations. Seven removals cover the new protocol's
 minor/capability negotiation and refusal, durable-key rejection, typed payload
 validation, input limit and contract check before a configuration probe.
+Another removal proves that invalid UTF-8 is refused before JSON decoding
+can replace bytes in a displayed code; valid multibyte data is preserved.
 The scanner checks raw markers and bounded recursive decoding of base64 tokens,
 including base64 of the entire `LoginData` JSON inside a transport frame. The
 three controls prove those forbidden writes/arguments are detected; they are
