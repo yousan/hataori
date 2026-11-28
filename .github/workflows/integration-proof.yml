@@ -1,0 +1,210 @@
+name: Integration proof
+run-name: ${{ inputs.title }}
+
+# Registration on the default branch is required before actual dispatch.
+# No PR, main push, schedule or workflow_run trigger activates this route.
+on:
+  workflow_dispatch:
+    inputs:
+      intent:
+        description: Trusted durable intent ID
+        required: true
+      from:
+        description: Frozen coverage base
+        required: true
+      target:
+        description: Frozen target commit
+        required: true
+      control:
+        description: Approved immutable control revision
+        required: true
+      digest:
+        description: Approved policy SHA256
+        required: true
+      authority:
+        description: Frozen authority scope SHA256
+        required: true
+      scope:
+        description: Cumulative compatibility applicability
+        required: true
+      title:
+        description: Trusted frozen tuple title
+        required: true
+      purpose:
+        description: sweep or development (partial feedback)
+        required: true
+
+permissions:
+  contents: read
+
+# No concurrency cancellation: preserve each unique proof, including pending.
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate frozen dispatch
+        run: python3 .github/ci/proof.py
+
+  development:
+    needs: contract
+    if: inputs.purpose == 'development'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - name: Development static checks
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          CGO_ENABLED=0 go build ./...
+          go test -exec /bin/true ./...
+          go test ./cmd/hataori -run '^TestAdaptersOnlyUnderCmd$' -count=1
+          for arch in arm64 amd64; do
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -trimpath -o "$RUNNER_TEMP/hataori-$arch" ./cmd/hataori
+            test -s "$RUNNER_TEMP/hataori-$arch"
+          done
+      - name: Targeted and cross-module smoke
+        env:
+          FEEDBACK_BASE: ${{ inputs.from }}
+          FEEDBACK_TARGET: ${{ inputs.target }}
+        run: go run ./cmd/ci-feedback "$FEEDBACK_BASE" "$FEEDBACK_TARGET"
+
+  linux:
+    needs: contract
+    if: inputs.purpose == 'sweep'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.x'
+      - name: Runtime dependencies
+        run: |
+          command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
+          test -x /usr/sbin/sshd || { sudo apt-get update && sudo apt-get install -y openssh-server; }
+      - name: Full Linux suite
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          CGO_ENABLED=0 go build ./...
+          go test -v -count=1 -timeout 2m ./internal/workerssh
+          go test -count=1 -timeout 30m ./...
+      - name: Cross-build macOS
+        run: |
+          for arch in arm64 amd64; do
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -trimpath -o "$RUNNER_TEMP/hataori-$arch" ./cmd/hataori
+            test -s "$RUNNER_TEMP/hataori-$arch"
+          done
+
+  macos:
+    needs: contract
+    if: inputs.purpose == 'sweep'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.x'
+      - name: Runtime dependencies
+        run: command -v tmux >/dev/null || brew install tmux
+      - name: Isolate Chrome
+        run: |
+          app="/Applications/Google Chrome.app"
+          if [ ! -d "$app" ]; then exit 0; fi
+          dir="$RUNNER_TEMP/chrome"
+          copy="$dir/Google Chrome.app"
+          mkdir -p "$dir"
+          cp -Rc "$app" "$copy"
+          codesign --verify --deep "$copy"
+          chmod -R a-w "$copy"
+          chmod a-w "$dir"
+          "$copy/Contents/MacOS/Google Chrome" --version
+          echo "HATAORI_TEST_CHROME=$copy/Contents/MacOS/Google Chrome" >> "$GITHUB_ENV"
+      - name: Full macOS suite
+        run: |
+          go vet ./...
+          go test -v -count=1 -timeout 2m ./internal/workerssh
+          CGO_ENABLED=0 go build ./...
+          go test -count=1 -timeout 30m ./...
+      - name: Restore Chrome permissions
+        if: always()
+        run: chmod -R u+w "$RUNNER_TEMP/chrome" 2>/dev/null || true
+
+  web:
+    needs: contract
+    if: inputs.purpose == 'sweep'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: web/.nvmrc
+      - name: Reproducible web build
+        run: |
+          npm ci --ignore-scripts
+          npm run check
+          npm run build
+          test -z "$(git status --porcelain --untracked-files=all --ignored=matching -- ../internal/dashboard/page)"
+          npm run build -- --outDir "$RUNNER_TEMP/second"
+          diff -r ../internal/dashboard/page "$RUNNER_TEMP/second"
+
+  compatibility:
+    name: compatibility (${{ matrix.version }})
+    needs: contract
+    if: inputs.purpose == 'sweep' && inputs.scope == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['3.2', '3.2a', '3.4', '3.8']
+        include:
+          - version: '3.0a'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.1c'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.3a'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.5a'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.6b'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+          - version: '3.7c'
+            tests: '^TestPipeCommandPreservesLiteralPaths$'
+    env:
+      TMUX_VERSION: ${{ matrix.version }}
+      TEST_COUNT: '1'
+      TEST_NAMES: ${{ matrix.tests || '.' }}
+      LIMITED: ${{ matrix.tests != '' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - name: Full applicable tmux compatibility
+        run: bash .github/ci/tmux-proof.sh

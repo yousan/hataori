@@ -25,16 +25,23 @@ jobs:
       code: ${{ steps.filter.outputs.code == 'true' || steps.filter.outputs.policy == 'true' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Require complete diff base
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: '[[ "$BASE_SHA" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ && "$BASE_SHA" =~ [1-9a-f] ]]'
       - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         id: filter
         with:
-          # PRs use their complete diff; pushes use the entire pushed range.
-          base: ${{ github.event.before || github.ref }}
+          # The PR files API truncates at 3,000 entries. Use Git for every
+          # event; compare PRs to their frozen base, pushes to the full range.
+          token: ''
+          base: ${{ github.event.pull_request.base.sha || github.event.before || github.ref }}
           predicate-quantifier: every
           filters: .github/filters.yml
 
-  # Development feedback, including test compilation without executing a
-  # test binary. A green check here is not a full-suite result.
+  # Development feedback includes test compilation and the source-only
+  # architecture guard. A green check here is not a full-suite result.
   check:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -57,6 +64,8 @@ jobs:
         run: CGO_ENABLED=0 go build ./...
       - name: compile tests without running them
         run: go test -exec /bin/true ./...
+      - name: core and adapter boundary
+        run: go test ./cmd/hataori -run '^TestAdaptersOnlyUnderCmd$' -count=1
 
   test:
     needs: [changes, check]

@@ -1,0 +1,400 @@
+{
+  "total_count": 6,
+  "jobs": [
+    {
+      "id": 140806497561,
+      "run_id": 46089369497,
+      "run_attempt": 1,
+      "head_sha": "a4942c8606341434f865c25f4e92d0714a99c51d",
+      "name": "changes",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026017,
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 140806529859,
+      "run_id": 46089369497,
+      "run_attempt": 1,
+      "head_sha": "a4942c8606341434f865c25f4e92d0714a99c51d",
+      "name": "check",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026019,
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gofmt",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run go vet ./...",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "build without cgo",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "compile tests without running them",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 140806529906,
+      "run_id": 46089369497,
+      "run_attempt": 1,
+      "head_sha": "a4942c8606341434f865c25f4e92d0714a99c51d",
+      "name": "build-macos",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026018,
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "build",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 140806529931,
+      "run_id": 46089369497,
+      "run_attempt": 1,
+      "head_sha": "a4942c8606341434f865c25f4e92d0714a99c51d",
+      "name": "web",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026020,
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-node@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run npm ci --ignore-scripts",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run npm run check",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run npm run build",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "the committed build is the fresh one",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "the build is reproducible",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-node@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 140806997327,
+      "run_id": 46089369497,
+      "run_attempt": 1,
+      "head_sha": "a4942c8606341434f865c25f4e92d0714a99c51d",
+      "name": "test-macos",
+      "status": "completed",
+      "conclusion": "failure",
+      "runner_id": 1000026022,
+      "labels": [
+        "macos-latest"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-python@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "install tmux",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "a copy of Chrome of the tests' own",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run go vet ./...",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "isolated worker SSH scenarios",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "build without cgo",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "go test",
+          "status": "completed",
+          "conclusion": "failure"
+        },
+        {
+          "name": "let the copy of Chrome be removed",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-python@v5",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 140806997356,
+      "run_id": 46089369497,
+      "run_attempt": 1,
+      "head_sha": "a4942c8606341434f865c25f4e92d0714a99c51d",
+      "name": "test",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026023,
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-python@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "install tmux",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "install sshd",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "isolated worker SSH scenarios",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run go test -timeout 30m ./...",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-python@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ]
+}

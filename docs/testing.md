@@ -7,9 +7,9 @@ operator migrations are explicitly gated proposals.
 
 ## Draft, ready and merge checks
 
-Draft code PRs run `check` (format, vet, build and test compilation with no
-execution), `build-macos` and `web`. `test`, `test-macos` and the tmux matrix
-do not allocate runners while draft. Skips provide partial development
+Draft code PRs run `check` (format, vet, build, test compilation and the
+source-only core/adapter architecture test), `build-macos` and `web`.
+`test`, `test-macos` and the tmux matrix do not allocate runners while draft. Skips provide partial development
 feedback only: mark the PR ready before merging. `ready_for_review` triggers
 the applicable complete gates on that same head without another push;
 subsequent ready updates run them too. Returning to draft cancels superseded
