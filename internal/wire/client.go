@@ -578,6 +578,13 @@ func (c *Client) Files(ctx context.Context, r control.FilesRequest) (control.Fil
 	return out, err
 }
 
+// ReadChat is control.API.ReadChat. A daemon before 3.49 returns not_supported.
+func (c *Client) ReadChat(ctx context.Context, r control.ReadChatRequest) (control.ReadChatAnswer, error) {
+	var out control.ReadChatAnswer
+	err := c.call(ctx, "ReadChat", r, &out)
+	return out, err
+}
+
 // Forge is control.API.Forge. A daemon before 3.27 answers
 // not_supported, as the core does.
 func (c *Client) Forge(ctx context.Context, r control.ForgeRequest) (control.ForgeAnswer, error) {

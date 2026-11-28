@@ -87,10 +87,12 @@ const (
 
 	// The files of the scope's directory (design, section 7.1, "No write is
 	// lost"), since protocol 3.41.
-	ToolFiles = "list_files"
-	ToolFile  = "read_file"
-	ToolWrite = "write_file"
-	ToolEdit  = "edit_file"
+	ToolFiles    = "list_files"
+	ToolFile     = "read_file"
+	ToolWrite    = "write_file"
+	ToolEdit     = "edit_file"
+	ToolChatList = "list_chat_threads"
+	ToolChatRead = "read_chat_thread"
 )
 
 // ForgeMax is the most bytes of a forge tool's answer; a longer one is cut,
@@ -168,6 +170,10 @@ const researchCapabilityNote = ". Available only when the loaded configuration r
 
 // tools is what tools/list returns.
 var tools = []tool{
+	{ToolChatList, "List public chat-service threads in this channel or an explicitly allowed channel, 50 per page. Names may be withheld by trust policy. History integration must be available; this reads service history, not agent session output.",
+		object(map[string]any{"channel": map[string]any{"type": "string", "description": "optional allowed <client>:<channel>; default is this scope's channel"}, "archived": map[string]any{"type": "boolean"}, "before": map[string]any{"type": "string", "description": "previous list continuation cursor"}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 50, "description": "entries per page; fewer allows longer titles"}})},
+	{ToolChatRead, "Read a public chat-service thread, 50 messages and at most 16 KiB per page. Only this channel or explicitly allowed channels; private threads and direct messages are refused. Outside text is quoted and policy-filtered; giving it may permanently mark this conversation. Files are named, never fetched.",
+		object(map[string]any{"channel": map[string]any{"type": "string", "description": "optional allowed <client>:<channel>"}, "thread": map[string]any{"type": "string", "description": "service thread id, not an agent thread number"}, "before": map[string]any{"type": "string"}, "after": map[string]any{"type": "string"}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 50, "description": "entries per page; fewer allows longer message bodies"}}, "thread")},
 	{ToolList, "List the threads of this channel: number, state, title, who started it, and the last line of output. " +
 		"Closed and removed threads, and those asleep for a day or more, are only counted, by state, unless state is all. The other tools take any thread's number, listed or not.",
 		object(map[string]any{"state": map[string]any{"type": "string", "description": "which to list: open, the default, or all", "enum": []string{listOpen, listAll}}})},
@@ -338,6 +344,9 @@ func (m *MCP) connect() (control.API, error) {
 // call runs one tool and returns its answer, or an error whose text names
 // the reason for the model.
 func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (string, error) {
+	if name == ToolChatList || name == ToolChatRead {
+		return m.chat(ctx, name, raw)
+	}
 	if name == ToolWork {
 		return m.work(ctx, raw)
 	}

@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.48**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.49**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -717,6 +717,36 @@ A write or an edit that does not fit what is there now changes nothing and is an
 
 Result: `FilesAnswer`
 
+### Operation `ReadChat`
+
+Since 3.49. Lists public service threads (`list`) or reads a public service
+thread's messages (`read`), on a supervisor's token connection only. All
+other connections receive `not_supported`. The channel is the token's own
+channel or an explicitly permitted `<client>:<channel>`. A thread's actual
+parent and public type must match; private threads, direct messages and
+unknown types are refused, also on an empty page. A page is at most 50
+entries and 16 KiB of quoted, trust-filtered text. Files are named, never
+fetched. Outside-text marks must be committed before an answer is returned;
+failed marking returns no text. Service failures are errors, not empty
+history. Read pages after a cursor are oldest first; before/latest pages
+are newest first. Every fetched entry is represented; overlong bodies are
+explicitly cut within a shared byte budget. Request fewer entries for more
+text. Cursors never silently advance past omitted entries. The runtime
+service/marking binding remains unavailable in this
+partial draft; no configuration key bypasses those prerequisites.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `op` | string | required | `list` or `read` |
+| `channel` | string | optional | allowed `<client>:<channel>`; absent for the scope's own channel |
+| `thread` | string | optional | service thread id, required for `read` |
+| `archived` | boolean | optional | list archived instead of active public threads |
+| `before` | string | optional | continuation toward older threads or messages |
+| `after` | string | optional | read continuation toward newer messages; exclusive with `before` |
+| `limit` | integer | optional | 1..50 entries; default 50; fewer entries allow longer bodies |
+
+Result: `ReadChatAnswer`
+
 ## Requests the daemon sends
 
 Since 3.16. The daemon sends these to a plugin, on a connection made with the plugin's token that is not a stream: the oldest such connection that is still open. A connection that becomes a stream takes none from then on, so a plugin keeps one connection for requests, as the project's client does, and follows events on others. Until the daemon has read a connection's first request, it does not know that the connection will be a stream, and may send a request on it: a client skips such a line, unanswered, on its stream, and the daemon counts the request as failed once the stream starts. A plugin that does not know one answers `not_supported`, as for any request.
@@ -1248,6 +1278,17 @@ The result of `Remind`: the reminder that was set or cancelled. Since 3.32.
 |---|---|---|---|
 | `number` | integer | required | its number, which no other reminder of the instance has |
 | `at` | time | required | when it is due, or was |
+
+### Type `ReadChatAnswer`
+
+Since 3.49. Already quoted and filtered service history; never raw service bodies.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `text` | string | optional | bounded quoted text and withholding/omission notices |
+| `next` | string | optional | next thread-list cursor |
+| `before` | string | optional | next message cursor toward older messages |
+| `after` | string | optional | next message cursor toward newer messages |
 
 ### Type `FilesAnswer`
 

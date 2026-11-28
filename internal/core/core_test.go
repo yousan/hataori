@@ -342,6 +342,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 			_, err := a.Files(ctx, control.FilesRequest{Op: control.FilesList})
 			return err
 		},
+		"ReadChat": func(a control.API) error { _, err := a.ReadChat(ctx, control.ReadChatRequest{Op: "list"}); return err },
 		// Only the owner may (trust_test.go); Trusts needs OpRead and no
 		// scope, as Limits does.
 		"Trust":                func(a control.API) error { return a.Trust(ctx, id, sid, []string{".mcp.json"}) },
@@ -368,7 +369,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 			if cname == "other scope" && slices.Contains(namesThread, name) {
 				want = ErrNotFound
 			}
-			if name == "Forge" || name == "Remind" || name == "Files" || name == "DeferredSend" {
+			if name == "Forge" || name == "Remind" || name == "Files" || name == "DeferredSend" || name == "ReadChat" {
 				want = control.ErrNotSupported
 			}
 			f.log.Reset()

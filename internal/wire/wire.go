@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.48"
+const Version = "3.49"
 
 type hello struct {
 	Version string `json:"version"`
@@ -398,6 +398,13 @@ var operations = map[string]operation{
 			return nil, err
 		}
 		return api.Files(ctx, a)
+	}},
+	"ReadChat": {control.ReadChatRequest{}, control.ReadChatAnswer{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a control.ReadChatRequest
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return api.ReadChat(ctx, a)
 	}},
 	"HostScreen": {hostScreenArgs{}, "", func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a hostScreenArgs

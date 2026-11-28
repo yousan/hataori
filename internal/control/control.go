@@ -390,6 +390,10 @@ type API interface {
 	// connection, whose scope and thread count whatever the request says;
 	// the core answers ErrNotSupported. Since 3.41.
 	Files(ctx context.Context, r FilesRequest) (FilesAnswer, error)
+	// ReadChat lists public service threads or reads their messages. Only
+	// the daemon's supervisor client answers it; all other callers receive
+	// ErrNotSupported. Channel access and marking precede text delivery.
+	ReadChat(ctx context.Context, r ReadChatRequest) (ReadChatAnswer, error)
 }
 
 // Caller is who is asking. An API value is bound to one Caller,
