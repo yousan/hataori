@@ -71,6 +71,9 @@ type Scope struct {
 	Effort       string // the effort; DefaultEffort when empty
 	Instructions string // the config's instructions, last in the config's layer (ConfigLayer)
 	Repos        []Repo // the only repositories its Start may clone; none: it starts nothing
+	// WorkerResearch is derived from loaded ordinary-worker adapter metadata,
+	// independently of Agent, before assembling instructions/config digests.
+	WorkerResearch ResearchCapability
 	// Autonomy is Watch, Propose or Act: what its token's connection may
 	// do on its own (Caller). It is read when the token is bound, at each
 	// launch and after a restart.
@@ -156,6 +159,7 @@ func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner
 	if !ok {
 		return runner.Confined{}, fmt.Errorf("scope %q names no supervisor", l.Scope)
 	}
+	sv = s.researchScope(l.Scope, sv)
 	kind, err := s.Core.Kind(ctx, l.Thread)
 	if err != nil {
 		return runner.Confined{}, err
@@ -198,6 +202,7 @@ func (s *Sessions) Config(scope, agentName string) (runner.LaunchConfig, bool) {
 	if !ok {
 		return runner.LaunchConfig{}, false
 	}
+	sv = s.researchScope(scope, sv)
 	model, effort := sv.Model, sv.Effort
 	if agentName != cmp.Or(sv.Agent, s.Core.Agent) {
 		model, effort = "", "" // section choices belong to the selected adapter

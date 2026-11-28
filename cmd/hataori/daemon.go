@@ -249,6 +249,7 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	c = &core.Core{Agents: agents, Store: st, Machine: m, Scopes: scopes, Owners: map[string]control.ScopeOwner{}, People: cfg.People,
 		Workspaces: maker, Remover: remover, Restorer: remover,
 		Runner: r, Agent: agentName, Model: cfg.Model, Effort: cfg.Effort, Log: lg}
+	c.CanOmitProjectSettings = func(name string) bool { return agent.CanOmitProjectSettings(adapters[name]) }
 	for _, machine := range cfg.Machines {
 		if machine.Key == instance.LocalMachine {
 			c.LocalAgents = machine.Agents

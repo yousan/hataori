@@ -4,16 +4,72 @@ An ordinary research worker must omit the repository's project settings and
 hooks. A confined supervisor is a different launch contract: support for it
 does not establish ordinary settings-free research support.
 
-This change will expose the selected worker adapter's capability and reject
-unsupported research before creating a thread, workspace, session or launch.
-The runner's independent launch-attestation refusal remains required.
-Supported adapters must retain their settings-free launch behavior. No
-provider switch or settings-inheriting fallback is permitted.
+An optional, pure `agent.ProjectSettingsOmitter` declaration supplies trusted
+adapter metadata. Unknown or missing support is false. The daemon supplies
+that metadata to the core; `Start` checks the actual selected worker adapter
+after caller/scope/adapter validation and before proposals, chat threads,
+workspace creation, database records or runner calls. The refusal identifies
+an unsupported settings-free adapter, rather than a missing repository or
+forge credentials. It never selects a different provider.
 
-Acceptance requires capability refresh in supervisor instructions/tool
-information, a precise pre-artifact refusal, regressions for unsupported and
-supported adapters, and attributed existing-worker/operator evidence fallbacks
-when neither safe research nor forge access is available. Independent
-implementation and authority reviews and the adopted full final-head and
-actual merge-main CI gates remain required. This initial draft records scope;
-it is not implementation or completion evidence.
+The existing Claude Code adapter declares its `--setting-sources user` path;
+the fake adapter follows its explicit settings behavior. Ordinary Codex
+launches do not declare support. Confined Codex supervisor support does not
+establish ordinary settings-free research support. No new Codex launch mode,
+login, authentication or provider call is introduced.
+
+The runner independently requires `Launch.NoProjectSettings` on every actual
+ordinary research launch, including resume. Metadata is not permission to
+bypass that check and does not attest installation, authentication or a remote
+resident's runtime. Existing research records are neither removed nor retried.
+
+## Supervisor information
+
+Every confined launch derives the capability from the currently selected
+ordinary-worker adapter, independently of the supervisor's own adapter. Its
+configuration layer states the selected adapter and whether research is
+supported. The same derived text enters the existing instruction digest, so
+a changed worker selection or capability refreshes launch instructions. User
+files cannot grant support. The tool description explicitly requires the
+loaded configuration's capability before research can be requested.
+
+The forge fallback recommends research only when supported and autonomy
+permits a start/proposal. With no configured forge or safe research route,
+instructions instead name existing worker evidence, attributed to that worker,
+and an operator's bounded independent read-only check. They forbid repeated
+unsupported starts, an implicit provider change and weaker settings isolation.
+Existing autonomy, approval, repository and budget checks still apply.
+
+The new optional in-process adapter contract is documented in Appendix D.
+No control request/event encoding, socket operation or protocol version changes.
+Historical external captures remain unchanged; the capture regression accounts
+explicitly for the new tool-description qualification.
+
+## Validation and remaining gates
+
+Focused local regressions cover:
+
+- Unsupported act/propose requests with missing or false declarations: every
+  fixture database table retains its count, and owner, workspace and runner
+  calls remain zero.
+- Scope-selected support, an explicit unsupported override and unchanged
+  ordinary starts, with durable adapter identity and research flag checks.
+- Start/resume launch descriptions for supported adapters and unsupported
+  Codex; these descriptions invoke no CLI or provider.
+- A declared capability with no actual launch attestation: the real runner
+  refuses before writing requested files or starting a host, on start/resume.
+- Loaded instruction and digest refresh, independence from supervisor adapter
+  selection, capability-qualified tool information and immutable MCP captures.
+
+Five Go-overlay guard removals produced actual behavioral assertion failures:
+preflight, undeclared-capability refusal, unsupported fallback advice,
+configuration refresh and the supported settings-source flag. Original source
+hashes remained unchanged. Formatting, repository vet, these focused tests and
+command-importer compilation pass serially. No local tmux/full suite, CLI,
+provider, process lookup/signals or production input is used.
+
+The existing command E2E retains supported settings-free start/resume and
+proposal cases, and now expects unsupported calls to refuse without a worker.
+Its terminal-dependent execution remains with CI. Independent implementation
+and authority reviews, actual full final-head/merge-main checks under the
+adopted policy, merge and issue closure remain mandatory completion gates.

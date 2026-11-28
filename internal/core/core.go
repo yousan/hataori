@@ -330,10 +330,13 @@ type Core struct {
 	// Agents are the configured agents by registered name, with the defaults
 	// of each. Nil: Agent is the only one, with no defaults of its own.
 	Agents map[string]AgentDefaults
-	Agent  string // the registered name of the agent new sessions use
-	Model  string // default model of a scope without one
-	Effort string // default effort of a scope without one
-	Log    *slog.Logger
+	// CanOmitProjectSettings is loaded adapter capability metadata. Nil or
+	// false refuses research before artifacts; each launch is checked again.
+	CanOmitProjectSettings func(agent string) bool
+	Agent                  string // the registered name of the agent new sessions use
+	Model                  string // default model of a scope without one
+	Effort                 string // default effort of a scope without one
+	Log                    *slog.Logger
 	// SignIn makes dashboard sign-in links; nil when the instance has no
 	// dashboard.
 	SignIn SignIn
@@ -1488,6 +1491,9 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 	if !known {
 		a.c.Log.Warn("start refused", "scope", r.Scope, "agent", chosen, "reason", "unknown agent")
 		return 0, fmt.Errorf("core: start in %q: agent %q: %w", r.Scope, chosen, control.ErrUnknownAgent)
+	}
+	if r.Research && (a.c.CanOmitProjectSettings == nil || !a.c.CanOmitProjectSettings(chosen)) {
+		return 0, fmt.Errorf("core: settings-free research is unsupported by agent %q: it cannot omit the repository's project settings; no worker was created: %w", chosen, session.ErrRefused)
 	}
 	// An approved proposal's call names the effort the proposal showed:
 	// one asked for, checked here when it was proposed, or the config's.

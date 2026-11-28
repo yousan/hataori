@@ -169,12 +169,22 @@ func ConfigLayer(sv Scope, forges map[string]forge.Forge) string {
 			}
 			fmt.Fprintf(&b, " No forge answers for %s: there the forge tools, `%s` included, are refused, so do not call them. "+
 				"Say what a thread claims, and that you did not check it", strings.Join(unserved, ", "), ToolDeployed)
-			if autonomy != Watch {
+			if autonomy != Watch && sv.WorkerResearch.Supported {
 				b.WriteString("; when a person needs the check, start a `research` thread for it")
 			}
 			b.WriteString(".")
 		}
 		b.WriteString("\n")
+	}
+	if sv.WorkerResearch.Agent == "" {
+		b.WriteString("- settings-free research: ordinary-worker adapter capability is not established. Do not request research.\n")
+	} else if sv.WorkerResearch.Supported {
+		fmt.Fprintf(&b, "- settings-free research: ordinary-worker adapter %q supports omitting repository project settings and hooks. Research starts still require the allowed repository, autonomy, approval and budget.\n", sv.WorkerResearch.Agent)
+	} else {
+		fmt.Fprintf(&b, "- settings-free research: ordinary-worker adapter %q cannot omit repository project settings and hooks. Research starts are refused before creating a worker; this is an adapter capability limit, not a missing repository. Do not retry them or switch providers or weaken settings isolation.\n", sv.WorkerResearch.Agent)
+	}
+	if !sv.WorkerResearch.Supported {
+		b.WriteString("If no configured forge can supply the check, use existing worker evidence attributed to that worker; when an independent check is needed, ask the operator for a bounded read-only check and attribute its result. Do not claim an independent verification without that evidence.\n")
 	}
 	// What Budget's API refuses and its Admit holds.
 	fmt.Fprintf(&b, "- Budget: turns_per_hour %s, sends_per_hour %s (a start counts as a send, and so does setting a reminder), tokens_per_day %s. "+
