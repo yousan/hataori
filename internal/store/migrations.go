@@ -789,6 +789,7 @@ var migrations = []Migration{
 	sessionIOMigration,
 	placementMigration,
 	awayMigration,
+	deferredMigration,
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

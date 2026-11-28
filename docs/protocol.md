@@ -19,7 +19,7 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.47**. Both hellos carry it.
+The protocol version is `major.minor`, now **3.48**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
@@ -264,6 +264,73 @@ Answers an open question, approval or proposal. An approval asked with `AskInter
 | `answer` | `Answer` | required | the answer |
 
 Result: none
+
+### Operation `DeferredSend`
+
+Since 3.48. An explicitly opted-in deferred management instruction, separate
+from `Send`. The caller's grants are daemon-bound; no request widens them.
+`queue` requires a stable `key`, `target` thread and `text`. Before any queue
+or proposal exists, the daemon requires a supported existing ordinary worker
+and a live capable owned pipe host. Remote, old or relay hosts, held/taken-in
+windows and undeclared adapters refuse with `not_supported`. Current support
+is Codex and the fake pipe fixture adapter; Claude Code is not declared.
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `action` | string | required | `queue`, `find`, `inspect` or `cancel` |
+| `number` | integer | optional | receipt number for inspect/cancel |
+| `target` | integer | optional | existing ordinary thread for queue/find |
+| `key` | string | optional | stable retry key, at most 128 bytes, for queue/find |
+| `text` | string | optional | frozen instruction, at most 16 KiB, for queue/find |
+
+Result: `DeferredSend`
+
+A retry with the same issuer/key/target/text returns its existing receipt
+before the hourly send limit. Changed target/text is refused. `find` creates
+nothing and returns `absent` when missing. The daemon reserves one send budget
+at queue/proposal creation; later dispatch/approval is not another charge.
+Cancellation, refusal and failure do not refund it. The dispatcher makes no
+model call and does not depend on a supervisor wake or its daily token gate.
+Under `watch`, queue is forbidden; under `propose`, a human must approve the
+exact queue; under `act`, it queues directly. A later move to act does not
+approve a proposal. A move to propose requires human approval before handoff.
+
+Queueing is restricted to a live running/idle worker with an established
+conversation. The queue binds its session, conversation, workspace, scope,
+repository and machine. At an eligible idle boundary it uses the normal input
+acceptance, or resumes only the same sleeping conversation. It never answers
+a question, interrupts, creates a replacement worker or switches provider.
+Current sender/approver authority, repository and autonomy are rechecked, and
+an open or newly observed question (even if already resolved) invalidates it.
+One outstanding instruction per worker is supported; receipts are retained.
+
+`cancel` succeeds before the frozen host handoff; at/after `handoff` it returns
+the unchanged state and a too-late reason. After freezing, only the original
+run/key/bytes are reconciled, using the surviving receiver's bounded,
+non-evicting dedupe receipts. A missing original run, partial write or ambiguous
+failure cannot authorize a new run or blind raw retry. A receiver proving the
+key absent requires another current-authority/question check before its first
+attempt. Host write evidence is distinct from the adapter's exact input ACK.
+
+### Type `DeferredSend`
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `number` | integer | required | durable receipt number; zero for absent |
+| `state` | string | required | `absent`, `proposed`, `queued`, `accepted`, `handoff`, `delivered`, `cancelled`, `refused` or `failed` |
+| `target` | integer | required | original target thread; zero for absent |
+| `session` | integer | required | original target session; zero for absent |
+| `text` | string | optional | instruction; withheld without text permission |
+| `reason` | string | optional | refusal/failure/cancellation or too-late explanation |
+| `proposal` | integer | optional | human proposal number |
+| `created` | time | required | original acceptance time, zero for absent |
+| `updated` | time | required | latest durable transition time, zero for absent |
+
+Only `delivered` confirms the bound agent input acknowledgement. It does not
+prove obedience or task completion. `accepted` means normal input persistence;
+`handoff` means the frozen write may have begun. Terminal receipts and retry
+keys are retained for inspection. Only the original issuer (or the owner) may
+inspect/cancel; the caller still needs current scope/read access.
 
 ### Operation `AskInterrupt`
 
@@ -1720,6 +1787,7 @@ Optional `machine` retains an explicit start selection since 3.46.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
+| `deferred` | integer | optional | deferred receipt number; since 3.48; approval queues rather than confirms delivery |
 | `request` | string | required | what `Answer` names |
 | `number` | integer | required | the proposal's number, as `proposed` gave it |
 | `machine` | string | optional | requested machine for a start; since 3.46 |
@@ -1741,6 +1809,7 @@ A person's decision of a proposal, in the thread it was shown in, and what came 
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
+| `deferred` | integer | optional | deferred receipt number; since 3.48; approval queues rather than confirms delivery |
 | `request` | string | required | what `Answer` names |
 | `number` | integer | required | the proposal's number |
 | `action` | string | required | `send` or `start` |

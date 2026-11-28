@@ -1,6 +1,7 @@
 # Deferred management send design
 
-Status: revised proposal; independent approval is still required.
+Status: independently approved for narrow implementation at design commit
+`0a3a134cdaa6d5d317fd751f6d25c3b6cb5d420f`. Final code reviews and CI remain required.
 Issue #1116 / PR #1120. The surviving-host handoff below is part of the narrow
 implementation, not permission to weaken the existing uncertainty guards. Immediate `Send`, its busy result, answers and interrupts keep
 their existing behavior.

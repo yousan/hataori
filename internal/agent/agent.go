@@ -352,6 +352,13 @@ const (
 
 // Input is a user message for the agent.
 type Input struct {
+	// IdleOnly forbids delivery into an existing native turn. It is used
+	// only by explicitly deferred management input, not immediate sends.
+	IdleOnly bool
+	// Command is the exact frozen pipe action, with Written and IdleOnly.
+	// A supporting codec restores its request correlation from these bytes;
+	// it must not infer delivery from equal text or an unrelated turn.
+	Command [][]byte
 	// ID names the input for its report: the codec returns it in the
 	// TurnStarted event of the turn that reports the input. It is opaque to
 	// the codec, and may be empty.

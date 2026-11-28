@@ -40,6 +40,8 @@ type host struct {
 	ptyName string      // the name of the terminal the command runs in, such as /dev/pts/3; "" on pipes
 	term    *boundedLog // the terminal's raw log, or nil on pipes
 	run     string      // this run of the host; positions in term count from its start
+	batchMu sync.Mutex
+	batches map[string]InputReceipt // retained for this entire run; never evicted
 
 	follows     atomic.Int32 // follow and attach requests being served
 	attachMu    sync.Mutex
@@ -492,6 +494,7 @@ const errNoTerminal = "the host runs no command: its terminal is another holder'
 
 // request is one call on the host's socket; response its answer.
 type request struct {
+	Batch     *InputBatch   `json:"batch,omitempty"`
 	Op        string        `json:"op"`
 	Data      []byte        `json:"data,omitempty"`
 	ID        string        `json:"id,omitempty"`        // answer: the call answered
@@ -505,22 +508,24 @@ type request struct {
 }
 
 type response struct {
-	Identity string        `json:"identity,omitempty"` // identity: the caller-reserved run, not a PID
-	OK       bool          `json:"ok"`
-	Error    string        `json:"error,omitempty"`
-	PID      int           `json:"pid,omitempty"`
-	Already  bool          `json:"already,omitempty"` // stop: nothing was running
-	ID       string        `json:"id,omitempty"`      // call: the call's id
-	Data     []byte        `json:"data,omitempty"`    // call: the answer
-	Calls    []WaitingCall `json:"calls,omitempty"`   // waiting: the calls that wait
-	Signals  string        `json:"signals,omitempty"` // stop: the signals sent, in order
-	Run      string        `json:"run,omitempty"`     // follow, screen: the host's run
-	Pos      uint64        `json:"pos,omitempty"`     // follow, screen: the position after Data
-	Reset    bool          `json:"reset,omitempty"`   // follow: Data is the end of the log, not a continuation; screen: part of what followed After was dropped
-	Cols     int           `json:"cols,omitempty"`    // follow: the terminal's size, in the first answer and from a resize on
-	Rows     int           `json:"rows,omitempty"`
-	End      bool          `json:"end,omitempty"`    // follow: the terminal is closed and everything was sent
-	Device   string        `json:"device,omitempty"` // status: the terminal the command runs in; empty on pipes
+	InputCapability *InputCapability `json:"input_capability,omitempty"`
+	InputReceipt    *InputReceipt    `json:"input_receipt,omitempty"`
+	Identity        string           `json:"identity,omitempty"` // identity: the caller-reserved run, not a PID
+	OK              bool             `json:"ok"`
+	Error           string           `json:"error,omitempty"`
+	PID             int              `json:"pid,omitempty"`
+	Already         bool             `json:"already,omitempty"` // stop: nothing was running
+	ID              string           `json:"id,omitempty"`      // call: the call's id
+	Data            []byte           `json:"data,omitempty"`    // call: the answer
+	Calls           []WaitingCall    `json:"calls,omitempty"`   // waiting: the calls that wait
+	Signals         string           `json:"signals,omitempty"` // stop: the signals sent, in order
+	Run             string           `json:"run,omitempty"`     // follow, screen: the host's run
+	Pos             uint64           `json:"pos,omitempty"`     // follow, screen: the position after Data
+	Reset           bool             `json:"reset,omitempty"`   // follow: Data is the end of the log, not a continuation; screen: part of what followed After was dropped
+	Cols            int              `json:"cols,omitempty"`    // follow: the terminal's size, in the first answer and from a resize on
+	Rows            int              `json:"rows,omitempty"`
+	End             bool             `json:"end,omitempty"`    // follow: the terminal is closed and everything was sent
+	Device          string           `json:"device,omitempty"` // status: the terminal the command runs in; empty on pipes
 	// Attached, for status, is how many terminals of people are attached;
 	// Detached is when the last one went, in Unix milliseconds, 0 for never.
 	Attached        int   `json:"attached,omitempty"`
@@ -583,7 +588,7 @@ func (h *host) serveConn(c *net.UnixConn) {
 const inputReplyTimeout = 30 * time.Second
 
 func (h *host) reply(c net.Conn, enc *json.Encoder, req request) error {
-	if req.Op == "input" {
+	if req.Op == "input" || req.Op == "input-batch" {
 		h.stopMu.Lock()
 		closing := h.closing
 		if !closing {
@@ -606,6 +611,10 @@ func (h *host) reply(c net.Conn, enc *json.Encoder, req request) error {
 
 func (h *host) handle(req request) response {
 	switch req.Op {
+	case "input-capability":
+		return h.inputCapability()
+	case "input-batch", "input-receipt":
+		return h.inputBatch(req.Batch, req.Op == "input-receipt")
 	case "identity":
 		return response{OK: true, Identity: h.spec.Identity}
 	case "input":

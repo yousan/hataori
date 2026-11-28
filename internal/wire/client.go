@@ -601,3 +601,9 @@ func (c *Client) AttachWorker(ctx context.Context, id control.ThreadID) (control
 	err := c.callSince(ctx, "3.44", "worker attachment", "AttachWorker", attachTerminalArgs{ID: id}, &out)
 	return out, err
 }
+
+func (c *Client) DeferredSend(ctx context.Context, r control.DeferredSendRequest) (control.DeferredSend, error) {
+	var out control.DeferredSend
+	err := c.callSince(ctx, "3.48", "durable deferred input", "DeferredSend", r, &out)
+	return out, err
+}

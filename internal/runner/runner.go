@@ -46,6 +46,7 @@ import (
 
 // Runner runs the sessions of one instance. It implements core.Runner.
 type Runner struct {
+	Deferred          *core.DeferredInputs
 	RevalidateInitial func(context.Context, *store.Tx, int64) error
 	RevalidatePending func(context.Context, int64, int64) error
 	AwayEnabled       bool
@@ -138,20 +139,21 @@ var _ core.Runner = (*Runner)(nil)
 
 // live is a session the runner follows.
 type live struct {
-	catchingUp   bool
-	catchupToken string
-	id           int64
-	dir          string
-	adapter      agent.Adapter
-	spec         agent.Spec
-	codec        agent.Codec
-	client       *host.Client // to the session host: the relay of hook calls, and the first sign that it answers
-	started      time.Time
-	ready        bool  // the session left creating; no start check any more
-	resend       bool  // after a reconnect: send a first input that was not confirmed
-	pending      bool  // after a reconnect: hand over pending input once the logs are read
-	held         bool  // lv.mu is held from follow until the loop's first step has handed over the pending input
-	upTo         int64 // the last pending input there was at the reconnect; later ones are handed over by their call
+	deferredBlocked bool
+	catchingUp      bool
+	catchupToken    string
+	id              int64
+	dir             string
+	adapter         agent.Adapter
+	spec            agent.Spec
+	codec           agent.Codec
+	client          *host.Client // to the session host: the relay of hook calls, and the first sign that it answers
+	started         time.Time
+	ready           bool  // the session left creating; no start check any more
+	resend          bool  // after a reconnect: send a first input that was not confirmed
+	pending         bool  // after a reconnect: hand over pending input once the logs are read
+	held            bool  // lv.mu is held from follow until the loop's first step has handed over the pending input
+	upTo            int64 // the last pending input there was at the reconnect; later ones are handed over by their call
 	// drain is until when the agent, its session asleep, is still read
 	// before it is stopped: an agent may record a turn's last usage after
 	// the turn's end (agent.Event.Late). Zero: not asleep by hataori's hand.
@@ -799,6 +801,9 @@ func (r *Runner) endEarlier(ctx context.Context, id int64, dir string) error {
 }
 
 func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
+	if err := r.deferredResume(ctx, id, first, nil); err != nil {
+		return err
+	}
 	lock, _ := r.resumeLocks.LoadOrStore(id, &sync.Mutex{})
 	mu := lock.(*sync.Mutex)
 	mu.Lock()
@@ -919,6 +924,9 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	// take-in stored it; the options the person started it with are not
 	// known, and are not reused.
 	spec.TakenIn = false // resumed, it is launched by hataori's own host
+	if err := r.deferredResume(ctx, id, first, &resumeID); err != nil {
+		return err
+	}
 	spec, err := r.launch(ctx, id, s.Agent, ad, spec, first)
 	if err != nil {
 		return err
@@ -1231,7 +1239,7 @@ func (r *Runner) handOverPending(lv *live) {
 			var in control.Input
 			if err = json.Unmarshal([]byte(x.data), &in); err == nil {
 				err = r.handOver(lv, x.id, false, func() (agent.Actions, error) {
-					return lv.codec.Input(agent.Input{ID: strconv.FormatInt(x.id, 10), Text: x.earlier + in.Text})
+					return r.codecInput(lv, agent.Input{ID: strconv.FormatInt(x.id, 10), Text: x.earlier + in.Text})
 				})
 			}
 		}
@@ -1280,7 +1288,7 @@ func (r *Runner) handOverWritten(lv *live) {
 
 // inputActions is what the codec makes of in; an error is logged.
 func (r *Runner) inputActions(lv *live, in agent.Input) agent.Actions {
-	a, err := lv.codec.Input(in)
+	a, err := r.codecInput(lv, in)
 	if err != nil {
 		r.Log.Error("input", "session", lv.id, "input", in.ID, "err", err)
 	}
@@ -1797,6 +1805,10 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 		r.Store.DB.QueryRow(`SELECT coalesce(max(id),0) FROM pending_inputs WHERE session_id=?`, lv.id).Scan(&lv.upTo)
 		return true
 	}
+	if err := r.reconcileDeferred(lv); err != nil {
+		r.Log.Warn("deferred input recovery waits", "session", lv.id, "err", err)
+		return true
+	}
 	for _, a := range b.actions {
 		r.act(lv, a)
 	}
@@ -1804,7 +1816,7 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 		r.replayReplies(lv)
 	}
 	if first != nil {
-		a, err := lv.codec.Input(agent.Input{ID: firstInputID, Text: first.Context + first.Input().ForAgent()})
+		a, err := r.codecInput(lv, agent.Input{ID: firstInputID, Text: first.Context + first.Input().ForAgent()})
 		if err != nil {
 			r.Log.Error("first input", "session", lv.id, "err", err)
 		}
@@ -1987,7 +1999,20 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		ctx := context.Background()
 		seq = lv.seq
 		first, rep, slept = nil, nil, false
-		for _, e := range b.events {
+
+		noReplacement := false
+		if r.Deferred != nil && cannotResume(b.events) {
+			var e error
+			noReplacement, e = r.Deferred.PreventReplacementTx(ctx, tx, lv.id)
+			if e != nil {
+				return e
+			}
+		}
+		applied, err := r.deferredEvents(ctx, tx, lv.id, b.events)
+		if err != nil {
+			return err
+		}
+		for _, e := range applied {
 			seq++
 			e.Seq = seq
 			if err := r.Machine.ApplyTx(ctx, tx, lv.id, session.Input{Kind: session.AgentEvent, Agent: e}); err != nil {
@@ -2004,7 +2029,7 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		// in the transaction that stores its failure, so a daemon that stops
 		// after it still replaces it once (#527). A window taken in is not:
 		// its agent ending means the window closed.
-		if lv.taken == nil && cannotResume(b.events) {
+		if lv.taken == nil && cannotResume(b.events) && !noReplacement {
 			var err error
 			if rep, err = r.replaceTx(ctx, tx, lv); err != nil {
 				return fmt.Errorf("replacing a session that cannot resume: %w", err)
@@ -2017,7 +2042,9 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		if err := saveRead(ctx, tx, lv.id, rb); err != nil {
 			return err
 		}
-		if err := r.firstInputStep(ctx, tx, lv, b, &first); err != nil {
+		appliedBatch := b
+		appliedBatch.events = applied
+		if err := r.firstInputStep(ctx, tx, lv, appliedBatch, &first); err != nil {
 			return err
 		}
 		if err := r.endAside(ctx, tx, lv, b, &slept); err != nil {
@@ -2258,6 +2285,9 @@ func (r *Runner) do(lv *live, a agent.Actions) error {
 // act hands input to the agent through its holder and answers waiting hook
 // calls. It returns the first error, which it has logged.
 func (r *Runner) act(lv *live, a agent.Actions) error {
+	if handled, err := r.actDeferred(lv, a); handled {
+		return err
+	}
 	if len(a.Keys) == 0 && len(a.Write) == 0 && len(a.Reply) == 0 {
 		return nil
 	}
@@ -2804,6 +2834,15 @@ func (r *Runner) checkStart(lv *live) {
 func (r *Runner) Deliver(ctx context.Context, id, pending int64, in control.Input) error {
 	lv, err := r.get(id)
 	if err != nil {
+		if r.Deferred != nil {
+			_, bound, e := r.Deferred.Input(ctx, id, strconv.FormatInt(pending, 10))
+			if e != nil {
+				return e
+			}
+			if bound {
+				return err
+			}
+		}
 		r.dropPending(pending)
 		return err
 	}
@@ -2822,7 +2861,7 @@ func (r *Runner) Deliver(ctx context.Context, id, pending int64, in control.Inpu
 		return err
 	}
 	return r.handOver(lv, pending, false, func() (agent.Actions, error) {
-		return lv.codec.Input(agent.Input{ID: strconv.FormatInt(pending, 10), Text: in.Text})
+		return r.codecInput(lv, agent.Input{ID: strconv.FormatInt(pending, 10), Text: in.Text})
 	})
 }
 

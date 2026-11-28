@@ -140,6 +140,16 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 	}
 	at := clock()
 	now := at.UnixMilli()
+	if in.Kind == Exit || in.Kind == Close || (in.Kind == AgentEvent && in.Agent.Kind == agent.SessionEnded) {
+		if _, err := tx.ExecContext(ctx, `UPDATE deferred_sends SET state='failed',reason='the original worker ended before input acknowledgement; no new receiver was used',updated_at=? WHERE session=? AND state IN ('accepted','handoff')`, now, sessionID); err != nil {
+			return err
+		}
+	}
+	if in.Kind == AgentEvent {
+		if err := acknowledgeDeferred(ctx, tx, sessionID, in.Agent, now); err != nil {
+			return err
+		}
+	}
 
 	if !inputFailure {
 		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET state = ?, updated_at = ? WHERE id = ?`,

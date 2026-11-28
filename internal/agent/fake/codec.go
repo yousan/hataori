@@ -356,7 +356,17 @@ func (c *codec) Input(in agent.Input) (agent.Actions, error) {
 	switch {
 	case in.Written:
 		if in.ID != "" {
-			c.waiting = append(c.waiting, &written{id: in.ID, at: in.WrittenAt})
+			found := false
+			for _, w := range c.waiting {
+				if w.id == in.ID {
+					w.at = in.WrittenAt
+					found = true
+					break
+				}
+			}
+			if !found {
+				c.waiting = append(c.waiting, &written{id: in.ID, at: in.WrittenAt})
+			}
 		}
 		return agent.Actions{}, nil
 	case c.running:

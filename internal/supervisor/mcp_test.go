@@ -118,7 +118,7 @@ func TestClaudeCodeToolsList(t *testing.T) {
 				t.Fatalf("the instructions changed since the capture:\n%v\n%v", got, was)
 			}
 		case "tools/list":
-			current := []string{ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolIssues, ToolIssue, ToolPulls, ToolPull, ToolChecks, ToolDeployed, ToolRemind, ToolCancelRemind, ToolFiles, ToolFile, ToolWrite, ToolEdit}
+			current := []string{ToolList, ToolRead, ToolSend, ToolDefer, ToolDeferred, ToolCancelDeferred, ToolInterrupt, ToolStart, ToolIssues, ToolIssue, ToolPulls, ToolPull, ToolChecks, ToolDeployed, ToolRemind, ToolCancelRemind, ToolFiles, ToolFile, ToolWrite, ToolEdit}
 			if names := toolNames(t, r["result"]); !slices.Equal(names, current) {
 				t.Fatalf("tools/list gives %v, want the current tools %v", names, current)
 			}
@@ -142,6 +142,15 @@ func TestClaudeCodeToolsList(t *testing.T) {
 					research["description"] = strings.TrimSuffix(description, researchCapabilityNote)
 				}
 			}
+
+			// New opt-in tools have their own schema/dispatch regression. The
+			// actual external exchange remains immutable for existing tools.
+			ts := r["result"].(map[string]any)["tools"].([]any)
+			ts = slices.DeleteFunc(ts, func(v any) bool {
+				n := v.(map[string]any)["name"]
+				return n == ToolDefer || n == ToolDeferred || n == ToolCancelDeferred
+			})
+			r["result"].(map[string]any)["tools"] = ts
 			a, _ := json.Marshal(r["result"])
 			b, _ := json.Marshal(want[string(id)]["result"])
 			if !bytes.Equal(a, b) {
@@ -166,6 +175,9 @@ func TestClaudeCodeToolsList(t *testing.T) {
 	}
 	var prefixed []string
 	for _, x := range tools {
+		if x.Name == ToolDefer || x.Name == ToolDeferred || x.Name == ToolCancelDeferred {
+			continue
+		}
 		prefixed = append(prefixed, "mcp__hataori__"+x.Name)
 	}
 	slices.Sort(prefixed)
