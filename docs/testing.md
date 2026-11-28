@@ -8,6 +8,9 @@ user before starting the reaper and tests. The reaper collects orphaned
 children so their zombies do not block later removal tests. Packages run
 serially so another package's protected helpers cannot block a removal. This
 isolates the tests; the application's removal check has no exception for tests.
+The manually dispatched integration-proof workflow uses the same isolation
+for its full Linux suite and targeted runtime feedback. This does not activate
+that route or change its frozen-control and authority requirements.
 
 The [CI policy and staged release design](design/ci-policy.md) distinguishes
 development feedback, integration sweeps and immutable release gates. Phase 1

@@ -75,7 +75,15 @@ jobs:
         env:
           FEEDBACK_BASE: ${{ inputs.from }}
           FEEDBACK_TARGET: ${{ inputs.target }}
-        run: go run ./cmd/ci-feedback "$FEEDBACK_BASE" "$FEEDBACK_TARGET"
+        run: |
+          # Selected importers can include workspace-removal tests. Give
+          # them the same complete process view as the full Linux suite.
+          command -v tini >/dev/null || { sudo apt-get update && sudo apt-get install -y tini; }
+          sudo --preserve-env=HOME,CI unshare --pid --fork --mount-proc \
+            setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
+            env "PATH=$PATH" "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}" \
+            "GOFLAGS=${GOFLAGS:+$GOFLAGS }-p=1" \
+            tini -- go run ./cmd/ci-feedback "$FEEDBACK_BASE" "$FEEDBACK_TARGET"
 
   linux:
     needs: contract
@@ -93,7 +101,10 @@ jobs:
           python-version: '3.x'
       - name: Runtime dependencies
         run: |
-          command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
+          if ! command -v tmux >/dev/null || ! command -v tini >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y tmux tini
+          fi
           test -x /usr/sbin/sshd || { sudo apt-get update && sudo apt-get install -y openssh-server; }
       - name: Full Linux suite
         run: |
@@ -101,7 +112,10 @@ jobs:
           go vet ./...
           CGO_ENABLED=0 go build ./...
           go test -v -count=1 -timeout 2m ./internal/workerssh
-          go test -count=1 -timeout 30m ./...
+          sudo --preserve-env=HOME,CI unshare --pid --fork --mount-proc \
+            setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
+            env "PATH=$PATH" "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}" \
+            tini -- go test -p 1 -count=1 -timeout 30m ./...
       - name: Cross-build macOS
         run: |
           for arch in arm64 amd64; do
