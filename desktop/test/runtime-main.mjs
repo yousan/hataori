@@ -60,7 +60,7 @@ async function run() {
   });
   childDone.catch(() => {});
   const fixture = await ready;
-  assert.equal(fixture.binding.Version, process.env.DESKTOP_PROOF_VERSION);
+  assert.equal(fixture.binding.Version, 'hataori ' + process.env.DESKTOP_PROOF_VERSION);
   transport = new NativeTransport(process.env.DESKTOP_TRANSPORT_BINARY, fixture.binding);
   const original = await transport.fetch(new Request('hataori-desktop://instance/'));
   const csp = original.headers.get('content-security-policy');
@@ -113,7 +113,7 @@ async function run() {
   assert.equal((await attach('')).ended, 'ended'); proof('private-duplex-first-message-and-close');
   await tell('turn', 'turn');
   const replacement = await tell('restart', 'restarted');
-  assert.equal(replacement.binding.Version, process.env.DESKTOP_PROOF_NEXT_VERSION);
+  assert.equal(replacement.binding.Version, 'hataori ' + process.env.DESKTOP_PROOF_NEXT_VERSION);
   assert.notEqual(replacement.binding.Version, fixture.binding.Version);
   assert.equal(replacement.binding.Instance, fixture.binding.Instance);
   transport.close(); transport = new NativeTransport(process.env.DESKTOP_NEXT_TRANSPORT_BINARY, replacement.binding);

@@ -96,7 +96,7 @@ func desktopSetupMain(ctx context.Context, root string, input io.ReadCloser, out
 	if err != nil {
 		return err
 	}
-	cfg := nativehttp.Config{Root: setup.Root(), Instance: id, Version: version.Version}
+	cfg := nativehttp.Config{Root: setup.Root(), Instance: id, Version: version.String()}
 	ln, err := nativehttp.Listen(cfg)
 	if err != nil {
 		return err

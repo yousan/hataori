@@ -10,7 +10,7 @@ test('setup lifetime is private, bounded and joined before ordinary startup', as
   const setup = startSetup('/fixture/hataori', '/fixture/root', '1.0.0', (_binary, a, o) => { args = a; options = o; return child; });
   assert.deepEqual(args, ['desktop', 'setup', '--root', '/fixture/root']);
   assert.equal(options.shell, false); assert.deepEqual(options.stdio, ['pipe', 'pipe', 'ignore']);
-  const binding = { Root: '/fixture/root', Instance: 'fixture-installation', Version: '1.0.0' };
+  const binding = { Root: '/fixture/root', Instance: 'fixture-installation', Version: 'hataori 1.0.0' };
   child.stdout.write(JSON.stringify({ event: 'setup', binding }) + '\n');
   assert.deepEqual(await setup.ready, binding);
   let joined = false; setup.done.then(() => { joined = true; });
@@ -18,7 +18,7 @@ test('setup lifetime is private, bounded and joined before ordinary startup', as
   await Promise.resolve(); assert.equal(joined, false);
   child.emit('close', 0); assert.deepEqual(await setup.done, binding);
   assert.deepEqual(guiEnvironment({ HOME: '/home/fixture', PATH: '/bin', BOT_TOKEN: 'private', NODE_OPTIONS: '--require bad' }), { HOME: '/home/fixture', PATH: '/bin' });
-  assert.throws(() => checkedBinding({ ...binding, Version: '0.9.0' }, '1.0.0'));
+  for (const Version of ['hataori 0.9.0', '1.0.0', 'other 1.0.0']) assert.throws(() => checkedBinding({ ...binding, Version }, '1.0.0'));
 });
 
 test('interrupted setup can explicitly recover registration and retry bootstrap without implicitly undoing Stop', async () => {

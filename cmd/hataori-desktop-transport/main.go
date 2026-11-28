@@ -32,12 +32,12 @@ func main() {
 		ctx, stop := context.WithTimeout(ctx, 10*time.Second)
 		defer stop()
 		var cfg nativehttp.Config
-		cfg, err = nativehttp.Inspect(ctx, *root, version.Version)
+		cfg, err = nativehttp.Inspect(ctx, *root, version.String())
 		if err == nil {
 			err = json.NewEncoder(os.Stdout).Encode(cfg)
 		}
 	} else {
-		err = desktopbridge.Relay(ctx, nativehttp.Config{Root: *root, Instance: *instance, Version: version.Version}, os.Stdin, os.Stdout)
+		err = desktopbridge.Relay(ctx, nativehttp.Config{Root: *root, Instance: *instance, Version: version.String()}, os.Stdin, os.Stdout)
 	}
 	if err != nil {
 		// Never copy HTTP bodies, paths, credentials or terminal contents into

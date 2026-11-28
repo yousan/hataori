@@ -9,7 +9,9 @@ export function guiEnvironment(source = process.env) {
 }
 
 export function checkedBinding(value, version) {
-  if (!value || value.Version !== version || typeof value.Root !== 'string' || !path.isAbsolute(value.Root) || value.Root.includes('\0') || typeof value.Instance !== 'string' || value.Instance.length < 1 || value.Instance.length > 256) throw new Error('Invalid private instance binding');
+  // The existing native listener reports version.String(), including the
+  // product name. Keep that exact wire binding; manifests use plain semver.
+  if (!value || value.Version !== `hataori ${version}` || typeof value.Root !== 'string' || !path.isAbsolute(value.Root) || value.Root.includes('\0') || typeof value.Instance !== 'string' || value.Instance.length < 1 || value.Instance.length > 256) throw new Error('Invalid private instance binding');
   return Object.freeze({ Root: value.Root, Instance: value.Instance, Version: value.Version });
 }
 

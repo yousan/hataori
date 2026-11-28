@@ -93,12 +93,16 @@ func TestDesktopHostedFixture(t *testing.T) {
 		go func() { done <- desktopLauncher(ctx, r.root, state) }()
 	}
 	ready := func() {
-		eventually(t, "private daemon ready", 20*time.Second, func() bool {
+		var lastErr error
+		for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			_, err := nativehttp.Inspect(ctx, r.root, activeVersion)
-			return err == nil && svc.isAttached()
-		})
+			_, lastErr = nativehttp.Inspect(ctx, r.root, "hataori "+activeVersion)
+			cancel()
+			if lastErr == nil && svc.isAttached() {
+				return
+			}
+		}
+		t.Fatalf("private daemon readiness refused: %v", lastErr)
 	}
 	stop := func() {
 		if cancelLauncher == nil {
@@ -146,7 +150,7 @@ func TestDesktopHostedFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	id = control.ThreadID(n)
-	binding, err := nativehttp.Inspect(context.Background(), r.root, version.Version)
+	binding, err := nativehttp.Inspect(context.Background(), r.root, version.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +208,7 @@ func TestDesktopHostedFixture(t *testing.T) {
 			if err := state.CheckHosts(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			next, err := nativehttp.Inspect(context.Background(), r.root, activeVersion)
+			next, err := nativehttp.Inspect(context.Background(), r.root, "hataori "+activeVersion)
 			if err != nil || next.Instance != binding.Instance || hostRun() != originalRun {
 				t.Fatal("replacement changed installation/host identity")
 			}
@@ -242,7 +246,7 @@ func TestDesktopHostedFixture(t *testing.T) {
 				if err != nil || current.Intent != desktopstate.Stopped || hostRun() != originalRun {
 					t.Fatal("launcher restart undid persistent Stop or replaced its host")
 				}
-				if _, err := nativehttp.Inspect(context.Background(), r.root, activeVersion); err == nil {
+				if _, err := nativehttp.Inspect(context.Background(), r.root, "hataori "+activeVersion); err == nil {
 					t.Fatal("stopped daemon was restarted implicitly")
 				}
 			}
