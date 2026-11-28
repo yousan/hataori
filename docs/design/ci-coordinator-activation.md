@@ -107,8 +107,10 @@ feedback and cannot satisfy the full sweep jobs.
 | web | Reproducible web build |
 | each applicable compatibility version | Full applicable tmux compatibility |
 
-Development performs format/vet/build/test compilation/cross-build plus verified
-complete-diff targeted and reverse-dependency/smoke tests through `cmd/ci-feedback`.
+The CI implementation lives in `cmd/internal/cipolicy`, private to these commands;
+it does not add a forge-specific adapter to runtime core. Development performs
+format/vet/build/test compilation, the source-only core/adapter guard, cross-build
+and verified complete-diff targeted and reverse-dependency/smoke tests through `cmd/ci-feedback`.
 Unknown/high-risk impact refuses this lane and retains the main full-check route.
 Sweep runs full OS suites, web reproducibility and cross-build. Its compatibility
 matrix preserves the existing ten versions and applicable holder/runner/hostterm,

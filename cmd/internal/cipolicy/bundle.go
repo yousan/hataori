@@ -37,7 +37,7 @@ func Bundle(repo, revision, binary string) (ActivationBundle, error) {
 	closure := map[string]string{}
 	for name := range tree.files {
 		critical := name == ProofWorkflow || strings.HasPrefix(name, ".github/ci/") || name == "go.mod" || name == "go.sum" || name == "web/package.json" || name == "web/package-lock.json" || name == "web/.nvmrc" ||
-			((strings.HasPrefix(name, "internal/cipolicy/") || strings.HasPrefix(name, "cmd/ci-coordinator/") || strings.HasPrefix(name, "cmd/ci-feedback/")) && strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go"))
+			((strings.HasPrefix(name, "cmd/internal/cipolicy/") || strings.HasPrefix(name, "cmd/ci-coordinator/") || strings.HasPrefix(name, "cmd/ci-feedback/")) && strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go"))
 		if critical {
 			data, e := tree.read(name)
 			if e != nil {

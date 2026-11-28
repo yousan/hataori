@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/yousan/hataori/internal/cipolicy"
+	"github.com/yousan/hataori/cmd/internal/cipolicy"
 )
 
 func main() {

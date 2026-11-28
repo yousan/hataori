@@ -29,7 +29,7 @@ never coalesce or cancel separate main runs. Superseded runs of one PR may
 cancel, including a ready run when that PR returns to draft.
 
 Draft code PRs run inexpensive formatting, static analysis, compilation,
-cross-compilation and web checks. Their full Linux/macOS suites and tmux
+the source-only core/adapter architecture test, cross-compilation and web checks. Their full Linux/macOS suites and tmux
 matrix are skipped before runner allocation. `ready_for_review` starts the
 applicable full gates on the same head without another push. A later ready
 push starts them again. Job names remain stable; a draft skip is development

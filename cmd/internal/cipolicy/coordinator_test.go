@@ -17,9 +17,21 @@ import (
 	"time"
 )
 
+// Canonicalize the fixture path because some systems expose temporary
+// directories through symlinked system aliases. The real loader still refuses
+// aliases: callers must supply the independent canonical authority directory.
+func canonicalAuthorityTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestExternalAuthorityLoaderAndClosedCLI(t *testing.T) {
 	f := fixture(t)
-	dir := t.TempDir()
+	dir := canonicalAuthorityTempDir(t)
 	if err := os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -487,12 +499,12 @@ func TestWorkflowRegistrationMismatchRemainsDefinitelyUnsent(t *testing.T) {
 }
 
 func TestNonStickyWritableAncestorCannotReplaceAuthorityAnchor(t *testing.T) {
-	ancestor := t.TempDir()
+	ancestor := canonicalAuthorityTempDir(t)
 	os.Chmod(ancestor, 0777)
 	defer os.Chmod(ancestor, 0700)
 	dir := filepath.Join(ancestor, "authority")
 	os.Mkdir(dir, 0700)
-	if _, err := LoadCoordinator(dir, "not-a-binary"); err == nil || !strings.Contains(err.Error(), "ancestor") {
+	if _, err := LoadCoordinator(dir, "not-a-binary"); err == nil || err.Error() != "replaceable authority ancestor" {
 		t.Fatal("replaceable independent key accepted", err)
 	}
 }
@@ -557,5 +569,23 @@ func TestReservationRechecksPolicyAtCommitTime(t *testing.T) {
 	r, _ := c.store.reservation(ctx)
 	if r != nil {
 		t.Fatal("expired admission committed", r)
+	}
+}
+
+func TestAuthorityAncestorAliasIsRejected(t *testing.T) {
+	parent := canonicalAuthorityTempDir(t)
+	real := filepath.Join(parent, "real")
+	if err := os.Mkdir(real, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(real, "authority"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(parent, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadCoordinator(filepath.Join(alias, "authority"), "not-a-binary"); err == nil || err.Error() != "unsafe authority ancestor" {
+		t.Fatal("symlink ancestor was not rejected before reading authority", err)
 	}
 }

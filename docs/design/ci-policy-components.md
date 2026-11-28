@@ -8,7 +8,8 @@ merged-main evidence is recorded on that PR. That evidence does not validate
 this new control or prove a trusted dispatch. #965/#1100/#1105 and release/operator
 work retain their existing owners. This PR does not close #1103.
 
-`internal/cipolicy` now includes GitHub provenance verification, a durable
+`cmd/internal/cipolicy` is private to the CI commands, outside runtime core. It
+includes GitHub provenance verification, a durable
 SQLite coordinator/outbox, and complete Git-object change selection. No
 runtime or Actions caller activates it. No live policy, authority root/key,
 integration branch, dispatcher, schedule, profile or routing is installed.

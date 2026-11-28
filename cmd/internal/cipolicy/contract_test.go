@@ -49,7 +49,7 @@ func TestDispatchRequestMatchesRepositoryValidator(t *testing.T) {
 	if err = json.Unmarshal(data, &body); err != nil {
 		t.Fatal(err)
 	}
-	script, err := filepath.Abs("../../.github/ci/proof.py")
+	script, err := filepath.Abs("../../../.github/ci/proof.py")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,8 +96,8 @@ func TestBundlePinsClosureAndDevelopmentStaticContract(t *testing.T) {
 	command(t, repo, "git", "init", "-q")
 	command(t, repo, "git", "config", "user.email", "fixture@example.invalid")
 	command(t, repo, "git", "config", "user.name", "Fixture")
-	for _, name := range []string{ProofWorkflow, ".github/ci/proof.py", ".github/ci/tmux-proof.sh", ".github/ci/tmux-sha256.txt", "go.mod", "go.sum", "web/package.json", "web/package-lock.json", "web/.nvmrc", "cmd/ci-feedback/main.go", "cmd/ci-coordinator/main.go", "internal/cipolicy/actions.go"} {
-		b, err := os.ReadFile(filepath.Join("../..", name))
+	for _, name := range []string{ProofWorkflow, ".github/ci/proof.py", ".github/ci/tmux-proof.sh", ".github/ci/tmux-sha256.txt", "go.mod", "go.sum", "web/package.json", "web/package-lock.json", "web/.nvmrc", "cmd/ci-feedback/main.go", "cmd/ci-coordinator/main.go", "cmd/internal/cipolicy/actions.go"} {
+		b, err := os.ReadFile(filepath.Join("../../..", name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -125,7 +125,7 @@ func TestBundlePinsClosureAndDevelopmentStaticContract(t *testing.T) {
 	if strings.Contains(text, "pull_request:") || strings.Contains(text, "cancel-in-progress:") || strings.Contains(text, "schedule:") {
 		t.Fatal("proof workflow auto-activated")
 	}
-	for _, name := range []string{"go.mod", "go.sum", "web/package-lock.json", ".github/ci/tmux-sha256.txt", "cmd/ci-feedback/main.go", "internal/cipolicy/actions.go"} {
+	for _, name := range []string{"go.mod", "go.sum", "web/package-lock.json", ".github/ci/tmux-sha256.txt", "cmd/ci-feedback/main.go", "cmd/internal/cipolicy/actions.go"} {
 		if b.ExecutionFiles[name] == "" {
 			t.Fatal("unbound execution dependency", name)
 		}

@@ -40,8 +40,8 @@ jobs:
           predicate-quantifier: every
           filters: .github/filters.yml
 
-  # Development feedback, including test compilation without executing a
-  # test binary. A green check here is not a full-suite result.
+  # Development feedback includes test compilation and the source-only
+  # architecture guard. A green check here is not a full-suite result.
   check:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -64,6 +64,8 @@ jobs:
         run: CGO_ENABLED=0 go build ./...
       - name: compile tests without running them
         run: go test -exec /bin/true ./...
+      - name: core and adapter boundary
+        run: go test ./cmd/hataori -run '^TestAdaptersOnlyUnderCmd$' -count=1
 
   test:
     needs: [changes, check]
