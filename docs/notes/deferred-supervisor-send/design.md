@@ -60,6 +60,27 @@ close the submission gap, and this change does not relax its editor guards.
 Its immediate sends remain available. No CLI/provider execution or switch is
 needed to establish this source/fixture contract.
 
+Deferred inputs additionally carry a generic `agent.Input.IdleOnly` property,
+retained for pending/first input, codec queues and Written reconstruction.
+Supported codecs must hold or refuse it while another native turn is running,
+never steer it into that turn. Codex excludes IdleOnly from both flushSteers
+and text-based Written steer/userMessage acknowledgement. Normal immediate
+steering and legacy Written matching stay unchanged.
+
+For this opt-in path Codex must validate that the frozen emitted request is
+exactly `turn/start`, with its actual request identity and original native
+thread. The frozen write is supplied to the reconstructed codec as opaque
+written-command evidence; it restores the original request association and
+reserves later request numbers above it. Only that exact request's successful
+turn/start response and its identified native turn can confirm the input.
+Neither arbitrary turn/started, same-text userMessage, an unrelated request's
+response nor a host write receipt may confirm it. Retained-response ordering
+before/after turn notifications and two codec reconstructions need fixture
+proof. A missing/invalid association fails closed; no text-match fallback.
+The generic runner/core do not parse provider-specific RPC messages; that
+validation/correlation lives only in the adapter.
+
+
 Remote, tmux-held, taken-in, relay and old/non-advertising hosts are explicitly
 unsupported for deferred acceptance. Their existing input/readiness/foreground
 checks and remote journal remain untouched. Refusal is specific and creates
@@ -85,8 +106,9 @@ frozen its run can never change.
 The dispatcher rechecks the enabled scope, current person mapping and send
 rights, current supervisor source lifetime, allowed repository, target kind,
 session/conversation/workspace/machine identity and the question watermark.
-Any question opened after acceptance invalidates the instruction even when
-already answered or withdrawn. It is never repurposed as an answer. This
+Any question opened after acceptance but before the frozen handoff invalidates
+the instruction even when already answered or withdrawn. After that cutoff,
+reconciliation is of the original already-granted attempt, not a new send. It is never repurposed as an answer. This
 includes a nonblocking question if that separate feature is later integrated.
 Target/source closure, replacement or authority/repository revocation has a
 durable terminal refusal. A temporary busy/unavailable/catching-up target
@@ -116,7 +138,7 @@ decider checks remain. An optional deferred identity on proposal records and
 events distinguishes approval of queueing from immediate delivery. Approval
 cannot change the frozen payload, target, question binding or retry key.
 
-Current watch always revokes undelivered queue authority. A former act grant
+Before the frozen handoff, current watch revokes undelivered queue authority. A former act grant
 changed to propose without human approval fails closed; no synthetic approval
 or later model turn is invented. A human-approved entry can remain eligible
 under propose, with current sender/decider authority checked. Changing propose
@@ -246,6 +268,10 @@ queue/idempotent retry, busy to idle/asleep to one matching input, restart
 before/after queue commit, input acceptance, atomic freeze/mark, host
 reservation/write, lost reply and acknowledgement commit, including two
 consecutive daemon reconstructions and actual controlled-writer byte counts.
+Prove a late native turn while the codec holds an IdleOnly input: no steer,
+no same-text false ACK, and one turn/start only after eligibility returns.
+Repeat identical text in another native turn and reconstruct twice, retaining
+exact frozen request correlation and existing immediate steering behavior.
 Exercise host capacity/digest/run/partial-write failures, unsupported adapter/
 holder/remote preflight and same-session asleep resume without replacement. Test open/new/resolved questions,
 source/target replacement/closure, scope/person/repository/machine revocation,
