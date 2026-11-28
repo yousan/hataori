@@ -95,14 +95,22 @@ Restart thus connects the original receipt to evidence without trusting a
 success string. Binding queued/running/failed metadata is only identity capture.
 
 Owner invalidation discovers existing original runs before retiring a prepared
-intent or legacy request. A prepared request with a discovered run first needs
-read-only reconciliation; an unknown/duplicate discovery cannot be discarded.
+intent or legacy request. A prepared request with a discovered running/unknown original cannot retire; a
+known terminal original is bound in the same invalidation transaction so its
+receipt remains. Unknown/duplicate discovery cannot be discarded.
 A legacy request without an outbox also needs a known terminal original run, or
 complete discovery showing none. A definitely unsent prepared intent may retire. It cannot
 abandon an uncertain send or a bound run that is still running/unknown. A known
 terminal original run may be invalidated while its receipt remains retained; a
-new tuple must use a new intent ID. No path cancels a proof or releases coverage
-debt. Root/key/credential/process/DB provisioning and the first real candidate
+new tuple must use a new intent ID. Freeze also retains the nonsecret original
+root/execution identity under its scope digest. Terminal retirement uses that
+original workflow/actor/control/timeline; a changed API budget, dispatcher or
+current control cannot misidentify it. Current owner/control validity and expiry
+are still checked separately, including at commit. The historical snapshot
+cannot authorize sending or full validation. Legacy rows lacking a snapshot can
+backfill with an eligible unchanged-scope freeze, preserving tuple/revision and
+evidence; an unknown original identity under a different scope fails closed.
+No path cancels a proof or releases coverage debt. Root/key/credential/process/DB provisioning and the first real candidate
 execution remain external, unacquired inputs; merging this code activates none.
 
 A local one-origin, 28-file closure case used 105 API requests under the existing

@@ -3,6 +3,7 @@ package cipolicy
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -711,5 +712,152 @@ func TestCandidateAndBootstrapReservationsAreReciprocal(t *testing.T) {
 				t.Fatal("reservation dispatched", h.count())
 			}
 		})
+	}
+}
+
+func TestCandidateInvalidationUsesRetainedAuthorityAndFreshOwner(t *testing.T) {
+	for _, scenario := range []string{"legacy-terminal", "bound-terminal", "prepared-terminal", "new-control-owner-dispatcher", "expired-original-root", "bound-running", "prepared-running", "uncertain", "wrong-current-owner", "expired-current-root", "expired-at-commit", "tampered-history"} {
+		t.Run(scenario, func(t *testing.T) {
+			c, f, seam, h := candidateDispatchFixture(t)
+			ctx := context.Background()
+			if scenario == "legacy-terminal" {
+				seam.now = clock.Add(3 * time.Minute)
+				h.posts = 1
+				f.refs[dispatchRef(c.adapter.root.Candidate.Sweep)] = c.adapter.root.Candidate.Result
+				for _, op := range []string{"candidate-freeze", "candidate-verify"} {
+					if _, err := c.Execute(ctx, op, 1200, 0); err != nil {
+						t.Fatal(err)
+					}
+				}
+			} else {
+				prepareCandidateDispatch(t, c)
+				if scenario == "prepared-terminal" || scenario == "prepared-running" {
+					h.posts = 1
+					seam.run.Status, seam.run.Conclusion = "in_progress", ""
+				} else {
+					if scenario == "uncertain" {
+						h.visible = false
+					}
+					_, err := c.Execute(ctx, "candidate-pump", 1200, 0)
+					if err != nil && !errors.Is(err, ErrAmbiguous) {
+						t.Fatal(err)
+					}
+				}
+			}
+			if scenario != "bound-running" && scenario != "prepared-running" && scenario != "uncertain" {
+				finishCandidate(seam)
+			}
+			before, _ := candidateAt(ctx, c.store.db, 1200)
+			originalExpiry := c.adapter.root.ExpiresAt
+			raw, _ := json.Marshal(c.adapter.root)
+			var root AuthorityRoot
+			json.Unmarshal(raw, &root)
+			root.MaxRequests = 160
+			if scenario == "new-control-owner-dispatcher" {
+				requirement := root.Controls[root.CurrentControl]
+				requirement.Pull, requirement.Head = 1069, sha(12)
+				requirement.Owner = Identity{ID: requirement.Owner.ID + 200, Login: "new-current-owner"}
+				var policy Policy
+				json.Unmarshal(f.policy[root.CurrentControl], &policy)
+				policy.Owner = requirement.Owner.Login
+				f.policy[sha(2)], _ = json.Marshal(policy)
+				requirement.PolicyDigest = Digest(f.policy[sha(2)])
+				root.CurrentControl = sha(2)
+				root.Controls = map[string]ControlRequirement{sha(2): requirement}
+				root.Dispatcher = Identity{ID: root.Dispatcher.ID + 300, Login: "new-dispatcher"}
+			}
+			if scenario == "expired-original-root" {
+				seam.now = originalExpiry.Add(time.Minute)
+				root.ExpiresAt = seam.now.Add(time.Hour)
+			}
+			if scenario == "expired-current-root" {
+				root.ExpiresAt = seam.now
+			}
+			signed, _ := json.Marshal(root)
+			a, err := NewAdapter(seam.key.Public().(ed25519.PublicKey), signed, ed25519.Sign(seam.key, signed), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.base, a.client, a.clock = c.adapter.base, c.adapter.client, c.adapter.clock
+			c.adapter = a
+			f.root = root
+			currentOwner := root.Controls[root.CurrentControl].Owner
+			f.tamper = func(path string, v any) {
+				if path == "/user" {
+					who := v.(*Identity)
+					*who = currentOwner
+					if scenario == "wrong-current-owner" {
+						who.ID++
+					}
+				}
+			}
+			if scenario == "expired-at-commit" {
+				c.store.clock = func() time.Time { return root.ExpiresAt }
+			}
+			if scenario == "tampered-history" {
+				var raw []byte
+				c.store.db.QueryRow("SELECT snapshot FROM candidate_run_authority WHERE id=?", before.ID).Scan(&raw)
+				var retained candidateRunAuthority
+				json.Unmarshal(raw, &retained)
+				retained.Root.MaxRequests++
+				raw, _ = json.Marshal(retained)
+				c.store.db.Exec("UPDATE candidate_run_authority SET snapshot=? WHERE id=?", raw, before.ID)
+			}
+			posts := h.count()
+			if _, err := c.Execute(ctx, "candidate-pump", 1200, 0); err == nil {
+				t.Fatal("new scope sent or validated old request")
+			}
+			_, err = c.execute(ctx, "candidate-invalidate", 0, 0, "retire original only with current owner authority")
+			wantSuccess := scenario == "legacy-terminal" || scenario == "bound-terminal" || scenario == "prepared-terminal" || scenario == "new-control-owner-dispatcher" || scenario == "expired-original-root"
+			if (err == nil) != wantSuccess {
+				t.Fatal(scenario, err)
+			}
+			after, _ := candidateAt(ctx, c.store.db, 1200)
+			if wantSuccess {
+				if after.Status != "invalidated" || after.ID != before.ID {
+					t.Fatal(after)
+				}
+				if scenario == "prepared-terminal" {
+					i, e := candidateIntent(ctx, c.store.db, after)
+					if e != nil || i.Status != "bound" || i.RunID != seam.run.ID {
+						t.Fatal("terminal receipt not retained", i, e)
+					}
+				}
+			} else if after.Status != before.Status || after.Revision != before.Revision {
+				t.Fatal("current authority failure discarded original", after)
+			}
+			if h.count() != posts {
+				t.Fatal("invalidation sent", h.count(), posts)
+			}
+		})
+	}
+}
+
+func TestCandidateLegacyExecutionIdentityBackfillIsScopeBound(t *testing.T) {
+	c, _, _ := candidateFixture(t)
+	ctx := context.Background()
+	if _, err := c.Execute(ctx, "candidate-freeze", 1200, 0); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := candidateAt(ctx, c.store.db, 1200)
+	// Explicit old-database shape: prior versions retained the tuple, not this
+	// read-only execution snapshot. No new authority may invent its old identity.
+	c.store.db.Exec("DELETE FROM candidate_run_authority")
+	originalBudget := c.adapter.root.MaxRequests
+	c.adapter.root.MaxRequests++
+	if _, err := c.execute(ctx, "candidate-invalidate", 0, 0, "unknown historical root"); err == nil {
+		t.Fatal("unknown original scope accepted")
+	}
+	c.adapter.root.MaxRequests = originalBudget
+	if _, err := c.Execute(ctx, "candidate-freeze", 1200, 0); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := candidateAt(ctx, c.store.db, 1200)
+	if after.ID != before.ID || after.Revision != before.Revision {
+		t.Fatal("backfill replaced tuple", after)
+	}
+	c.adapter.root.MaxRequests++
+	if _, err := c.execute(ctx, "candidate-invalidate", 0, 0, "known original after compatible backfill"); err != nil {
+		t.Fatal(err)
 	}
 }

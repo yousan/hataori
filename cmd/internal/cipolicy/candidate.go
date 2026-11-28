@@ -430,7 +430,7 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 			old, err := candidateAt(ctx, conn, pull)
 			if err == nil {
 				if old.ID == candidateID(tuple) && old.Status != "invalidated" {
-					return nil
+					return retainCandidateRunAuthority(ctx, conn, tuple, a, control)
 				}
 				if old.Status != "invalidated" || old.ID == candidateID(tuple) {
 					return fmt.Errorf("candidate already frozen; invalidate explicitly")
@@ -447,7 +447,10 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 				return err
 			}
 			_, err = conn.ExecContext(ctx, "INSERT INTO candidate(id,pull,revision,status,tuple) VALUES(?,?,1,'frozen',?)", candidateID(tuple), pull, b)
-			return err
+			if err != nil {
+				return err
+			}
+			return retainCandidateRunAuthority(ctx, conn, tuple, a, control)
 		})
 		if err != nil {
 			return out, err
@@ -475,6 +478,11 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 			if err = a.request(ctx, "GET", "/user", nil, &who); err != nil || who != control.requirement.Owner {
 				return out, fmt.Errorf("responsible owner required")
 			}
+			original, retainedControl, e := a.candidateInvalidationAuthority(ctx, s, record, control)
+			if e != nil {
+				return out, e
+			}
+			var originalRun int64
 			oldIntent, intentErr := candidateIntent(ctx, s.db, record)
 			if intentErr != nil && intentErr != sql.ErrNoRows {
 				return out, intentErr
@@ -482,18 +490,19 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 			if intentErr == sql.ErrNoRows || oldIntent.Status == "prepared" {
 				// Prepared describes our local send claim, not absence of a run
 				// created by the previously supported external proof route.
-				id, e := a.discoverRun(ctx, control, record.Tuple.Request.Sweep)
+				id, e := original.discoverRun(ctx, retainedControl, record.Tuple.Request.Sweep)
 				if e != nil {
 					return out, e
 				}
 				if id > 0 {
-					if intentErr == nil || (record.Evidence != nil && (record.Evidence.Run != id || record.Evidence.Attempt != 1)) {
+					if record.Evidence != nil && (record.Evidence.Run != id || record.Evidence.Attempt != 1) {
 						return out, ErrAmbiguous
 					}
-					run, e := a.candidateDispatchRun(ctx, control, record.Tuple.Request, id)
+					run, e := original.candidateDispatchRun(ctx, retainedControl, record.Tuple.Request, id)
 					if e != nil || run.Status != "completed" {
 						return out, fmt.Errorf("candidate proof still unresolved")
 					}
+					originalRun = id
 				}
 			}
 			if intentErr == nil {
@@ -501,7 +510,7 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 					return out, ErrAmbiguous
 				}
 				if oldIntent.Status == "bound" {
-					run, e := a.candidateDispatchRun(ctx, control, record.Tuple.Request, oldIntent.RunID)
+					run, e := original.candidateDispatchRun(ctx, retainedControl, record.Tuple.Request, oldIntent.RunID)
 					if e != nil || run.Status != "completed" {
 						return out, fmt.Errorf("candidate proof still unresolved")
 					}
@@ -522,7 +531,12 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 						return ErrConflict
 					}
 					if current.Status == "prepared" {
-						if _, e = conn.ExecContext(ctx, "UPDATE candidate_intent SET status='retired' WHERE candidate_id=? AND status='prepared'", record.ID); e != nil {
+						if originalRun > 0 {
+							_, e = conn.ExecContext(ctx, "UPDATE candidate_intent SET status='bound',run=?,attempt=1 WHERE candidate_id=? AND status='prepared'", originalRun, record.ID)
+						} else {
+							_, e = conn.ExecContext(ctx, "UPDATE candidate_intent SET status='retired' WHERE candidate_id=? AND status='prepared'", record.ID)
+						}
+						if e != nil {
 							return e
 						}
 					}

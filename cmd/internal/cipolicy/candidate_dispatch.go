@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Candidate dispatch has its own pre-lane receipt because releasing coverage
@@ -344,4 +345,51 @@ func nonCandidateIDAvailable(ctx context.Context, conn *sql.Conn, id string) err
 		return fmt.Errorf("proof intent ID already used")
 	}
 	return nil
+}
+
+// This retained nonsecret root was verified at freeze, not supplied by a PR.
+// It can identify old runs for terminal retirement only. Current owner/control
+// validity is checked separately and it never authorizes a send or full proof.
+type candidateRunAuthority struct {
+	Root                 AuthorityRoot
+	ApprovedAt, StartsAt time.Time
+}
+
+func retainCandidateRunAuthority(ctx context.Context, conn *sql.Conn, tuple CandidateTuple, a *Adapter, c verifiedControl) error {
+	snapshot := candidateRunAuthority{a.root, c.approvedAt, c.selection.policy.StartsAt}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	// Existing snapshots are immutable; expiry-only root renewal must not replace
+	// the original execution identity. An eligible unchanged root can backfill a
+	// legacy row, without changing its tuple, revision, evidence or intent ID.
+	_, err = conn.ExecContext(ctx, "INSERT INTO candidate_run_authority VALUES(?,?) ON CONFLICT(id) DO NOTHING", candidateID(tuple), raw)
+	return err
+}
+
+func (a *Adapter) candidateInvalidationAuthority(ctx context.Context, s *Store, record CandidateRecord, current verifiedControl) (*Adapter, verifiedControl, error) {
+	var raw []byte
+	err := s.db.QueryRowContext(ctx, "SELECT snapshot FROM candidate_run_authority WHERE id=?", record.ID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		if current.revision != record.Tuple.Control || current.selection.digest != record.Tuple.Policy || current.authority != record.Tuple.Scope {
+			return nil, current, fmt.Errorf("legacy candidate needs original-scope execution identity")
+		}
+		return a, current, nil
+	}
+	if err != nil {
+		return nil, current, err
+	}
+	var snapshot candidateRunAuthority
+	if json.Unmarshal(raw, &snapshot) != nil {
+		return nil, current, fmt.Errorf("candidate execution identity invalid")
+	}
+	original := *a
+	original.root = snapshot.Root
+	requirement, ok := original.root.Controls[record.Tuple.Control]
+	if !ok || original.root.CurrentControl != record.Tuple.Control || original.root.RepositoryID != record.Tuple.Repository || original.authorityDigest() != record.Tuple.Scope || requirement.PolicyDigest != record.Tuple.Policy || requirement.WorkflowID <= 0 || requirement.WorkflowPath != ProofWorkflow || snapshot.ApprovedAt.IsZero() || snapshot.StartsAt.IsZero() {
+		return nil, current, fmt.Errorf("candidate execution identity seal mismatch")
+	}
+	retained := verifiedControl{revision: record.Tuple.Control, authority: record.Tuple.Scope, approvedAt: snapshot.ApprovedAt, requirement: requirement, selection: Selection{digest: record.Tuple.Policy, policy: Policy{StartsAt: snapshot.StartsAt}}}
+	return &original, retained, nil
 }
