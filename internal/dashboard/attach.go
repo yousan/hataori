@@ -166,20 +166,17 @@ func (s *Server) attach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.SetReadDeadline(time.Time{})
-	claims, ok := s.valid(first.Session, l)
-	var a control.API
-	if ok {
-		a, ok = s.For(claims.person)
-	}
-	if !ok || a == nil {
+	ss, ok := s.websocketSession(l, first.Session)
+	if !ok {
 		c.refuseWith("not signed in")
 		return
 	}
+	claims, a := ss.claims, ss.api
 	if first.Thread <= 0 {
 		c.refuseWith("thread is required: the thread's number")
 		return
 	}
-	ss := session{claims: claims, sum: sha256.Sum256([]byte(first.Session)), api: a}
+	ss.sum = sha256.Sum256([]byte(first.Session))
 	if reason, _, err := s.actRefusal(ss, l); err != nil || reason != "" {
 		if err != nil {
 			s.Log.Error("dashboard: passkeys", "err", err)
@@ -248,13 +245,17 @@ func (s *Server) attach(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hostEnded := make(chan error, 1)
-	go func() { hostEnded <- term.Wait() }()
+	var workers sync.WaitGroup
+	workers.Add(2)
+	defer func() { cancel(); c.Close(); closeTerm(); workers.Wait() }()
+	go func() { defer workers.Done(); hostEnded <- term.Wait() }()
 	// The reader writes each batch of keys to the terminal in order, and
 	// records when the last one was written: the idle period runs from it.
 	var lastKey atomic.Int64
 	lastKey.Store(time.Now().UnixNano())
 	pageEnded := make(chan string, 1) // why the page's side ended
 	go func() {
+		defer workers.Done()
 		for {
 			kind, b, err := c.ReadMessage()
 			if err != nil {

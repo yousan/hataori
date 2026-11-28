@@ -2183,7 +2183,12 @@ func (a *api) Terminal(ctx context.Context, id control.ThreadID, run string, aft
 	}
 	out := make(chan control.TerminalChunk)
 	go func() {
-		defer func() { stop(); close(out) }()
+		defer func() {
+			stop()
+			for range in { // the child may still be finishing a store read
+			}
+			close(out)
+		}()
 		tick := time.NewTicker(terminalSessionCheck)
 		defer tick.Stop()
 		for {
@@ -2203,10 +2208,17 @@ func (a *api) Terminal(ctx context.Context, id control.ThreadID, run string, aft
 					continue
 				}
 				stop() // the old session's stream ends; its chunks are dropped
-				sctx, stop = context.WithCancel(ctx)
-				if in, err = a.c.Runner.Terminal(sctx, now, "", 0); err != nil {
+				for range in {
+				}
+				if ctx.Err() != nil {
 					return
 				}
+				sctx, stop = context.WithCancel(ctx)
+				next, err := a.c.Runner.Terminal(sctx, now, "", 0)
+				if err != nil {
+					return
+				}
+				in = next
 				sid = now
 			case <-ctx.Done():
 				return

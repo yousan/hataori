@@ -274,6 +274,8 @@ func (s *Server) operate(w http.ResponseWriter, r *http.Request) {
 	}
 	c := &wsConn{Conn: ws, timeout: s.writeTimeout}
 	defer c.Close()
+	closeOnStop := context.AfterFunc(r.Context(), func() { c.Close() })
+	defer closeOnStop()
 	// Before the session is known, no more than a passkey's answer.
 	c.SetReadLimit(maxPasskeyBody)
 
@@ -289,15 +291,12 @@ func (s *Server) operate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.SetReadDeadline(time.Time{})
-	claims, ok := s.valid(first.Session, l)
-	var a control.API
-	if ok {
-		a, ok = s.For(claims.person)
-	}
-	if !ok || a == nil {
+	ss, ok := s.websocketSession(l, first.Session)
+	if !ok {
 		c.refuse("not signed in")
 		return
 	}
+	claims, a := ss.claims, ss.api
 	if first.Pane == "" {
 		c.refuse("pane is required")
 		return
@@ -314,6 +313,8 @@ func (s *Server) operate(w http.ResponseWriter, r *http.Request) {
 	// the WebSocket closes.
 	ctx, cancel := context.WithDeadline(r.Context(), claims.exp)
 	defer cancel()
+	closeOnCancel := context.AfterFunc(ctx, func() { c.Close() })
+	defer closeOnCancel()
 	op, err := a.OperateHost(ctx, first.Pane)
 	if err != nil {
 		c.refuse(operateRefusal(err))
@@ -343,7 +344,11 @@ func (s *Server) operate(w http.ResponseWriter, r *http.Request) {
 	// at once. The reader never waits for the batches.
 	batches := make(chan []control.HostKey, maxQueuedBatches)
 	endAsked := make(chan struct{})
+	var workers sync.WaitGroup
+	workers.Add(2)
+	defer func() { cancel(); c.Close(); workers.Wait() }()
 	go func() {
+		defer workers.Done()
 		send := func(keys []control.HostKey) {
 			if err := op.Send(ctx, keys); err != nil && !errors.Is(err, control.ErrEnded) && ctx.Err() == nil {
 				c.send(operateOut{Error: err.Error()})
@@ -351,6 +356,8 @@ func (s *Server) operate(w http.ResponseWriter, r *http.Request) {
 		}
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case keys, ok := <-batches:
 				if !ok {
 					return
@@ -378,6 +385,7 @@ func (s *Server) operate(w http.ResponseWriter, r *http.Request) {
 	}()
 	ended := false // the page asked for the end: later keys are dropped
 	go func() {
+		defer workers.Done()
 		defer close(batches)
 		defer cancel() // the page went away: the operation ends
 		for {

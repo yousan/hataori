@@ -1,0 +1,93 @@
+name: Native listener isolated proof
+
+# The pull_request merge ref contains this unmerged workflow. Dispatch would
+# require default-branch registration; this proof uses synchronize instead.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/native-listener-proof.yml
+      - internal/nativehttp/**
+
+permissions:
+  contents: read
+
+jobs:
+  native-proof:
+    # The maintainer authorized this proof for this same-repository PR only.
+    if: github.repository == 'yousan/hataori' && github.event.pull_request.number == 1115 && github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      PROOF_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Compile the exact-head fixture as the ordinary runner user
+        id: compile
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          test "$(git rev-parse HEAD)" = "$PROOF_SHA"
+          printf 'Proof SHA: %s\nRunner OS: %s\n' "$PROOF_SHA" "$RUNNER_OS" | tee -a "$GITHUB_STEP_SUMMARY"
+          CGO_ENABLED=1 go test -c -o "$RUNNER_TEMP/nativehttp.test" ./internal/nativehttp
+      - name: Darwin ACL and kernel peer proof without elevation
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.compile.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          log="$RUNNER_TEMP/native-darwin.log"
+          "$RUNNER_TEMP/nativehttp.test" \
+            -test.run='^(TestDarwinACLGrantRefusesPrivatePaths|TestKernelPeerUID)$' \
+            -test.v -test.parallel=1 -test.timeout=30s 2>&1 | tee "$log"
+          if grep -Eq '^[[:space:]]*--- SKIP:' "$log"; then
+            printf 'A required fixture skipped; refusing acceptance.\n' >&2
+            exit 1
+          fi
+          for name in TestDarwinACLGrantRefusesPrivatePaths TestKernelPeerUID; do
+            grep -q "^--- PASS: $name " "$log"
+            printf 'PASS %s %s %s\n' "$PROOF_SHA" "$RUNNER_OS" "$name" >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Cross-user proof with only the fixture binary elevated
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/native-cross-user.log"
+          sudo -n -- /usr/bin/env -i "$RUNNER_TEMP/nativehttp.test" \
+            -test.run='^TestNativeCrossUserBoundary$' \
+            -test.v -test.parallel=1 -test.timeout=30s 2>&1 | tee "$log"
+          if grep -Eq '^[[:space:]]*--- SKIP:' "$log"; then
+            printf 'A required fixture skipped; refusing acceptance.\n' >&2
+            exit 1
+          fi
+          grep -q '^--- PASS: TestNativeCrossUserBoundary ' "$log"
+          printf 'PASS %s %s TestNativeCrossUserBoundary\n' "$PROOF_SHA" "$RUNNER_OS" >> "$GITHUB_STEP_SUMMARY"
+      - name: Darwin non-cgo refusal without elevation
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.compile.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          log="$RUNNER_TEMP/native-nocgo.log"
+          CGO_ENABLED=0 go test -c -o "$RUNNER_TEMP/nativehttp-nocgo.test" ./internal/nativehttp
+          "$RUNNER_TEMP/nativehttp-nocgo.test" \
+            -test.run='^TestDarwinWithoutACLVerifierRefuses$' \
+            -test.v -test.parallel=1 -test.timeout=30s 2>&1 | tee "$log"
+          if grep -Eq '^[[:space:]]*--- SKIP:' "$log"; then
+            printf 'A required fixture skipped; refusing acceptance.\n' >&2
+            exit 1
+          fi
+          grep -q '^--- PASS: TestDarwinWithoutACLVerifierRefuses ' "$log"
+          printf 'PASS %s %s TestDarwinWithoutACLVerifierRefuses\n' "$PROOF_SHA" "$RUNNER_OS" >> "$GITHUB_STEP_SUMMARY"
