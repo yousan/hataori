@@ -333,10 +333,33 @@ When an agent's login runs out, every turn fails until someone logs in on the ho
 The rules:
 
 - **Only the owner's direct message is ever passed to the login command, and only while the command is waiting for a code.** A login that takes no code back is passed nothing. The owner is the person of section 5.5, reached at their id on each client; the relay resolves the author's `<client>:<id>` and compares the person. A direct message from anyone else, a guest included, does nothing. The owner's message at any other time gets "not waiting for a code". A reply that is not shaped like a code (one word, no spaces) is not passed on.
-- **The link and the code exist only in the direct message and in memory.** They are not written to the database, the event log, any log file or any other conversation, and no client of the control API can read them. The log says that a code arrived and how long it was. For this reason the local login command is a direct child of the daemon and does not run under the session host, which logs what it sees. For a worker it is a direct child of the resident, with an ephemeral worker-protocol stream that bypasses session logs, receipts, replay files and diagnostic payload logging. The main still checks the owner and selects the outage; no worker accepts a chat identity as authorization. A main restart, resident restart, connection loss or timeout ends that login attempt; login material is never replayed, and the button starts a new attempt. A daemon restart ends a login that is in progress; the button starts another.
+- **The link and the code exist only in the direct message and in memory.** They are not written to the database, the event log, any log file or any other conversation, and no client of the control API can read them. The log says that a code arrived and how long it was. For this reason the local login command is a direct child of the daemon and does not run under the session host, which logs what it sees. For a worker it runs under a resident-owned EOF guard, with an ephemeral worker-protocol stream that bypasses session logs, receipts, replay files and diagnostic payload logging. The main still checks the owner and selects the outage; no worker accepts a chat identity as authorization. A main restart, resident restart, connection loss or timeout ends that login attempt; login material is never replayed, and the button starts a new attempt. A daemon restart ends a login that is in progress; the button starts another.
 - **Nothing is resent.** A message that failed is sent again by whoever sent it.
 - **If someone logs in on the host instead**, the next turn that completes with that login closes the outage, the waiting login is stopped, and the message says the login is back.
 - The relay can be switched off in the config; the alert stays.
+
+**Worker relay (#966).** Main uses the already configured, pinned worker
+transport and the original outage's machine-agent-configuration. The selected
+configuration name comes from that outage's recorded sessions, never a direct
+message or worker payload. An explicit code reply must match the channel,
+thread and message of that login or one of its follow-ups; an unknown reply
+never falls back to the sole waiting login. A bare code still requires exactly
+one waiting login. The resident admits only `LoginFlow` adapters with the
+bounded `WorkerLoginStatus` contract below. Only Codex opts in here; synthetic
+code-back fixtures do not enable a real code-back provider.
+
+The worker login and status commands run under an EOF guard, outside session
+hosts. Each attempt uses one ephemeral connection, no retry or replay, with a
+ten-minute maximum, 16 KiB line/input bounds and a bounded update queue. Status
+gets two seconds and 16 KiB of discarded output. Clean exit plus clean status
+closes only the original outage. Disconnect, cancellation and resident/main
+shutdown end the attempt; correlated cleanup confirmation precedes replacement.
+The guard ends its still-owned direct child and its own live process group.
+Independently detached descendants are outside that boundary. Disposable
+real-CLI completion/status captures, supported-CLI containment and the complete
+acceptance evidence remain gates of #966, as recorded in
+[`worker-login-evidence.md`](../worker-login-evidence.md). Fixtures and CI do
+not satisfy the runtime gates.
 
 This is the only input hataori takes from direct messages in phase 1, and the only button.
 
@@ -3205,6 +3228,14 @@ type LoginFlow interface {
 	// LoginCode returns the bytes that hand a code to the login command.
 	// A flow taking no code back returns ErrNoCodeBack for every code, even empty.
 	LoginCode(code string) ([]byte, error)
+}
+
+// WorkerLoginStatus opts into a bounded, guarded worker status command.
+// Clean zero exit must certify login in the same configuration. Output is
+// bounded and discarded. Adapters needing output interpretation must not
+// opt in until that interpretation and its real captures are implemented.
+type WorkerLoginStatus interface {
+	LoginStatusLaunch(Spec) (Launch, error)
 }
 
 // LoginStep is what a line of the login command means: a link to show

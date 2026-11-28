@@ -11,6 +11,34 @@ import time
 
 ROOT = Path(__file__).resolve().parents[3]
 CASES = [
+    ("daemon_pinned_transport_wiring", "cmd/hataori/daemon.go",
+     "lr.Workers[key] = relay.WorkerLoginEndpoint{Binding: remote.Binding, Open: remote.Open}",
+     "_ = key\n\t\t_ = remote",
+     "./cmd/hataori", "^TestWorkerLoginDaemonUsesPinnedTransport$",
+     "daemon did not give the login relay its pinned worker transport"),
+    ("explicit_reply_refusal", "internal/chat/login.go",
+     "if answered == 0 {", "if answered == 0 && false {",
+     "./internal/chat", "^TestWorkerLoginDirectReplyBoundary$/unknown$",
+     "unrelated reply reached the waiting login"),
+    ("reply_thread_identity", "internal/chat/login.go",
+     "`AND dm_channel = ? AND dm_thread = ? AND dm_ref = ?`, in.ReplyTo.Conv.Channel, in.ReplyTo.Conv.Thread, in.ReplyTo.ID",
+     "`AND dm_channel = ? AND dm_ref = ?`, in.ReplyTo.Conv.Channel, in.ReplyTo.ID",
+     "./internal/chat", "^TestWorkerLoginDirectReplyBoundary$/wrong-thread$",
+     "unrelated reply reached the waiting login"),
+    ("followup_thread_identity", "internal/chat/login.go",
+     'ref.Conv.Channel + "\\x00" + ref.Conv.Thread + "\\x00" + ref.ID',
+     'ref.Conv.Channel + "\\x00" + ref.ID',
+     "./internal/chat", "^TestWorkerLoginDirectReplyBoundary$/followup-wrong-thread$",
+     "unrelated reply reached the waiting login"),
+    ("reply_outage_selection", "internal/chat/login.go",
+     "if answered != 0 {", "if answered != 0 && false {",
+     "./internal/chat", "^TestWorkerLoginDirectReplyBoundary$/other-outage$",
+     "unrelated reply reached the waiting login"),
+    ("front_end_owner_input", "internal/chat/login.go",
+     "if in.Author.Kind == surface.Bot || !f.owner(in.Author) {",
+     "if in.Author.Kind == surface.Bot || false {",
+     "./internal/chat", "^TestWorkerLoginDirectReplyBoundary$/guest$",
+     "unrelated reply reached the waiting login"),
     ("guard_lifetime_fd_private", "internal/worker/login_guard.go",
      "syscall.CloseOnExec(3)", "",
      "./internal/worker", "^TestWorkerLoginGuardDescriptorsArePrivate$",
@@ -117,6 +145,11 @@ CASES = [
      "json.Unmarshal(m.Body, &input)\n\t\t\tr.root.WriteFile(\"state/worker/login-unexpected.log\", m.Body, 0600)",
      "./internal/worker", "^TestWorkerLoginOwnerOutageAndPersistence$/explicit$",
      "login marker persisted in login-unexpected.log"),
+    ("forbidden_process_arguments_instrumentation", "internal/worker/login_command.go",
+     "argv := append(append([]string{}, guard...), launch.Argv...)",
+     "launch.Argv = append(launch.Argv, \"marker-secret\")\n\targv := append(append([]string{}, guard...), launch.Argv...)",
+     "./internal/worker", "^TestWorkerLoginFakeSurfacePersistence$",
+     "login marker persisted in argv-capture.jsonl"),
 ]
 
 
@@ -145,7 +178,7 @@ def main():
             output = run.stdout.replace(str(ROOT), "<repo>").replace(temp, "<overlay>")
             accepted = run.returncode != 0 and assertion in output and "[build failed]" not in output
             results.append({"guard": name, "source": relative, "package": package,
-                            "kind": "persistence instrumentation" if name == "forbidden_persistence_instrumentation" else "guard removal/reversion",
+                            "kind": "persistence instrumentation" if name.endswith("_instrumentation") else "guard removal/reversion",
                             "test": pattern, "exit_code": run.returncode,
                             "seconds": round(time.monotonic() - started, 3),
                             "accepted_negative": accepted, "output": output})
@@ -156,6 +189,7 @@ def main():
                     "internal/workerproto/login*.go", "internal/relay/worker_login.go",
                     "internal/machineio/login*.go", "internal/agent/worker_login.go",
                     "internal/worker/server.go", "internal/worker/resident.go", "cmd/hataori/worker.go",
+                    "cmd/hataori/worker_login_test.go", "internal/chat/worker_login_test.go",
                     "internal/worker/testdata/login_negative.py"):
         sources.update(str(path.relative_to(ROOT)) for path in ROOT.glob(pattern))
     hashes = {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in sorted(sources)}

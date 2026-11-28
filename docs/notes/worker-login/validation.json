@@ -1,0 +1,105 @@
+{
+  "environment": "GOMAXPROCS=1; serial commands; isolated fixtures; no local tmux/full suite or provider login",
+  "source_sha256": {
+    "cmd/hataori/daemon.go": "08b26dcf328912f4a959141641bac54efccef72ddf7e61930f5f992be95bbd67",
+    "cmd/hataori/worker.go": "af7305e6294c0e4e3d96402295bb036760a991eeb0b014903dd83649ba93fc06",
+    "cmd/hataori/worker_login_test.go": "212ef61515c0af83a5706a5ff02932fc5d6b9e448ad10022797d756f1cb007e8",
+    "internal/agent/codex/login.go": "248491e54d7b8408caaf6992bf897d35b6a135180cbce05af71ada5bf7fe1053",
+    "internal/agent/codex/worker_login.go": "9846ed2885a4ce6714f8d38d56f0a841f6a1e96d08db7ed13bced0fe7a7279a8",
+    "internal/agent/codex/worker_login_test.go": "995b478dde649a125e9e75ecbcbbc00b4b9bee650746b5359dccb181a1435f85",
+    "internal/agent/worker_login.go": "90cabab71aa3223301d9a48554a0dd7e52320bfedb177785d169aaa734f4ba36",
+    "internal/chat/login.go": "e95568074969e9d5010507a9396a4400d7897e7771f884fb2843dd9b22638548",
+    "internal/chat/worker_login_test.go": "49f131a8cab9428a628bc2c522934d6e559e69be24e8115f6fc790abbb4bb1a8",
+    "internal/machineio/login.go": "b0f870bbc9b34d563b26c429729ff505d7a4922d4d3e9bde8c70d8a4b9364e70",
+    "internal/machineio/login_test.go": "66eb11ceb1bf48d5309f4ba9efc1ac1842fcc3a44a5fce856028a117c865ef6d",
+    "internal/relay/relay.go": "1ae23882b3e2d0ebbfafd777604b0ffddb06375dafd3473e87c339f0b8aeea61",
+    "internal/relay/worker_login.go": "be69e566129d03108f7e64297a22a767c4e4ecc97913e10365b2273b9315f6ba",
+    "internal/session/worker_login.go": "fa902fcb83161fb76e35661b6911eeffbb008d6f3d84085cd74f56240e48b945",
+    "internal/session/worker_login_test.go": "03fe0104a8ee3e9c71a94953656ddc538680fc5e429610c7aa87255b07d9b0fd",
+    "internal/worker/login_attempt.go": "c8db0ea0e8dc4810cf1da3872b56f8628ee82d1690b553aa744fdd9ce390e153",
+    "internal/worker/login_attempt_test.go": "6c5210f7503281552e7e4b77322951b8de2c371bdbaba60c5b3b454f79abd39a",
+    "internal/worker/login_capture_test.go": "83b342ef95be2493b0756e7f57788c900b796195abb745c6f389d885af2809a8",
+    "internal/worker/login_command.go": "6785487ab9375c38c74a22331eb9c3a6c1382edc5312f0e6d045cdd2ac9ba5aa",
+    "internal/worker/login_guard.go": "7a540f6f911727cf5b295bd266cdbb4e69c033ac3f1ca2b2b784fd9c01b5ed4f",
+    "internal/worker/login_lifecycle_test.go": "c81debaa4967aa73b9b431d1f5316ed855c1ac4019c6609d1f2e93f8a712e16e",
+    "internal/worker/login_relay_test.go": "6792532d41b970676db2380e79f4f1edbb7f1acc67dbbcb82af8c897f3c3fb84",
+    "internal/worker/login_stream.go": "2827e06a720e82cc4dc7bd498492c2e375880e8f65387412cc74280337871baf",
+    "internal/worker/login_stream_test.go": "5ab94aa9752abf3c2e2ff19f68e671880209ad90248e82d619065979e6cdbe33",
+    "internal/worker/resident.go": "340e92cf496e56cc488bbce2ceaceea6783401f099c0a9a460bb0900b54f2326",
+    "internal/worker/server.go": "fa12ee2ff9d7c2ebeb7b18c5576d1ffd74b7d6b07eb9db35419687c523d1f2df",
+    "internal/worker/testdata/login_negative.py": "d24f8f657baf5bed172dcaeb3e1838f30e946ea7b80f387a078bf523ad7eb4f6",
+    "internal/workerproto/login.go": "a2f5f337984c6f688eb09741f7c6c43e544d33a2b9d3c504676f8ad5c8de8643",
+    "internal/workerproto/login_test.go": "2d8f8a3f0d105a5b72a306676303fbb87dccba4bef3e2606f30df73915a7f097"
+  },
+  "results": [
+    {
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "-parallel=1",
+        "./cmd/hataori",
+        "./internal/chat",
+        "./internal/worker",
+        "./internal/session",
+        "./internal/workerproto",
+        "./internal/agent/codex",
+        "./internal/relay",
+        "./internal/machineio",
+        "-run",
+        "^(TestOneDirectMessagePerOutage|TestAtMostFifteenThreadsAreNamed|TestTheOwnersCodeGoesToTheRelayAndTheLinkStaysInTheDirectConversation|TestDirectMessagesThatAreNoCode|TestExpiredLinkKeepsItsButtonAlsoAfterARestart|TestRelayOffStillSendsTheAlert|TestUndeliverableAlert|TestARefusedCodeAndTheNextOne|TestDeviceLoginMessage|TestTwoLoginsOfOneAgent|TestWorkerLogin.*|TestEphemeralLogin.*|TestLoginDecodeCapture|TestLoginLaunchAndCode|TestStartForAnOutageThatClosed|TestLoginOutagesOfDifferentMachinesDoNotJoinOrClose|TestGolden|TestFrozenVersions)$",
+        "-count=1",
+        "-timeout=90s"
+      ],
+      "exit_code": 0,
+      "output": "ok  \tgithub.com/yousan/hataori/cmd/hataori\t0.206s\nok  \tgithub.com/yousan/hataori/internal/chat\t5.498s\nok  \tgithub.com/yousan/hataori/internal/worker\t4.109s\nok  \tgithub.com/yousan/hataori/internal/session\t0.397s\nok  \tgithub.com/yousan/hataori/internal/workerproto\t0.029s\nok  \tgithub.com/yousan/hataori/internal/agent/codex\t0.004s\nok  \tgithub.com/yousan/hataori/internal/relay\t0.258s\nok  \tgithub.com/yousan/hataori/internal/machineio\t0.005s\n"
+    },
+    {
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-p=1",
+        "-parallel=1",
+        "./cmd/hataori",
+        "./internal/chat",
+        "./internal/worker",
+        "./internal/machineio",
+        "-run",
+        "^TestWorkerLogin",
+        "-count=1",
+        "-timeout=90s"
+      ],
+      "exit_code": 0,
+      "output": "ok  \tgithub.com/yousan/hataori/cmd/hataori\t2.451s\nok  \tgithub.com/yousan/hataori/internal/chat\t12.864s\nok  \tgithub.com/yousan/hataori/internal/worker\t9.674s\nok  \tgithub.com/yousan/hataori/internal/machineio\t1.022s\n"
+    },
+    {
+      "command": [
+        "gofmt",
+        "-l",
+        "."
+      ],
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "command": [
+        "go",
+        "vet",
+        "-p=1",
+        "./..."
+      ],
+      "exit_code": 0,
+      "output": ""
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "output": ""
+    }
+  ]
+}

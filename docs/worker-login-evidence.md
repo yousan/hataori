@@ -70,48 +70,66 @@ provider completion and cannot certify login.
 
 `TestWorkerLoginOwnerOutageAndPersistence` checks the isolated main database
 and worker roots, including receipts/session state, and the diagnostic sink
-for raw and base64 marker material. Its owner sink is an in-memory stand-in;
-full direct-message integration remains blocked below. The negative controls
+for raw and base64 marker material. `TestWorkerLoginFakeSurfacePersistence`
+also runs the actual fake chat driver, front end and relay with the resident.
+The guest's button opens no transport, the owner's button starts the attempt,
+the link reaches the direct-message sink, and the owner's exact reply ends
+only the selected outage. The guard, login and status helpers record their
+real process arguments; the four observations are included in the marker scan.
+This is disposable fixture evidence, not a real provider login. The negative controls
 in `notes/worker-login/negative-guards.json` record behavioral failures for
 guard removals/reversions. A separately identified persistence instrumentation
-control writes an encoded input frame into an isolated file and proves the
-marker scan detects it. Compilation failures do not count as regressions.
+controls write an encoded input frame into an isolated file or put a fixture
+marker into the observed process arguments and prove the marker scan detects
+them. These two controls are instrumentation, not guard removals. Compilation
+failures do not count as regressions.
 The script uses serial Go overlays without editing the original sources and
 records the source hashes. These controls are not real provider evidence.
 The inventory does not by itself establish that every acceptance guard has
 been reviewed and covered; that gate stays unchecked until independent review
 accepts the complete integrated evidence.
 
+## Scoped shared integration
+
+The owners released only login hunks in `cmd/hataori/daemon.go`,
+`internal/chat/login.go`, `docs/configuration.md` and `docs/design/overview.md`.
+No donor branch was imported. Supervisor conversations, worker-home routing,
+stored scopes and outside-text policy hunks remain with their existing owners.
+
+The daemon passes its already configured, pinned runner transports to the relay
+and waits for relay shutdown before closing its dependencies.
+`TestWorkerLoginDaemonUsesPinnedTransport` runs an isolated daemon and fake
+surface, observing the original transport without SSH or agent commands.
+The front end refuses an explicit unknown or unrelated reply before the sole
+waiting-login fallback. Both stored alert references and in-memory follow-up
+references include channel, thread and message. The fake-surface regression
+reproduced the old unknown/channel/thread defects before the fix; guard-removal
+controls now check refusal, thread identity, outage selection and the owner.
+Configuration and design changes document the limits and opt-in status
+interface, including Appendix D. No new operator configuration key is proposed.
+
 ## Remaining blockers
 
-1. Shared `cmd/hataori/daemon.go`: populate the relay's worker endpoints from
-   the already configured, pinned transports immediately after constructing
-   the relay. This draft's worker relay cannot be reached in the daemon yet.
-2. Shared `internal/chat/login.go`: after resolving an explicit reply, refuse
-   unknown/unrelated references before the sole-waiting-login fallback. Its
-   existing wrong-message path fails #966's required authority boundary.
-   Add the actual fake-surface regression after ownership release.
-3. Shared `docs/configuration.md` and `docs/design/overview.md`: document
-   the shipped limits, opt-in status contract, machine-keyed behavior and
-   Appendix D. No new operator configuration key is proposed.
-4. Coordinated worker protocol: document and version the new typed ephemeral
+1. Coordinated worker protocol: document and version the new typed ephemeral
    `LoginData`, choose the next compatible version/capability at integration,
    and add new golden examples without rewriting released versions. Existing
    protocol version/golden files are deliberately untouched in this draft.
    No control operation/event encoding change is proposed.
-5. Disposable real-CLI successful completion/status evidence for device auth
+2. Disposable real-CLI successful completion/status evidence for device auth
    and code-back flows. No real code-back provider adapter is enabled here;
    the missing implementation/capture cannot be replaced by a synthetic flow.
-6. Process containment evidence for the supported CLI: the guard terminates
+3. Process containment evidence for the supported CLI: the guard terminates
    the direct child and descendants still in its group. Descendants that
    independently detach into another session/group are not contained by that
    mechanism. The fixture does not establish that the real CLI never creates
    them. This remains a runtime/containment blocker, not a general claim that
    every possible descendant is terminated.
-7. Fresh independent implementation and authority/credentials/destructive
-   reviews after fixes. Initial reviews rejected the draft; their findings
-   are not approvals for the revised source.
-8. Final-head and exact post-merge-main Linux/macOS CI, accepted evidence,
+4. Fresh independent implementation and authority/credentials/destructive
+   reviews of the integrated candidate. Earlier component re-reviews approved
+   their documented boundary, not subsequent integration or whole-issue gates.
+   Complete integrated authority/nonpersistence evidence must also be accepted;
+   the fixture/control inventory alone is not an exhaustive-coverage claim.
+5. Final-head and exact post-merge-main Linux/macOS CI, accepted evidence,
    merge and issue closure. A passing intermediate CI run meets none of the
    missing runtime or ownership gates.
 
@@ -120,5 +138,5 @@ runner allocation. Intermediate draft static/build checks are development
 feedback. Full final-head Linux/macOS execution is required after the complete
 candidate is ready; draft skips never satisfy that gate and are not rerun.
 
-The daemon, chat login file, common configuration/design documents and
-released protocol/golden files remain unedited pending explicit coordination.
+The four released shared files contain only scoped login changes. Protocol
+version/capability/golden files remain unedited pending separate coordination.

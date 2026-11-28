@@ -32,6 +32,23 @@ func TestWorkerLoginProcessHelper(t *testing.T) {
 	if len(args) == 0 {
 		return
 	}
+	// Only the disposable helper opts into argv observation. Both guard
+	// and CLI record their real arguments; the persistence scan checks them.
+	if capture := os.Getenv("WORKER_LOGIN_ARGV_CAPTURE"); capture != "" {
+		b, err := json.Marshal(os.Args)
+		if err != nil {
+			os.Exit(1)
+		}
+		f, err := os.OpenFile(capture, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			os.Exit(1)
+		}
+		_, err = f.Write(append(b, '\n'))
+		f.Close()
+		if err != nil {
+			os.Exit(1)
+		}
+	}
 	if args[0] == "guard" {
 		os.Exit(LoginGuardMain(args[1:]))
 	}
@@ -212,7 +229,7 @@ func (a *loginTestAdapter) LoginStatusLaunch(spec agent.Spec) (agent.Launch, err
 	if a.statusMode != "" {
 		mode = a.statusMode
 	}
-	return agent.Launch{Argv: helperArgv(mode), Env: []string{"WORKER_LOGIN_HELPER=1", "GOMAXPROCS=1", "GORACE=atexit_sleep_ms=0"}}, nil
+	return agent.Launch{Argv: helperArgv(mode), Env: append([]string{"WORKER_LOGIN_HELPER=1", "GOMAXPROCS=1", "GORACE=atexit_sleep_ms=0"}, a.extraEnv...)}, nil
 }
 
 func loginFixture(t *testing.T, mode string, health agent.Health, timeout time.Duration) (*loginAttempt, *loginTestAdapter) {
