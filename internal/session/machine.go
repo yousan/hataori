@@ -295,47 +295,6 @@ func recordUsage(ctx context.Context, tx *store.Tx, thread, turn int64, u agent.
 	return nil
 }
 
-// recordLimits keeps an agent's remaining usage, unless a report made
-// later, by another of its sessions, is kept already. It belongs to no turn
-// and changes no state, so it writes no event.
-func (m *Machine) recordLimits(ctx context.Context, tx *store.Tx, sessionID int64, agentName string, e agent.Event) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET last_seq = ? WHERE id = ?`, e.Seq, sessionID); err != nil {
-		return err
-	}
-	if e.Limits == nil {
-		return nil
-	}
-	login, err := m.login(ctx, tx, agentName, sessionID)
-	if err != nil {
-		return err
-	}
-	var machine string
-	if err := tx.QueryRowContext(ctx, `SELECT t.machine FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.id = ?`, sessionID).Scan(&machine); err != nil {
-		return err
-	}
-	l := *e.Limits
-	ws := []control.LimitWindow{}
-	for _, w := range l.Windows {
-		cw := control.LimitWindow{Name: w.Name, Minutes: w.Minutes, Used: w.Used}
-		if !w.Resets.IsZero() {
-			r := w.Resets
-			cw.Resets = &r
-		}
-		ws = append(ws, cw)
-	}
-	b, err := json.Marshal(ws)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_limits (machine, agent, config_dir, at, every, windows) VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (machine, agent, config_dir) DO UPDATE SET at = excluded.at, every = excluded.every, windows = excluded.windows
-		WHERE excluded.at >= agent_limits.at`,
-		machine, agentName, login.Dir, l.At.UnixMilli(), l.Every.Milliseconds(), string(b)); err != nil {
-		return fmt.Errorf("session: limits: %w", err)
-	}
-	return nil
-}
-
 // Request states, in the requests table.
 const (
 	RequestOpen      = "open"

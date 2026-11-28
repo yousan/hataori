@@ -520,6 +520,10 @@ type LimitReport struct {
 	At      time.Time
 	Every   time.Duration
 	Windows []LimitWindow
+	// Cached means unchanged normalized windows may be old cached values.
+	// The session machine retains their first/change observation time,
+	// independently of changes to other windows. False denotes a fresh read.
+	Cached bool
 }
 
 // LimitWindow is one usage window as the agent names it. Minutes and

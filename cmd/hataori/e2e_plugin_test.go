@@ -24,7 +24,7 @@ import (
 func TestPluginConnectionIsItsGrant(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "scan")
-	manifest := `{"id": "scan", "version": "0.1.0", "protocol": "3.0",
+	manifest := `{"id": "scan", "version": "0.1.0", "protocol": "` + wire.Version + `",
 		"operations": ["Threads", "Thread", "Events", "Terminal"], "events": ["turn_started", "turn_ended", "text", "input"]}`
 	if err := os.WriteFile(filepath.Join(dir, plugin.ManifestFile), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
