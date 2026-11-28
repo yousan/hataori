@@ -215,6 +215,9 @@ func (f *FrontEnd) show(ctx context.Context) error {
 
 // eventData holds the fields of the event kinds the front end shows.
 type eventData struct {
+	State     string   `json:"state"`
+	Machine   string   `json:"machine"`
+	Pending   bool     `json:"pending"`
 	Text      string   `json:"text"`
 	Target    int64    `json:"target"`
 	Principal string   `json:"principal"`
@@ -223,6 +226,7 @@ type eventData struct {
 	Choices   []string `json:"choices"`
 	Outcome   string   `json:"outcome"`
 	Reason    string   `json:"reason"`
+	Detail    string   `json:"detail"`
 	Key       string   `json:"key"`
 	Session   int64    `json:"session"`
 	Turn      int64    `json:"turn"` // turn_started, turn_ended
@@ -254,6 +258,9 @@ func proposalText(d eventData) string {
 	}
 	if d.Effort != "" {
 		with = append(with, "effort "+d.Effort)
+	}
+	if d.Machine != "" {
+		with = append(with, "machine "+d.Machine)
 	}
 	what := fmt.Sprintf("start a thread in %s", d.Repo)
 	if d.Research {
@@ -364,7 +371,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		}
 		return []Row{f.failedRow(sf, conv, first, repo)}, nil
 	case "thread_created", "turn_started", "text", "request", "turn_ended", "file_out", "approval_asked", "approval_answered",
-		"proposal_made", "proposal_answered", "input_failed":
+		"proposal_made", "proposal_answered", "input_failed", "input_waiting", "placement", "machine_action", "machine_availability":
 	default:
 		return nil, nil // a kind the front end does not show, or does not know
 	}
@@ -377,6 +384,8 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 	}
 	row := func(m surface.Message) []Row { return []Row{{Event: e.Pos, Conv: conv, Message: m}} }
 	switch e.Kind {
+	case "input_waiting":
+		return row(surface.Message{Text: "The message is waiting: " + d.Reason + "."}), nil
 	case "input_failed":
 		m := surface.Message{Text: "The input was not delivered: " + d.Reason + "."}
 		if d.Text != "" {
@@ -413,6 +422,24 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		return row(f.questionMessage(d.Request, text, choices, false)), nil
 	case "proposal_answered":
 		return row(surface.Message{Text: proposalDone(d)}), nil
+	case "placement":
+		if d.Pending {
+			return row(surface.Message{Text: "Waiting for machine placement: " + d.Reason}), nil
+		}
+		if d.Reason != "" {
+			return row(surface.Message{Text: d.Reason}), nil
+		}
+		return row(surface.Message{Text: "Placed on machine " + d.Machine + "."}), nil
+	case "machine_action":
+		if d.State == "pending" {
+			return row(surface.Message{Text: d.Reason}), nil
+		}
+		if d.State == "refused" {
+			return row(surface.Message{Text: "Queued machine action refused: " + d.Reason}), nil
+		}
+		return nil, nil
+	case "machine_availability":
+		return nil, nil // one held-action notice per thread/absence reports waiting
 	case "thread_created":
 		r.first[e.Thread] = e.Pos
 		r.session[e.Thread] = sessionOf(e)
@@ -513,6 +540,12 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 		delete(r.turn, e.Thread)
 		delete(r.by, e.Thread)
 		delete(r.via, e.Thread)
+		if line, handled, err := f.supervisorAvailability(ctx, r, e, d); err != nil || handled {
+			if err != nil || line == "" {
+				return nil, err
+			}
+			return row(surface.Message{Text: line}), nil
+		}
 		if d.Outcome == "failure" {
 			who, err := f.stoppedBy(ctx, d.Outcome, d.Reason, d.Turn)
 			if err != nil {
@@ -521,7 +554,7 @@ func (f *FrontEnd) rowsFor(ctx context.Context, r *reader, e control.Event, conv
 			if who != "" {
 				return row(surface.Message{Text: "Stopped by " + who + "."}), nil
 			}
-			return row(surface.Message{Text: failureLine(d.Reason)}), nil
+			return row(surface.Message{Text: failureDetail(failureLine(d.Reason), d.Detail)}), nil
 		}
 	}
 	return nil, nil
@@ -590,6 +623,8 @@ func (f *FrontEnd) stoppedBy(ctx context.Context, outcome, reason string, turn i
 // failureLine is the one line a failed turn gets.
 func failureLine(reason string) string {
 	switch reason {
+	case "unavailable":
+		return "The turn failed: the provider is unavailable."
 	case "limit":
 		return "The turn failed: the usage limit was reached."
 	case "login":

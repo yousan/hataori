@@ -1,0 +1,1 @@
+{"kind":"reply","id":"request-clone","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"clone","key":"key-clone","body":{"operation":"clone","key":"key-clone","request_hash":"f0a0af8140b5361dd170b4a8c366f6ba7d0c947bdfe70c0038b6b90139c686b1","state":"complete","result":{"workspace":"workspace-A"}}}

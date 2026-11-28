@@ -1,0 +1,6 @@
+{
+  "is_error": true,
+  "api_error_status": 403,
+  "api_error_code": "oauth_not_allowed_for_organization",
+  "result": "Claude Code can't use your Claude subscription, usually because a payment is past due · Pay or renew at https://claude.ai/settings/billing (if you just paid, try again shortly), or use an Anthropic API key instead"
+}

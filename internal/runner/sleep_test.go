@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/proctest"
 	"github.com/yousan/hataori/internal/session"
@@ -196,7 +197,12 @@ func TestResumedAgentIgnoresEarlierBackgroundTasks(t *testing.T) {
 				if err := f.run.Machine.Apply(context.Background(), 1, session.Input{Kind: session.Wake}); err != nil {
 					t.Fatal(err)
 				}
-				if err := f.run.Wake(context.Background(), 1, "owner"); err != nil {
+				// Resume with an accepted no-input operation. Wake now reads
+				// admission recorded by the core's attach API, which this
+				// runner-only fixture has not called.
+				if err := f.run.Resume(context.Background(), 1, core.FirstInput{
+					AcceptedOperation: control.OpAttach, Principal: "owner", From: ownerFrom, Wake: true, NoInput: true,
+				}); err != nil {
 					t.Fatal(err)
 				}
 				waitFor(t, "the resumed agent", 15*time.Second, func() bool { return len(readyLines(t, f.root, 1)) == 2 })

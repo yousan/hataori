@@ -1,0 +1,1 @@
+{"kind":"reply","id":"request-detach","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"detach","body":{}}

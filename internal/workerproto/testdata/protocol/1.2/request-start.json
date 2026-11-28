@@ -1,0 +1,1 @@
+{"kind":"request","id":"request-start","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"start","key":"key-start","body":{"agent":"fake","config":"default","holder":"own","workspace":"workspace-A","model":"default","no_project_settings":true}}

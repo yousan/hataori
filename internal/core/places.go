@@ -105,6 +105,47 @@ func keep(ctx context.Context, tx *store.Tx, id control.ThreadID, in FirstInput,
 	return nil
 }
 
+// keepRetry puts a failed launch's input before its own pending follow-ups.
+// All wait from this choice, behind other conversations already waiting.
+// The move and the replacement session are committed together.
+func keepRetry(ctx context.Context, tx *store.Tx, id control.ThreadID, in FirstInput) error {
+	rows, err := tx.QueryContext(ctx, `SELECT input, wake, told FROM waiting_inputs WHERE thread_id = ? ORDER BY id`, int64(id))
+	if err != nil {
+		return err
+	}
+	type waiting struct {
+		input      string
+		wake, told bool
+	}
+	var following []waiting
+	for rows.Next() {
+		var w waiting
+		if err := rows.Scan(&w.input, &w.wake, &w.told); err != nil {
+			rows.Close()
+			return err
+		}
+		following = append(following, w)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if _, err := dropWaiting(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := keep(ctx, tx, id, in, false); err != nil {
+		return err
+	}
+	for _, w := range following {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO waiting_inputs (thread_id, input, wake, told, pos)
+			VALUES (?, ?, ?, ?, (SELECT coalesce(max(pos), 0) FROM events))`, int64(id), w.input, w.wake, w.told); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // dropWaiting drops what waits for a place for thread id, which is being
 // closed, and returns how many inputs that were.
 func dropWaiting(ctx context.Context, tx *store.Tx, id control.ThreadID) (int64, error) {
@@ -403,7 +444,7 @@ func (c *Core) give(ctx context.Context, tx *store.Tx, w waitingInput) (func() e
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), w.session); err != nil {
 		return nil, fmt.Errorf("core: start: %w", err)
 	}
-	l := Launch{Session: w.session, Thread: w.thread, Agent: agent, Model: model, Effort: effort,
-		Principal: in.Principal, From: in.From, Key: in.Key, Input: in.Input(), Confined: true, Dir: in.Dir}
+	l := Launch{AcceptedOperation: in.AcceptedOperation, Session: w.session, Thread: w.thread, Agent: agent, Model: model, Effort: effort,
+		Principal: in.Principal, From: in.From, Key: in.Key, Input: in.Input(), Context: in.Context, Confined: true, Dir: in.Dir}
 	return func() error { return c.launch(ctx, l, "") }, nil
 }

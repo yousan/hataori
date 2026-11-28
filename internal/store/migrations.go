@@ -785,6 +785,10 @@ var migrations = []Migration{
 	{Name: "pending_inputs.written_text", Up: execAll(
 		`ALTER TABLE pending_inputs ADD COLUMN written_text TEXT`,
 	)},
+	machineMigration,
+	sessionIOMigration,
+	placementMigration,
+	awayMigration,
 	// Only turns after this id belong to the session's current agent
 	// process. A daemon reconnect keeps it; a new agent launch advances it.
 	// Zero keeps existing sessions' background counts until their next

@@ -47,6 +47,7 @@ func (f *FrontEnd) Commands() []surface.CommandSpec {
 		Args: []surface.ArgSpec{
 			{Name: "repository", Description: "The repository to clone", Required: true},
 			{Name: "prompt", Description: "What the agent should do", Required: true},
+			{Name: "machine", Description: "The eligible machine; automatic when left out"},
 			{Name: "model", Description: "The model; the channel's default when left out"},
 			{Name: "effort", Description: "The effort: " + strings.Join(Efforts, ", ")},
 		},
@@ -166,7 +167,7 @@ func (f *FrontEnd) textCommand(in surface.Inbound) (surface.Command, bool) {
 		return surface.Command{}, false
 	}
 	o, ok := parseTrigger(f.Trigger, in.Text)
-	if !ok || o.Agent != "" || o.Repo != "" || o.Model != "" || o.Effort != "" || (o.Prompt != stopCommand && o.Prompt != statusCommand && o.Prompt != dashboardCommand) {
+	if !ok || o.Machine != "" || o.Agent != "" || o.Repo != "" || o.Model != "" || o.Effort != "" || (o.Prompt != stopCommand && o.Prompt != statusCommand && o.Prompt != dashboardCommand) {
 		return surface.Command{}, false
 	}
 	ref := in.Ref
@@ -205,7 +206,7 @@ func (f *FrontEnd) textCommandOnce(ctx context.Context, in surface.Inbound) (boo
 // trigger without the word.
 func (f *FrontEnd) newWords(o order) order {
 	word, rest, _ := strings.Cut(o.Prompt, " ")
-	if f.Driver.Limits().Commands || o.Agent != "" || o.Repo != "" || o.Model != "" || o.Effort != "" || strings.TrimSpace(word) != newCommand {
+	if f.Driver.Limits().Commands || o.Machine != "" || o.Agent != "" || o.Repo != "" || o.Model != "" || o.Effort != "" || strings.TrimSpace(word) != newCommand {
 		return o
 	}
 	n, _ := parseTrigger(f.Trigger, f.Trigger+" "+rest)
@@ -252,7 +253,7 @@ func (f *FrontEnd) ignored(c surface.Command, reason string) {
 // thread opened, in the channel, and the full prompt posted in it.
 func (f *FrontEnd) newThread(ctx context.Context, c surface.Command) error {
 	channel := c.Conv.Channel
-	o := order{Repo: strings.TrimSpace(argOf(c, "repository")), Prompt: strings.TrimSpace(argOf(c, "prompt")),
+	o := order{Machine: strings.TrimSpace(argOf(c, "machine")), Repo: strings.TrimSpace(argOf(c, "repository")), Prompt: strings.TrimSpace(argOf(c, "prompt")),
 		Model: strings.TrimSpace(argOf(c, "model")), Effort: strings.TrimSpace(argOf(c, "effort"))}
 	sc, known := f.Scopes[channel]
 	switch {
@@ -304,6 +305,8 @@ func (f *FrontEnd) stopTurn(ctx context.Context, c surface.Command) error {
 	api := f.API(control.Caller{From: f.from(c.Author), Scopes: f.scopesIn(c.Conv.Channel), May: control.OpRead | control.OpStop})
 	err = api.Stop(ctx, t.ID, 0)
 	switch {
+	case errors.Is(err, control.ErrActionHeld):
+		return f.answer(ctx, c, fmt.Sprintf("Stop for thread #%d is pending machine reconciliation. Nothing has been stopped yet.", t.ID))
 	case errors.Is(err, control.ErrForbidden):
 		return nil // the core logged it; nothing is shown
 	case errors.Is(err, control.ErrNotInterrupted):
@@ -358,7 +361,22 @@ func (f *FrontEnd) status(ctx context.Context, c surface.Command) error {
 // threadStatus shows one thread: its state, model and last output.
 func threadStatus(t control.ThreadInfo) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Thread #%d: %s", t.ID, t.State)
+	if a := t.Availability; a != nil && a.State != "ready" {
+		fmt.Fprintf(&b, "Thread #%d: %s since %s; last known %s", t.ID, a.State, a.At.UTC().Format(time.RFC3339), t.State)
+		if a.LastKnownAt != nil {
+			fmt.Fprintf(&b, " at %s", a.LastKnownAt.UTC().Format(time.RFC3339))
+		}
+	} else {
+		fmt.Fprintf(&b, "Thread #%d: %s", t.ID, t.State)
+	}
+	if t.PlacementPending {
+		fmt.Fprintf(&b, "\nWaiting for machine placement: %s", t.PlacementReason)
+	} else if t.Machine != "" {
+		fmt.Fprintf(&b, "\nMachine: %s", t.Machine)
+	}
+	if t.Availability != nil && t.Availability.State != "ready" {
+		fmt.Fprintf(&b, "\nMachine unavailable: %s", t.Availability.Reason)
+	}
 	if t.Model != "" {
 		fmt.Fprintf(&b, "\nModel: %s", t.Model)
 		if t.Effort != "" {
@@ -394,7 +412,19 @@ func channelStatus(ts []control.ThreadInfo) string {
 		open = open[len(open)-statusMax:]
 	}
 	for _, t := range open {
-		fmt.Fprintf(&b, "\n#%d %s", t.ID, t.State)
+		if a := t.Availability; a != nil && a.State != "ready" {
+			fmt.Fprintf(&b, "\n#%d %s since %s (last known %s)", t.ID, a.State, a.At.UTC().Format(time.RFC3339), t.State)
+		} else {
+			fmt.Fprintf(&b, "\n#%d %s", t.ID, t.State)
+		}
+		if t.PlacementPending {
+			b.WriteString(" (waiting for placement)")
+		} else if t.Machine != "" {
+			fmt.Fprintf(&b, " on %s", t.Machine)
+		}
+		if t.Availability != nil && t.Availability.State != "ready" {
+			b.WriteString(" (machine unavailable)")
+		}
 		if title, _, _ := strings.Cut(t.Title, "\n"); title != "" {
 			fmt.Fprintf(&b, ": %s", title)
 		}

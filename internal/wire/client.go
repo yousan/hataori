@@ -240,7 +240,11 @@ func (c *Client) Start(ctx context.Context, r control.StartRequest) (control.Thr
 	if r.Research {
 		since = "3.34" // an older daemon would start it with the settings
 	}
-	err := c.callSince(ctx, since, "a research thread", "Start", r, &out)
+	feature := "a research thread"
+	if r.Machine != "" {
+		since, feature = "3.46", "machine placement"
+	}
+	err := c.callSince(ctx, since, feature, "Start", r, &out)
 	return out, err
 }
 
@@ -587,5 +591,13 @@ func (c *Client) Forge(ctx context.Context, r control.ForgeRequest) (control.For
 func (c *Client) AttachTerminal(ctx context.Context, id control.ThreadID) (control.Attachment, error) {
 	var out control.Attachment
 	err := c.call(ctx, "AttachTerminal", attachTerminalArgs{ID: id}, &out)
+	return out, err
+}
+
+// AttachWorker refuses before sending to a daemon that predates worker
+// attachments. AttachTerminal retains its local-socket guarantee.
+func (c *Client) AttachWorker(ctx context.Context, id control.ThreadID) (control.WorkerAttachment, error) {
+	var out control.WorkerAttachment
+	err := c.callSince(ctx, "3.44", "worker attachment", "AttachWorker", attachTerminalArgs{ID: id}, &out)
 	return out, err
 }

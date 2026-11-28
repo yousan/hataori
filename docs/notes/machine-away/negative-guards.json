@@ -1,0 +1,377 @@
+[
+  {
+    "guard": "catch-up before ready",
+    "command": "go test -p 1 ./internal/store -run ^TestAwayGraceCatchupAndPersistentActiveAge$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayGraceCatchupAndPersistentActiveAge (0.17s)",
+      "away_test.go:79: inventory alone bypassed session catch-up",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/store\t0.173s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "held original target",
+    "command": "go test -p 1 ./internal/core -run ^TestAwayHeldSendBindsOriginalTargetInsideAcceptance/new_run$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayHeldSendBindsOriginalTargetInsideAcceptance (0.16s)",
+      "--- FAIL: TestAwayHeldSendBindsOriginalTargetInsideAcceptance/new_run (0.16s)",
+      "away_test.go:220: retargeted held answer: dispatched [answer q1]",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.171s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "definitely unsent marker rollback",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayReadinessCutAtWriteAndStopBoundary/input$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayReadinessCutAtWriteAndStopBoundary (0.15s)",
+      "--- FAIL: TestAwayReadinessCutAtWriteAndStopBoundary/input (0.15s)",
+      "away_test.go:293: definitely-unsent input retained written marker",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.162s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "stop readiness refusal",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayReadinessCutAtWriteAndStopBoundary/stop$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayReadinessCutAtWriteAndStopBoundary (0.15s)",
+      "--- FAIL: TestAwayReadinessCutAtWriteAndStopBoundary/stop (0.15s)",
+      "away_test.go:284: readiness refusal hidden: <nil>",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.163s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "unknown inventory is not reboot",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayUnknownInventoryAndConfirmedGoneDuringWarmReplay$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayUnknownInventoryAndConfirmedGoneDuringWarmReplay (0.15s)",
+      "away_test.go:338: unknown inventory was interpreted as reboot",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.164s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "confirmed gone despite lost retained output",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayUnknownInventoryAndConfirmedGoneDuringWarmReplay$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayUnknownInventoryAndConfirmedGoneDuringWarmReplay (0.13s)",
+      "away_test.go:349: confirmed gone warm replay did not terminate recovery",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.144s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "active deadline budget",
+    "command": "go test -p 1 ./internal/core -run ^TestAwayClosedCleanupPreservesRemainingActiveAge$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayClosedCleanupPreservesRemainingActiveAge (0.14s)",
+      "away_test.go:249: cleanup counted absence: 0 <nil> asks=0",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.150s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "delivery budget survives reconstruction",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayWrittenDeliveryBudgetSurvivesCodecRebuild$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayWrittenDeliveryBudgetSurvivesCodecRebuild (0.13s)",
+      "away_test.go:221: rebuild reset delivery budget: []",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.143s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "destructive unchecked refusal",
+    "command": "go test -p 1 ./internal/core -run ^TestAwayHeldInputStopRestartOrderAndUncheckedRefusals$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayHeldInputStopRestartOrderAndUncheckedRefusals (0.16s)",
+      "away_test.go:110: close unchecked: core: close 1 (running): session: close in state running: refused",
+      "away_test.go:110: remove unchecked: core: worker removal refused: thread not closed: removal refused",
+      "away_test.go:110: reopen unchecked: not reopened: the thread is not closed or removed",
+      "away_test.go:110: attach unchecked: core: worker attachment is unavailable: refused",
+      "away_test.go:118: restart dispatched before catch-up [deliver later interrupt turn 1]",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.165s"
+    ]
+  },
+  {
+    "guard": "initial authority after catch-up",
+    "command": "go test -p 1 ./internal/core -run ^TestAwayRevokedInitialInputKeepsHostMonitoringAndAudit$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayRevokedInitialInputKeepsHostMonitoringAndAudit (0.38s)",
+      "--- FAIL: TestAwayRevokedInitialInputKeepsHostMonitoringAndAudit/false (0.19s)",
+      "away_test.go:316: initial authority not rechecked: <nil>",
+      "--- FAIL: TestAwayRevokedInitialInputKeepsHostMonitoringAndAudit/true (0.18s)",
+      "away_test.go:316: initial authority not rechecked: <nil>",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.383s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "pending authority before write",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayRevokedPendingInputPreservesEventSequence$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayRevokedPendingInputPreservesEventSequence (0.14s)",
+      "away_test.go:380: refusal sequence or delivery: <nil> true 5",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.154s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "API acceptance and held receipt atomicity",
+    "command": "go test -p 1 ./internal/core -run ^TestAwayAcceptedQueueReceiptCommitsBeforeRunnerWrite$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayAcceptedQueueReceiptCommitsBeforeRunnerWrite (0.16s)",
+      "away_test.go:271: durable acceptance lost to transport error: pending",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.161s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "expired worker hook withdrawal",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayExpiredWorkerHookIsWithdrawnBeforeHeldAnswer$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayExpiredWorkerHookIsWithdrawnBeforeHeldAnswer (10.69s)",
+      "away_test.go:56: timed out waiting for expired hook reconciled before readiness",
+      "remote_test.go:39: time=2026-11-28T05:00:13.561+09:00 level=WARN msg=\"session I/O paused\" session=1 reason=\"the owning machine is unavailable or catching up\"",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t10.701s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "initial acknowledgement retired during catch-up",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayNativeWrittenReportCorrelatesBeforeCatchup/first$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup (0.15s)",
+      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup/first (0.15s)",
+      "away_capture_test.go:133: acknowledged written input retained: \"{\\\"principal\\\":\\\"owner\\\",\\\"key\\\":\\\"\\\",\\\"text\\\":\\\"Before doing anything else, say in one short sentence what you will do. Then run the shell command `echo start-ok`. Then answer: what is 2+3?\\\",\\\"sent\\\":true,\\\"turn_id\\\":1,\\\"written_at\\\":1795809627790,\\\"written\\\":true,\\\"current\\\":true}\" pending=0",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.161s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "written provenance before buffered reports",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayNativeWrittenReportCorrelatesBeforeCatchup$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup (0.30s)",
+      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup/first (0.15s)",
+      "away_capture_test.go:133: acknowledged written input retained: \"{\\\"principal\\\":\\\"owner\\\",\\\"key\\\":\\\"\\\",\\\"text\\\":\\\"Before doing anything else, say in one short sentence what you will do. Then run the shell command `echo start-ok`. Then answer: what is 2+3?\\\",\\\"sent\\\":true,\\\"turn_id\\\":1,\\\"written_at\\\":1795809631750,\\\"written\\\":true,\\\"current\\\":true}\" pending=0",
+      "--- FAIL: TestAwayNativeWrittenReportCorrelatesBeforeCatchup/pending (0.15s)",
+      "away_capture_test.go:133: acknowledged written input retained: \"\" pending=1",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.314s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "worker hook real clock",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayNewNativeHookUsesWallClockAfterPause$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayNewNativeHookUsesWallClockAfterPause (0.14s)",
+      "away_capture_test.go:174: paused delivery clock delayed a new expired worker hook: []",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.153s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "accepted answer visible refusal",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayAcceptedAnswerRefusalIsDurable/codec_expired$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayAcceptedAnswerRefusalIsDurable (0.14s)",
+      "--- FAIL: TestAwayAcceptedAnswerRefusalIsDurable/codec_expired (0.14s)",
+      "away_test.go:433: terminal answer outcome lost: 0 dispatched",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.150s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "missing receipt preserves uncertainty",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayMissingReceiptAfterAppliedWriteNeverAllowsRetry$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayMissingReceiptAfterAppliedWriteNeverAllowsRetry (0.43s)",
+      "away_test.go:668: missing receipt became no-write proof: refused",
+      "remote_test.go:39: time=2026-11-28T05:00:44.212+09:00 level=WARN msg=\"session I/O paused\" session=1 reason=\"the owning machine is unavailable or catching up\"",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.440s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "receipt and input marker atomic commit",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayRefusedReceiptAndWrittenMarkerCommitAtomically$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayRefusedReceiptAndWrittenMarkerCommitAtomically (0.14s)",
+      "away_test.go:584: partial resolution committed: refused 2",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.146s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "immediate refusal atomicity",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayImmediateNoWriteRefusalIsAtomic$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayImmediateNoWriteRefusalIsAtomic (0.15s)",
+      "away_test.go:763: immediate refusal partially committed: refused 2",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.157s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "accepted answer caller-turn binding",
+    "command": "go test -p 1 ./internal/core -run ^TestAwayAnswerAcceptanceBindsItsNewCallerTurn$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayAnswerAcceptanceBindsItsNewCallerTurn (0.16s)",
+      "away_test.go:370: answer lost caller-turn binding: 0 2",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.164s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "rejected answer completes bound caller turn",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn (0.66s)",
+      "--- FAIL: TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn/codec_expired (0.13s)",
+      "away_test.go:834: refused answer left synthetic running turn: 1 seq=5",
+      "--- FAIL: TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn/authority_revoked (0.13s)",
+      "away_test.go:834: refused answer left synthetic running turn: 1 seq=5",
+      "--- FAIL: TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn/transient_then_authority_revoked (0.13s)",
+      "away_test.go:834: refused answer left synthetic running turn: 1 seq=5",
+      "--- FAIL: TestAwayRejectedAnswerEndsOnlyItsBoundCallerTurn/transient_then_codec_expired (0.13s)"
+    ]
+  },
+  {
+    "guard": "immediate answer follower sequence",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayImmediateAnswerRefusalPreservesRealFollowerSequence$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayImmediateAnswerRefusalPreservesRealFollowerSequence (0.51s)",
+      "away_test.go:888: immediate answer refusal lost actual follower sequence: worker protocol: stale: hook is no longer waiting; nothing was sent seq=3/3",
+      "remote_test.go:39:",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.524s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "idle remaining active time",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayIdleBudgetDoesNotExpireDuringDisconnection$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayIdleBudgetDoesNotExpireDuringDisconnection (3.47s)",
+      "away_idle_test.go:37: runner: session 1 is not running",
+      "remote_test.go:39: time=2026-11-28T05:01:09.494+09:00 level=WARN msg=\"session I/O paused\" session=1 reason=\"the owning machine is unavailable or catching up\"",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t3.482s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "answer receipt nonreusable identity",
+    "command": "go test -p 1 ./internal/runner -run ^TestAwayAnswerReceiptCannotRetireReusedPendingRow$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestAwayAnswerReceiptCannotRetireReusedPendingRow (0.27s)",
+      "--- FAIL: TestAwayAnswerReceiptCannotRetireReusedPendingRow/1 (0.13s)",
+      "away_test.go:490: old receipt retired or refused new answer: 0 <nil>",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.276s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "transient no-write answer retained",
+    "command": "go test -p 1 ./internal/runner -run ^TestRemoteRunnerRefusedHookGetsNewAttemptAfterRestart$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestRemoteRunnerRefusedHookGetsNewAttemptAfterRestart (8.50s)",
+      "remote_test.go:825: timed out waiting for held answer after confirmed refusal",
+      "remote_test.go:39:",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t8.516s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "resolved refusal consumed",
+    "command": "go test -p 1 ./internal/runner -run ^TestRemoteRunnerRefusedHookGetsNewAttemptAfterRestart$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestRemoteRunnerRefusedHookGetsNewAttemptAfterRestart (8.48s)",
+      "remote_test.go:825: timed out waiting for held answer after confirmed refusal",
+      "remote_test.go:39: time=2026-11-28T05:01:33.218+09:00 level=WARN msg=\"session I/O paused\" session=1 reason=\"the owning machine is unavailable or catching up\"",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t8.493s",
+      "FAIL"
+    ]
+  }
+]

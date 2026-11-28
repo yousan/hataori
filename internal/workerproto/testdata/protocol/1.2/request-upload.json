@@ -1,0 +1,1 @@
+{"kind":"request","id":"request-upload","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"upload","key":"key-upload","body":{"handle":"upload-A","digest":"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","size":3,"offset":0,"data":"YWJj","final":true}}
