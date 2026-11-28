@@ -452,9 +452,9 @@ and the confined rewrite without `--restricted`. No image reaches the API in
 any of their 21 inputs at either start or resume. `outcome.json` records each
 input, actual paste, reported prompt and dummy images sent. The adapter tests
 check the captured paste, input attribution, saved paste and reconnect.
-Invisible-character attribution and ordinary terminal-sequence attribution
-remain covered separately by #916; those cases still check image behavior
-and paste persistence here.
+The #916 attribution checks also cover invisible characters and ordinary
+terminal sequences in these captures. They normalize the expected report,
+while preserving the captured paste and its saved `WrittenText` unchanged.
 
 `2.1.332/image_shell/` was taken with the same helper and isolation on the
 same date, at a start and a resume. An ordinary one-line `!printf` command
@@ -467,6 +467,67 @@ The rewritten captures send no image and report the follow-up input on its
 own. `command_images: null` with zero `command_requests` records that no API
 observation was available before the follow-up, rather than claiming no
 attachment; the follow-up always has an observed request.
+
+## Invisible characters and confirmation (2.1.332, taken for #916)
+
+`2.1.332/invisible/`, recorded on 2026-11-29 with `invisible.py`: 204
+matrix observations and four consecutive-input baselines across
+ordinary/confined starts and resumes. The real CLI uses
+fresh temporary HOME, config and working directories, no user credentials,
+and `mention.py`'s loopback API stand-in. No real model is called. The
+confined scenarios apply the existing paste rewrite and `--restricted`;
+ordinary scenarios paste the original text. No filesystem-dependent input
+or file tool is requested. The harmless ordinary shell-shaped inputs are
+specific to the confirmation behavior in #916.
+
+Each `outcome.json` preserves the original text, actual paste, prompt(s)
+after the first Enter, whether an extra Enter confirmed the invisible
+character warning, and the next independent input and its prompt. `reports`
+and `following_reports` are the corresponding actual `UserPromptSubmit`
+payloads. This is a finite character matrix, not an exhaustive Unicode
+specification.
+
+| Input | What the CLI reports |
+|---|---|
+| NUL, BEL, backspace, DEL; soft hyphen, BOM, zero-width space, word joiner, function application; combining grapheme joiner, Mongolian selector U+180B, Hangul filler U+3164 | Character removed |
+| VT, FF, NEL | LF in ordinary input; absent from the confined paste because its existing control-character filter removes them |
+| CRLF, line/paragraph separators U+2028/U+2029 | LF |
+| Tab | Four spaces |
+| CSI color sequence | Removed in ordinary input; the confined paste already removes ESC and retains the remaining literal characters |
+| Direction marks, embeddings, overrides and isolates, including U+061C and U+202E | Removed; the first Enter shows the review warning without reporting a prompt, and another Enter submits |
+| ZWNJ/ZWJ between the captured ASCII letters; variation selectors in ordinary text and after the captured CJK character | Removed |
+| Emoji ZWJ, skin modifier, heart selector, keycap, regional/subdivision flags; ZWJ between the captured Arabic letters | Preserved |
+| Leading zero-width space, BOM, VT or emoji selector before ordinary shell-shaped text | Review warning after the first Enter; the confirmed report is a message. The confined message prefix avoids this warning |
+
+The four `consecutive_*` baselines paste another text while the warning
+still holds the first one. The actual report concatenates them. Their
+`first.raw` files preserve terminal output up to that first warning. The
+adapter tests replay this evidence and verify that no second paste is
+emitted, including after reconnect. Matrix `right_override-first.raw`
+snapshots, other raw output and complete transcripts remain private; only
+the selected, scrubbed observations are committed. A recorder must copy the
+four consecutive-input snapshots and all twelve outcomes to a fresh selection directory with
+`VERSION`, then run `scrub.py SELECTION OUT_DIR`. Terminal history must not
+be reconstructed by hand.
+
+Attribution compares the real report with the expected report of the saved
+paste, consuming equivalent inputs in paste order. Report text itself is
+not stripped of joining/selector characters. Normalization never widens
+attribution to a task-notification-shaped report; it does not acknowledge
+held text or a live paste that only normalizes to it. The existing raw-exact
+live caller quote remains a caller message for background-task accounting;
+that pre-existing format ambiguity is not resolved here. An earlier unmatched
+paste that could coincide under unknown joining/selector removal withholds
+attribution to a later held input. This broad ambiguity check never proves
+delivery; its regression deliberately mutates a captured report and does
+not claim that the CLI was observed emitting that variant.
+
+Pasting still uses the original
+rewrite: removing invisible characters before pasting would change #915's
+image-recognition stage. The existing unconfirmed-editor fence also applies
+to the warning: when submission cannot be proved, timeout reports failure
+and retains the input for reconnect; later input is refused until its prompt
+or session end. It is never appended as an attempted recovery.
 
 The message rewrite retains conservative protection for standalone basenames,
 but leaves prose ending in a basename unchanged. Ordinary shell continuations

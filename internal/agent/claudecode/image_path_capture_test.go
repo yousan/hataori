@@ -104,17 +104,6 @@ func TestImagePathPasteCaptures(t *testing.T) {
 				if len(captured.Images) != 0 {
 					t.Fatalf("images reached the API: %q", captured.Images)
 				}
-				// Attribution after the CLI removes invisible characters or an
-				// ordinary paste's terminal sequence belongs to #916. Those
-				// captures still check attachment prevention and the actual paste.
-				if normalize(captured.Pasted) != normalize(unwrapPaste(captured.Prompt)) {
-					switch captured.Case {
-					case "invisible_before", "invisible_extension", "invisible_after", "terminal_sequence":
-						return
-					default:
-						t.Fatalf("unexpected prompt change: %q -> %q", captured.Pasted, captured.Prompt)
-					}
-				}
 				paste := captured.Pasted
 				restarted := fresh()
 				a, err = restarted.Input(agent.Input{ID: "image-text", Text: captured.Text, Written: true, WrittenText: &paste, Earlier: true})

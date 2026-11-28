@@ -1,0 +1,470 @@
+[
+ {
+  "session": "start",
+  "case": "keycap",
+  "text": "Say start keycap a1️⃣b ok",
+  "pasted": "Say start keycap a1️⃣b ok",
+  "first_prompts": [
+   "Say start keycap a1️⃣b ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say start keycap a1️⃣b ok"
+  ],
+  "after": "Say after start keycap please",
+  "following_prompts": [
+   "Say after start keycap please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000238",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say start keycap a1️⃣b ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000239",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after start keycap please"
+   }
+  ]
+ },
+ {
+  "session": "start",
+  "case": "emoji_modifier",
+  "text": "Say start emoji_modifier a👩🏽‍💻b ok",
+  "pasted": "Say start emoji_modifier a👩🏽‍💻b ok",
+  "first_prompts": [
+   "Say start emoji_modifier a👩🏽‍💻b ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say start emoji_modifier a👩🏽‍💻b ok"
+  ],
+  "after": "Say after start emoji_modifier please",
+  "following_prompts": [
+   "Say after start emoji_modifier please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000240",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say start emoji_modifier a👩🏽‍💻b ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000241",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after start emoji_modifier please"
+   }
+  ]
+ },
+ {
+  "session": "start",
+  "case": "regional_flag",
+  "text": "Say start regional_flag a🇯🇵b ok",
+  "pasted": "Say start regional_flag a🇯🇵b ok",
+  "first_prompts": [
+   "Say start regional_flag a🇯🇵b ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say start regional_flag a🇯🇵b ok"
+  ],
+  "after": "Say after start regional_flag please",
+  "following_prompts": [
+   "Say after start regional_flag please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000242",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say start regional_flag a🇯🇵b ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000243",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after start regional_flag please"
+   }
+  ]
+ },
+ {
+  "session": "start",
+  "case": "tag_flag",
+  "text": "Say start tag_flag a🏴󠁧󠁢󠁥󠁮󠁧󠁿b ok",
+  "pasted": "Say start tag_flag a🏴󠁧󠁢󠁥󠁮󠁧󠁿b ok",
+  "first_prompts": [
+   "Say start tag_flag a🏴󠁧󠁢󠁥󠁮󠁧󠁿b ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say start tag_flag a🏴󠁧󠁢󠁥󠁮󠁧󠁿b ok"
+  ],
+  "after": "Say after start tag_flag please",
+  "following_prompts": [
+   "Say after start tag_flag please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000244",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say start tag_flag a🏴󠁧󠁢󠁥󠁮󠁧󠁿b ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000245",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after start tag_flag please"
+   }
+  ]
+ },
+ {
+  "session": "start",
+  "case": "arabic_joiner",
+  "text": "Say start arabic_joiner aب‍تb ok",
+  "pasted": "Say start arabic_joiner aب‍تb ok",
+  "first_prompts": [
+   "Say start arabic_joiner aب‍تb ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say start arabic_joiner aب‍تb ok"
+  ],
+  "after": "Say after start arabic_joiner please",
+  "following_prompts": [
+   "Say after start arabic_joiner please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000246",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say start arabic_joiner aب‍تb ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000247",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after start arabic_joiner please"
+   }
+  ]
+ },
+ {
+  "session": "start",
+  "case": "cjk_selector",
+  "text": "Say start cjk_selector a漢︀b ok",
+  "pasted": "Say start cjk_selector a漢︀b ok",
+  "first_prompts": [
+   "Say start cjk_selector a漢b ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say start cjk_selector a漢b ok"
+  ],
+  "after": "Say after start cjk_selector please",
+  "following_prompts": [
+   "Say after start cjk_selector please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000248",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say start cjk_selector a漢b ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000249",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after start cjk_selector please"
+   }
+  ]
+ },
+ {
+  "session": "start",
+  "case": "hangul_filler",
+  "text": "Say start hangul_filler aㅤb ok",
+  "pasted": "Say start hangul_filler aㅤb ok",
+  "first_prompts": [
+   "Say start hangul_filler ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say start hangul_filler ab ok"
+  ],
+  "after": "Say after start hangul_filler please",
+  "following_prompts": [
+   "Say after start hangul_filler please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000250",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say start hangul_filler ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000251",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after start hangul_filler please"
+   }
+  ]
+ },
+ {
+  "session": "start",
+  "case": "mongolian_selector",
+  "text": "Say start mongolian_selector a᠋b ok",
+  "pasted": "Say start mongolian_selector a᠋b ok",
+  "first_prompts": [
+   "Say start mongolian_selector ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say start mongolian_selector ab ok"
+  ],
+  "after": "Say after start mongolian_selector please",
+  "following_prompts": [
+   "Say after start mongolian_selector please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000252",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say start mongolian_selector ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000253",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after start mongolian_selector please"
+   }
+  ]
+ },
+ {
+  "session": "start",
+  "case": "grapheme_joiner",
+  "text": "Say start grapheme_joiner a͏b ok",
+  "pasted": "Say start grapheme_joiner a͏b ok",
+  "first_prompts": [
+   "Say start grapheme_joiner ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say start grapheme_joiner ab ok"
+  ],
+  "after": "Say after start grapheme_joiner please",
+  "following_prompts": [
+   "Say after start grapheme_joiner please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000254",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say start grapheme_joiner ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000255",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after start grapheme_joiner please"
+   }
+  ]
+ },
+ {
+  "session": "start",
+  "case": "function_application",
+  "text": "Say start function_application a⁡b ok",
+  "pasted": "Say start function_application a⁡b ok",
+  "first_prompts": [
+   "Say start function_application ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say start function_application ab ok"
+  ],
+  "after": "Say after start function_application please",
+  "following_prompts": [
+   "Say after start function_application please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000256",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say start function_application ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000257",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after start function_application please"
+   }
+  ]
+ },
+ {
+  "session": "start",
+  "case": "line_separator",
+  "text": "Say start line_separator a b ok",
+  "pasted": "Say start line_separator a b ok",
+  "first_prompts": [
+   "Say start line_separator a\nb ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say start line_separator a\nb ok"
+  ],
+  "after": "Say after start line_separator please",
+  "following_prompts": [
+   "Say after start line_separator please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000258",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say start line_separator a\nb ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000259",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after start line_separator please"
+   }
+  ]
+ },
+ {
+  "session": "start",
+  "case": "paragraph_separator",
+  "text": "Say start paragraph_separator a b ok",
+  "pasted": "Say start paragraph_separator a b ok",
+  "first_prompts": [
+   "Say start paragraph_separator a\nb ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say start paragraph_separator a\nb ok"
+  ],
+  "after": "Say after start paragraph_separator please",
+  "following_prompts": [
+   "Say after start paragraph_separator please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000260",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say start paragraph_separator a\nb ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000213",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000213.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000261",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after start paragraph_separator please"
+   }
+  ]
+ }
+]

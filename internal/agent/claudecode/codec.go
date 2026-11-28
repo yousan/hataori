@@ -1413,33 +1413,35 @@ func denyWrite(path string) []byte {
 // agent's own, and anything else was typed at the terminal.
 func (c *codec) starter(prompt string) (agent.Starter, string) {
 	text := normalize(unwrapPaste(prompt))
-	// shadowed is set past an input that the CLI may report as this prompt
-	// although it is not known by it (#916): the prompt may be that one's.
+	notice := notification(prompt)
 	shadowed := false
 	for i, p := range c.pasted {
 		held := slices.Contains(c.leftover, p.id) || slices.Contains(c.unconfirmed, p.id)
-		if held && (notification(prompt) || shadowed) {
-			// A notification starts a turn with the box as it is, also
-			// one that is the text of the input that may be in it; and a
-			// prompt that may be an input's pasted before it (shadowed) is
-			// not the prompt of one in the box after it.
+		if notice && (held || p.older != nil || p.text != text) {
+			// A notification does not consume the editor. Normalization
+			// must not widen attribution to it. Retain the existing raw-exact
+			// live caller-quote behavior used by background task accounting.
 			continue
 		}
-		// One that an older hataori pasted is known by what it pasted
-		// (older), and one that may be in the box also by what the CLI
-		// reports of that, since nothing else releases it. Prompts come in
-		// the order of the pastes, as c.pasted is, and the prompt of an
-		// input pasted after one in the box would have that one in it too.
-		if p.older == nil && p.text == text || slices.Contains(p.older, text) || slices.Contains(c.leftover, p.id) && p.shows(text) {
+		if held && shadowed {
+			// An earlier unresolved paste could have produced this report
+			// under an unrecognized normalization. It cannot release a later
+			// editor merely because that later input matches it exactly.
+			continue
+		}
+		// Compare the report with what the CLI reports of the actual paste,
+		// never change that paste. Equivalent prompts consume the earliest
+		// pending input, also after reconnect or an upgrade with older forms.
+		if p.shows(text) {
 			c.pasted = append(c.pasted[:i], c.pasted[i+1:]...)
 			if c.sent != nil && c.sent.text == p.text {
 				c.sent = nil // delivered
 			}
 			return agent.ByCaller, p.id
 		}
-		shadowed = shadowed || p.shows(text)
+		shadowed = shadowed || p.mayShow(text)
 	}
-	if notification(prompt) {
+	if notice {
 		return agent.ByAgent, ""
 	}
 	return agent.ByTerminal, ""
@@ -1469,16 +1471,41 @@ func unwrapPaste(prompt string) string {
 	return strings.TrimSuffix(s[open+1:], end)
 }
 
-// shown is text as the CLI reports a paste of it in a prompt: without the
-// escape sequences that start with ESC [ and without the characters that do
-// not show (Unicode's Cf), which it takes out (testdata, mention_*).
+// shown is the CLI's report of a paste, not text to paste. The real
+// invisible_* captures distinguish removed characters, normalized line
+// separators, and retained emoji/joining sequences. In particular deleting
+// every Cf or every variation selector would change valid visible text.
 func shown(text string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.Is(unicode.Cf, r) {
-			return -1
+	runes := []rune(controlSequence.ReplaceAllString(strings.ReplaceAll(text, "\r\n", "\n"), ""))
+	var out strings.Builder
+	tags := false
+	for i, r := range runes {
+		switch {
+		case r == '\r' || r == '\v' || r == '\f' || r == '\u0085' || r == '\u2028' || r == '\u2029':
+			r = '\n'
+		case r == '\u200c' || r == '\u200d':
+			// Joining controls between non-ASCII characters can be part of
+			// an emoji or a written language. Keep them conservatively;
+			// the captured ASCII a<joiner>b loses the control instead.
+			if i == 0 || i+1 == len(runes) || runes[i-1] < utf8.RuneSelf || runes[i+1] < utf8.RuneSelf {
+				continue
+			}
+		case r >= '\ufe00' && r <= '\ufe0f':
+			// A selector of an emoji/symbol or a keycap stays in the
+			// prompt. The same selector in ordinary text is removed.
+			if i == 0 || !(unicode.IsSymbol(runes[i-1]) ||
+				i+1 < len(runes) && runes[i+1] == '\u20e3' && strings.ContainsRune("#*0123456789", runes[i-1])) {
+				continue
+			}
+		case r >= '\U000e0020' && r <= '\U000e007f' && tags:
+			// Preserve the tag sequence of the captured subdivision flag.
+		case r == '\u034f' || r == '\u180b' || r == '\u3164' || unicode.Is(unicode.Cf, r) || unicode.IsControl(r) && r != '\n' && r != '\t':
+			continue
 		}
-		return r
-	}, controlSequence.ReplaceAllString(text, ""))
+		out.WriteRune(r)
+		tags = r == '\U0001f3f4' || tags && r >= '\U000e0020' && r < '\U000e007f'
+	}
+	return out.String()
 }
 
 var controlSequence = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]") // ESC [, parameters, intermediates and a final byte
@@ -1487,12 +1514,32 @@ var controlSequence = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]") // ESC [, p
 // paste of a text hataori pasted for q: one an older hataori pasted, if it
 // did, else this one's.
 func (q queued) shows(prompt string) bool {
-	p := normalize(shown(prompt))
+	p := normalize(prompt)
 	forms := q.older
 	if forms == nil {
 		forms = []string{q.text}
 	}
 	return slices.ContainsFunc(forms, func(t string) bool { return normalize(shown(t)) == p })
+}
+
+// mayShow is deliberately broader than shows: unknown joining/selector
+// handling may make a report ambiguous. It can only withhold attribution
+// to a later held input, never acknowledge this one or release its editor.
+func (q queued) mayShow(prompt string) bool {
+	loose := func(text string) string {
+		return normalize(strings.Map(func(r rune) rune {
+			if unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Variation_Selector, r) {
+				return -1
+			}
+			return r
+		}, shown(text)))
+	}
+	forms := q.older
+	if forms == nil {
+		forms = []string{q.text}
+	}
+	p := loose(prompt)
+	return slices.ContainsFunc(forms, func(t string) bool { return loose(t) == p })
 }
 
 // normalize is the text an input and a prompt are compared by: trimmed,

@@ -97,18 +97,16 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 				}
 			}
 			// The prompt the CLI reports is known as hataori's input, also
-			// by the codec after a restart. The CLI takes characters that do
-			// not show out of a paste, so that one is not known (#916); an
-			// escape sequence is not pasted (#914).
-			known := mc.Case != "after_invisible"
-			if by, _ := c.starter(mc.Prompt); (by == agent.ByCaller) != known {
+			// by the codec after a restart, including a prompt from which
+			// the CLI removed invisible characters.
+			if by, _ := c.starter(mc.Prompt); by != agent.ByCaller {
 				t.Errorf("%s: the prompt %q counts as started by %v", id, mc.Prompt, by)
 			}
 			c = confinedCodec(t)
 			if a, err := c.Input(agent.Input{ID: "in-1", Text: mc.Text, Written: true}); err != nil || len(a.Keys) != 0 {
 				t.Fatalf("%s: after a restart: writes %q, %v", id, a.Keys, err)
 			}
-			if by, _ := c.starter(mc.Prompt); (by == agent.ByCaller) != known {
+			if by, _ := c.starter(mc.Prompt); by != agent.ByCaller {
 				t.Errorf("%s: after a restart: the prompt %q counts as started by %v", id, mc.Prompt, by)
 			}
 		}
@@ -124,7 +122,7 @@ func TestConfinedInputNamesNothing(t *testing.T) {
 // before #914, and that the agent reports after a restart to this one, is
 // known as hataori's, and so is one with an escape sequence, which this one
 // holds (#914), by what the CLI took out of it; one with a character that
-// does not show is not (#916). An input that this one pasted since its start
+// does not show is known too (#916). An input that this one pasted since its start
 // is not known by such a prompt: a person typed that.
 func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 	for _, mc := range mentionCases(t, "mention_restricted") {
@@ -133,7 +131,7 @@ func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 			t.Fatal(err)
 		}
 		by, id := c.starter(mc.Prompt)
-		if known := mc.Case != "after_invisible"; (by == agent.ByCaller && id == "in-1" && c.sent == nil) != known {
+		if by != agent.ByCaller || id != "in-1" || c.sent != nil {
 			t.Errorf("%s: after a restart: the prompt %q counts as started by %v, input %q", mc.Case, mc.Prompt, by, id)
 		}
 		if !strings.Contains(mc.Prompt, "@") {
@@ -154,7 +152,7 @@ func TestInputPastedWithItsAtSignIsKnown(t *testing.T) {
 				t.Fatal(err)
 			}
 			by, id := c.starter(mc.Prompt)
-			if known := mc.Case != "after_invisible"; (by == agent.ByCaller && id == "in-1" && c.sent == nil) != known {
+			if by != agent.ByCaller || id != "in-1" || c.sent != nil {
 				t.Errorf("%s %s %s: after a restart: the prompt %q counts as started by %v, input %q", name, mc.Session, mc.Case, mc.Prompt, by, id)
 			}
 		}
@@ -190,10 +188,9 @@ func TestPromptShowsThePaste(t *testing.T) {
 // hataori pasted as it is, by the prompt of another input that is this
 // hataori's paste for it, which an older one pasted as it is too; and one
 // with a character that does not show at its start, or a carriage return
-// at its end, by the prompt of an input pasted before it that has a
-// character that does not show elsewhere, which is not known by that
-// prompt, whether an older hataori pasted that input or this one did
-// (#914, #916).
+// at its end, by the prompt of an input pasted before it. Invisible
+// removal makes the earlier input known, and order keeps it distinct from
+// the later held input (#916).
 func TestHeldInputIsNotKnownByAnotherPaste(t *testing.T) {
 	n := 0
 	for _, name := range []string{"mention_restricted_pasted", "mention_unrestricted_pasted"} {
@@ -244,8 +241,8 @@ func TestHeldInputIsNotKnownByAnotherPaste(t *testing.T) {
 			if !slices.Equal(c.leftover, []string{"in-2"}) {
 				t.Fatalf("%s %q: held %q", mc.Session, held, c.leftover)
 			}
-			if by, id := c.starter(mc.Prompt); by == agent.ByCaller {
-				t.Errorf("%s %q: the prompt %q of the input before it counts as input %q", mc.Session, held, mc.Prompt, id)
+			if by, id := c.starter(mc.Prompt); by != agent.ByCaller || id != "in-1" || !slices.Equal(c.leftover, []string{"in-2"}) {
+				t.Errorf("%s %q: the prompt %q of the input before it counts as %v/%q; held %q", mc.Session, held, mc.Prompt, by, id, c.leftover)
 			}
 		}
 	}
@@ -267,8 +264,8 @@ func TestHeldInputIsNotKnownByAnotherPaste(t *testing.T) {
 		if !slices.Equal(c.leftover, []string{"in-2"}) {
 			t.Fatalf("%s: held %q", mc.Session, c.leftover)
 		}
-		if by, id := c.starter(mc.Prompt); by == agent.ByCaller {
-			t.Errorf("%s: the prompt %q of this hataori's paste before it counts as input %q", mc.Session, mc.Prompt, id)
+		if by, id := c.starter(mc.Prompt); by != agent.ByCaller || id != "in-1" || !slices.Equal(c.leftover, []string{"in-2"}) {
+			t.Errorf("%s: the prompt %q of this hataori's paste before it counts as %v/%q; held %q", mc.Session, mc.Prompt, by, id, c.leftover)
 		}
 	}
 	if n == 0 {
@@ -313,9 +310,8 @@ func TestOrdinaryInputKeepsTheAtSign(t *testing.T) {
 		if _, err := restarted.Input(agent.Input{ID: "in-1", Text: mc.Text, Written: true}); err != nil {
 			t.Fatal(err)
 		}
-		known := !slices.Contains([]string{"after_escape", "after_invisible"}, mc.Case) // #916
 		for what, c := range map[string]*codec{"": c, "after a restart: ": restarted} {
-			if by, _ := c.starter(mc.Prompt); (by == agent.ByCaller) != known {
+			if by, _ := c.starter(mc.Prompt); by != agent.ByCaller {
 				t.Errorf("%s: %sthe prompt %q counts as started by %v", mc.Case, what, mc.Prompt, by)
 			}
 		}
