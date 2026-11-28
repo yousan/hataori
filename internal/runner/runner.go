@@ -1402,6 +1402,12 @@ func (r *Runner) handOver(lv *live, pending int64, answer bool, f func() (agent.
 			return err
 		}
 	}
+	if r.Deferred != nil {
+		// A later accepted input can emit an action while an older deferred
+		// receipt is pending. If that action is fenced and reconstructed,
+		// retain this row in the recovery horizon, including held answers.
+		lv.upTo = max(lv.upTo, pending)
+	}
 	a, err := f()
 	if err != nil && answer {
 		recordErr := r.refusePendingAnswer(lv.id, pending)
@@ -1806,6 +1812,7 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 		return true
 	}
 	if err := r.reconcileDeferred(lv); err != nil {
+		r.holdDeferredActions(lv, b.actions)
 		r.Log.Warn("deferred input recovery waits", "session", lv.id, "err", err)
 		return true
 	}

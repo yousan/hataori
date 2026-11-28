@@ -263,6 +263,7 @@ func (r *Runner) reconcileDeferred(lv *live) error {
 	}
 	all, err := r.Deferred.Handoffs(context.Background(), lv.id)
 	if err != nil {
+		lv.deferredBlocked = true
 		return err
 	}
 	for input, b := range all {

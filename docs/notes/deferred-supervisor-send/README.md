@@ -45,7 +45,9 @@ Recovery regressions also exercise an active native turn after a frozen but
 absent request, a delayed idle-only action followed by a new native turn in the
 same read batch, permanent receiver refusal, a pending receipt fencing later
 I/O, and a cached exact ACK whose store commit fails. Temporary guard removals
-must fail those assertions. Human proposal refusal and changed authority/target
+must fail those assertions. A real later ordinary pending input remains in the
+recovery horizon and is written once after the receipt completes; a receipt
+lookup failure retains its fence. Human proposal refusal and changed authority/target
 retain the decision outcome and decider in the same transaction. CI additionally
 runs `TestDeferredOwnedHostRecoveryCI` with a real disposable owned pipe host
 and the retained capture reflector; it is intentionally skipped locally.

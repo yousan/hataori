@@ -36,6 +36,7 @@ type deferredPeer struct {
 	lost, hold bool
 	refuse     bool
 	old        bool
+	ordinary   int
 }
 
 func (p *deferredPeer) listen(t *testing.T, dir string) {
@@ -62,6 +63,7 @@ func (p *deferredPeer) serve(c net.Conn) {
 		var req struct {
 			Op    string           `json:"op"`
 			Batch *host.InputBatch `json:"batch"`
+			Data  []byte           `json:"data"`
 		}
 		if dec.Decode(&req) != nil {
 			return
@@ -69,7 +71,9 @@ func (p *deferredPeer) serve(c net.Conn) {
 		p.mu.Lock()
 		reply := map[string]any{"ok": true}
 		drop := false
-		if req.Op == "input-capability" {
+		if req.Op == "input" {
+			p.ordinary++
+		} else if req.Op == "input-capability" {
 			if p.old {
 				reply["error"] = "fixture old receiver has no capability"
 			} else {
@@ -132,7 +136,8 @@ func (p *deferredPeer) release() {
 		}
 	}
 }
-func (p *deferredPeer) count() int { p.mu.Lock(); defer p.mu.Unlock(); return p.writes }
+func (p *deferredPeer) count() int         { p.mu.Lock(); defer p.mu.Unlock(); return p.writes }
+func (p *deferredPeer) ordinaryCount() int { p.mu.Lock(); defer p.mu.Unlock(); return p.ordinary }
 
 type undeclaredDeferredCodec struct{ agent.Codec }
 type undeclaredDeferredAdapter struct{ agent.Adapter }
@@ -398,14 +403,44 @@ func TestDeferredRecovery(t *testing.T) {
 					if a := r.tickCodec(lv); len(a.Events) != 0 {
 						t.Fatal("pending write expired")
 					}
-					if boundary == "reserved-action" {
-						// An already-consumed later codec action must neither write
-						// around the pending receiver nor disappear without rewarm.
-						if e = r.act(lv, agent.Actions{Write: [][]byte{[]byte("later fixture action")}}); e == nil || !lv.warmPending || !lv.pending {
-							t.Fatal("pending receipt did not fence and reconstruct the later action", e)
-						}
-					}
 				}
+			}
+			if boundary == "reserved-action" {
+				// A reversible fixture-only lookup fault must not release the
+				// receipt's timeout/I/O fence. Restore the table before proceeding.
+				if _, e = r.Store.DB.Exec(`ALTER TABLE deferred_sends RENAME TO fixture_deferred_lookup_fault`); e != nil {
+					t.Fatal(e)
+				}
+				lookupErr := r.reconcileDeferred(lv)
+				_, restoreErr := r.Store.DB.Exec(`ALTER TABLE fixture_deferred_lookup_fault RENAME TO deferred_sends`)
+				if lookupErr == nil || restoreErr != nil || !lv.deferredBlocked || len(r.tickCodec(lv).Events) != 0 {
+					t.Fatalf("receipt lookup failure released its fence: lookup=%v restore=%v blocked=%v", lookupErr, restoreErr, lv.deferredBlocked)
+				}
+				// Exercise a real newly accepted ordinary pending row, newer than
+				// the reconnect horizon, through Core.Send/Deliver/the actual codec.
+				// Native notifications make ordinary steering eligible; the older
+				// deferred receiver reservation must still fence its emitted action.
+				x.appendTo(filepath.Join(lv.dir, host.EventsFile), started, user)
+				readCommit()
+				oldHorizon := lv.upTo
+				ordinary := c.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: control.OpSend})
+				if e = ordinary.Send(ctx, 1, "later-ordinary", control.Input{Text: "later fixture instruction"}, control.Deliver); e != nil && !errors.Is(e, core.ErrMachineUnchecked) {
+					t.Fatal(e)
+				}
+				var next int64
+				var written int
+				if e = r.Store.DB.QueryRow(`SELECT id,written FROM pending_inputs WHERE session_id=1 ORDER BY id DESC LIMIT 1`).Scan(&next, &written); e != nil {
+					t.Fatal(e)
+				}
+				if next <= oldHorizon || written != 0 || !lv.warmPending || !lv.pending || p.ordinaryCount() != 0 {
+					t.Fatalf("later input was not fenced before its marker: row=%d old=%d written=%d warm=%v pending=%v writes=%d", next, oldHorizon, written, lv.warmPending, lv.pending, p.ordinaryCount())
+				}
+				// Reconstruct the same daemon's codec while retaining its horizon,
+				// exactly as warmPending does. Do not query a new maximum here.
+				lv.codec = ad.NewCodec(agent.Spec{})
+				r.warm(lv)
+				lv.warmPending = false
+				r.handOverWritten(lv)
 			}
 			if boundary == "absent-active" || boundary == "late-action" {
 				x.appendTo(filepath.Join(lv.dir, host.EventsFile), secondEnded)
@@ -445,6 +480,14 @@ func TestDeferredRecovery(t *testing.T) {
 				if e = r.reconcileDeferred(lv); e != nil {
 					t.Fatal(e)
 				}
+				if boundary == "reserved-action" {
+					r.handOverPending(lv)
+					var written int
+					r.Store.DB.QueryRow(`SELECT written FROM pending_inputs WHERE session_id=1 ORDER BY id DESC LIMIT 1`).Scan(&written)
+					if p.ordinaryCount() != 1 || written == 0 {
+						t.Fatalf("later durable input stranded after receipt completion: writes=%d written=%d horizon=%d", p.ordinaryCount(), written, lv.upTo)
+					}
+				}
 			}
 			if p.count() != 1 {
 				t.Fatalf("physical fixture writes %d", p.count())
@@ -467,7 +510,11 @@ func TestDeferredRecovery(t *testing.T) {
 			var pending, sessions int
 			r.Store.DB.QueryRow(`SELECT count(*) FROM pending_inputs WHERE session_id=1`).Scan(&pending)
 			r.Store.DB.QueryRow(`SELECT count(*) FROM sessions`).Scan(&sessions)
-			if pending != 0 || sessions != 2 {
+			wantPending := 0
+			if boundary == "reserved-action" {
+				wantPending = 1 // ordinary write awaits its own ACK, independently
+			}
+			if pending != wantPending || sessions != 2 {
 				t.Fatalf("pending=%d sessions=%d", pending, sessions)
 			}
 			p.mu.Lock()
