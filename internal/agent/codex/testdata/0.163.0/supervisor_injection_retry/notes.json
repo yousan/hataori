@@ -1,0 +1,10 @@
+{
+  "duplicate_acks": 2,
+  "idle_seconds": 2,
+  "inference_requested": false,
+  "launch": "actual confined adapter; disposable state; existing CLI auth mounted read-only",
+  "model": "gpt-6-luna",
+  "ready_events": 1,
+  "turns_observed": 0,
+  "version": "codex-cli 0.163.0"
+}

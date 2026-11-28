@@ -14,37 +14,44 @@ type Operation struct {
 	Capability string
 	Session    bool
 	Durable    bool
+	Since      int // first minor in major 1
 }
 
 var operations = map[string]Operation{
-	"health":          {"health", "health", false, false},
-	"inventory":       {"inventory", "health", false, false},
-	"probe":           {"probe", "health", false, false},
-	"prepare":         {"prepare", "host", true, true},
-	"start":           {"start", "host", true, true},
-	"stop":            {"stop", "host", true, true},
-	"input":           {"input", "host", true, true},
-	"answer":          {"answer", "host", true, true},
-	"receipt":         {"receipt", "receipts", true, false},
-	"attach":          {"attach", "terminal", true, false},
-	"keys":            {"keys", "terminal", true, false},
-	"resize":          {"resize", "terminal", true, false},
-	"detach":          {"detach", "terminal", true, false},
-	"follow":          {"follow", "replay", true, false},
-	"read":            {"read", "replay", true, false},
-	"history_release": {"history_release", "replay", true, true},
-	"clone":           {"clone", "workspace", true, true},
-	"fetch":           {"fetch", "workspace", true, true},
-	"inspect":         {"inspect", "workspace", true, false},
-	"remove":          {"remove", "workspace", true, true},
-	"restore":         {"restore", "workspace", true, true},
-	"acknowledge":     {"acknowledge", "workspace", true, true},
-	"purge":           {"purge", "workspace", true, true},
-	"upload":          {"upload", "transfer", true, true},
-	"download":        {"download", "transfer", true, false},
-	"login_start":     {"login_start", "login", false, false},
-	"login_input":     {"login_input", "login", false, false},
-	"login_cancel":    {"login_cancel", "login", false, false},
+	"workspace_status":   {"workspace_status", "placement", true, false, 3},
+	"resolve_repository": {"resolve_repository", "placement", true, false, 3},
+	"remake_workspace":   {"remake_workspace", "placement", true, true, 3},
+	"health":             {"health", "health", false, false, 0},
+	"inventory":          {"inventory", "health", false, false, 0},
+	"probe":              {"probe", "health", false, false, 0},
+	"prepare":            {"prepare", "host", true, true, 0},
+	"start":              {"start", "host", true, true, 0},
+	"end_host":           {"end_host", "lifecycle", true, true, 1},
+	"describe":           {"describe", "runner", true, false, 2},
+	"bind_workspace":     {"bind_workspace", "runner", true, true, 2},
+	"stop":               {"stop", "host", true, true, 0},
+	"input":              {"input", "host", true, true, 0},
+	"answer":             {"answer", "host", true, true, 0},
+	"receipt":            {"receipt", "receipts", true, false, 0},
+	"attach":             {"attach", "terminal", true, false, 0},
+	"keys":               {"keys", "terminal", true, false, 0},
+	"resize":             {"resize", "terminal", true, false, 0},
+	"detach":             {"detach", "terminal", true, false, 0},
+	"follow":             {"follow", "replay", true, false, 0},
+	"read":               {"read", "replay", true, false, 0},
+	"history_release":    {"history_release", "replay", true, true, 0},
+	"clone":              {"clone", "workspace", true, true, 0},
+	"fetch":              {"fetch", "workspace", true, true, 0},
+	"inspect":            {"inspect", "workspace", true, false, 0},
+	"remove":             {"remove", "workspace", true, true, 0},
+	"restore":            {"restore", "workspace", true, true, 0},
+	"acknowledge":        {"acknowledge", "workspace", true, true, 0},
+	"purge":              {"purge", "workspace", true, true, 0},
+	"upload":             {"upload", "transfer", true, true, 0},
+	"download":           {"download", "transfer", true, false, 0},
+	"login_start":        {"login_start", "login", false, false, 0},
+	"login_input":        {"login_input", "login", false, false, 0},
+	"login_cancel":       {"login_cancel", "login", false, false, 0},
 }
 
 func Operations() []Operation {
@@ -84,8 +91,10 @@ type AgentConfig struct {
 
 type AgentHealth struct {
 	AgentConfig
-	Installed bool   `json:"installed"`
-	Login     string `json:"login"` // logged_in, logged_out, unknown
+	ConfigDir    string `json:"config_dir,omitempty"` // 1.2, metadata only
+	Installed    bool   `json:"installed"`
+	Login        string `json:"login"`                  // logged_in, logged_out, unknown
+	Installation string `json:"installation,omitempty"` // 1.1: installed, missing, unknown
 }
 
 // Telemetry is an observation, never an admission grant. A consumer checks age,
@@ -95,6 +104,7 @@ type Telemetry struct {
 	ValidMS    int64   `json:"valid_ms"`
 	Known      bool    `json:"known"`
 	MemoryFree uint64  `json:"memory_free"`
+	DiskFree   uint64  `json:"disk_free,omitempty"` // 1.1; absence is unknown to older peers
 	Load       float64 `json:"load"`
 }
 
@@ -125,10 +135,58 @@ type Prepare struct {
 
 type Start struct {
 	AgentConfig
-	Holder    string `json:"holder"`
-	Workspace string `json:"workspace"`
-	Model     string `json:"model,omitempty"`
-	Resume    string `json:"resume,omitempty"` // opaque adapter conversation ID
+	Admission         *Admission `json:"admission,omitempty"` // 1.3, requires placement capability
+	Holder            string     `json:"holder"`
+	Workspace         string     `json:"workspace"`
+	Model             string     `json:"model,omitempty"`
+	Resume            string     `json:"resume,omitempty"`              // opaque adapter conversation ID
+	Effort            string     `json:"effort,omitempty"`              // 1.2
+	NoProjectSettings bool       `json:"no_project_settings,omitempty"` // 1.2
+}
+
+type Admission struct {
+	MaxResident   int     `json:"max_resident,omitempty"`
+	MaxStarting   int     `json:"max_starting,omitempty"`
+	MaxLoad       float64 `json:"max_load,omitempty"`
+	MinFreeMemory uint64  `json:"min_free_memory,omitempty"`
+	MinFreeDisk   uint64  `json:"min_free_disk,omitempty"`
+}
+
+// RunMetadata carries codec context, never an address on the main. The worker
+// resolves all paths using its registered adapter and owned workspace.
+type RunMetadata struct {
+	AgentConfig
+	Dir               string        `json:"dir"`
+	StateDir          string        `json:"state_dir"`
+	ConfigDir         string        `json:"config_dir"`
+	Model             string        `json:"model,omitempty"`
+	Effort            string        `json:"effort,omitempty"`
+	Resume            string        `json:"resume,omitempty"`
+	Instructions      string        `json:"instructions,omitempty"`
+	NoProjectSettings bool          `json:"no_project_settings"`
+	Terminal          bool          `json:"terminal"`
+	State             string        `json:"state"`
+	Turn              string        `json:"turn,omitempty"`
+	Status            *RunStatus    `json:"status,omitempty"`
+	Waiting           []WaitingHook `json:"waiting"`
+	Attached          int           `json:"attached"`
+	DetachedMS        int64         `json:"detached_ms"`
+}
+
+type RunStatus struct {
+	Exited   bool   `json:"exited"`
+	Code     int    `json:"code"`
+	Signal   string `json:"signal,omitempty"`
+	Stopped  bool   `json:"stopped,omitempty"`
+	StopNote string `json:"stop_note,omitempty"`
+	Error    string `json:"error,omitempty"`
+	Shutdown bool   `json:"shutdown,omitempty"`
+}
+
+type WaitingHook struct {
+	ID      string `json:"id"`
+	AtMS    int64  `json:"at_ms"`
+	Payload []byte `json:"payload"`
 }
 
 type Stop struct {
@@ -210,6 +268,10 @@ type Bytes struct {
 	Next   uint64 `json:"next"`
 	State  string `json:"state"`
 	Data   []byte `json:"data"`
+	Cols   uint16 `json:"cols,omitempty"` // 1.2 attachment output only
+	Rows   uint16 `json:"rows,omitempty"`
+	Reset  bool   `json:"reset,omitempty"`
+	Ended  bool   `json:"ended,omitempty"` // explicit host end; EOF alone is link loss
 }
 
 type HistoryRelease struct {
@@ -224,11 +286,26 @@ type Workspace struct {
 	Workspace string `json:"workspace"`
 }
 
+type BindWorkspace struct {
+	Previous  Target `json:"previous"`
+	Workspace string `json:"workspace"`
+}
+
 type Inspection struct {
 	Workspace string   `json:"workspace"`
 	Identity  string   `json:"identity"`
 	Clean     bool     `json:"clean"` // diagnostic only; removal always reproves
 	Reasons   []string `json:"reasons"`
+}
+
+type WorkspaceStatus struct {
+	Workspace string `json:"workspace"`
+	State     string `json:"state"` // present, trashed, purged; never inferred from absence
+	Trash     string `json:"trash,omitempty"`
+}
+
+type RepositoryReference struct {
+	Repository string `json:"repository"`
 }
 
 type Trash struct {
@@ -378,6 +455,12 @@ func validateBody(m Message) error {
 			})
 		}
 		switch m.Op {
+		case "resolve_repository":
+			return body(m, func(b RepositoryReference) bool { return identifier(b.Repository) })
+		case "workspace_status":
+			return body(m, func(b WorkspaceStatus) bool {
+				return identifier(b.Workspace) && oneOf(b.State, "present", "trashed", "purged") && (b.Trash == "" || identifier(b.Trash))
+			})
 		case "health":
 			return body(m, func(b Health) bool {
 				if !identifier(b.Boot) || !telemetry(b.Telemetry) || len(b.Agents) > 128 {
@@ -408,6 +491,18 @@ func validateBody(m Message) error {
 			})
 		case "attach":
 			return body(m, func(b Attachment) bool { return identifier(b.Handle) && b.Cols > 0 && b.Rows > 0 })
+		case "describe":
+			return body(m, func(b RunMetadata) bool {
+				if !agent(b.AgentConfig) || !oneOf(b.State, "reserved", "running", "ended", "gone", "unknown") || b.Turn != "" && !identifier(b.Turn) || len(b.Waiting) > 64 || b.Attached < 0 || len(b.Dir) > 4096 || len(b.StateDir) > 4096 || len(b.ConfigDir) > 4096 || len(b.Instructions) > MaxChunk {
+					return false
+				}
+				for _, h := range b.Waiting {
+					if !identifier(h.ID) || h.AtMS < 0 || len(h.Payload) > MaxChunk {
+						return false
+					}
+				}
+				return true
+			})
 		case "follow":
 			return body(m, source)
 		case "read":
@@ -428,7 +523,7 @@ func validateBody(m Message) error {
 		return refuse("invalid_message", "invalid message kind")
 	}
 	switch m.Op {
-	case "health", "inventory":
+	case "health", "inventory", "end_host", "describe":
 		return body(m, func(Empty) bool { return true })
 	case "probe":
 		return body(m, agent)
@@ -436,7 +531,7 @@ func validateBody(m Message) error {
 		return body(m, func(b Prepare) bool { return len(b.Instructions) <= MaxChunk && handles(b.Policy...) })
 	case "start":
 		return body(m, func(b Start) bool {
-			return agent(b.AgentConfig) && b.Holder == "own" && identifier(b.Workspace) && len(b.Model) <= 128 && len(b.Resume) <= 256
+			return (b.Admission == nil || b.Admission.MaxResident >= 0 && b.Admission.MaxStarting >= 0 && b.Admission.MaxLoad >= 0 && !math.IsNaN(b.Admission.MaxLoad) && !math.IsInf(b.Admission.MaxLoad, 0)) && agent(b.AgentConfig) && b.Holder == "own" && identifier(b.Workspace) && len(b.Model) <= 128 && len(b.Resume) <= 256 && len(b.Effort) <= 128
 		})
 	case "stop":
 		return body(m, func(b Stop) bool { return identifier(b.Turn) })
@@ -462,8 +557,12 @@ func validateBody(m Message) error {
 		return body(m, func(b HistoryRelease) bool { return b.Retired })
 	case "clone":
 		return body(m, func(b Clone) bool { return identifier(b.Repository) })
-	case "fetch", "inspect", "remove":
+	case "resolve_repository":
+		return body(m, func(b RepositoryReference) bool { return len(b.Repository) > 0 && len(b.Repository) <= 8192 })
+	case "fetch", "inspect", "remove", "workspace_status", "remake_workspace":
 		return body(m, func(b Workspace) bool { return identifier(b.Workspace) })
+	case "bind_workspace":
+		return body(m, func(b BindWorkspace) bool { return validTarget(b.Previous) && identifier(b.Workspace) })
 	case "restore", "acknowledge", "purge":
 		return body(m, func(b Trash) bool { return identifier(b.Trash) })
 	case "upload":
@@ -485,12 +584,22 @@ func validateBody(m Message) error {
 }
 
 func agentHealth(a AgentHealth) bool {
-	return agent(a.AgentConfig) && oneOf(a.Login, "logged_in", "logged_out", "unknown") && (a.Installed || a.Login == "unknown")
+	if !agent(a.AgentConfig) || !oneOf(a.Login, "logged_in", "logged_out", "unknown") || !a.Installed && a.Login != "unknown" {
+		return false
+	}
+	return a.Installation == "" || a.Installation == "installed" && a.Installed || oneOf(a.Installation, "missing", "unknown") && !a.Installed && a.Login == "unknown"
 }
 
 func telemetry(t Telemetry) bool {
 	return t.ObservedMS >= 0 && t.ValidMS >= 0 && t.ValidMS <= 60000 && !math.IsNaN(t.Load) && !math.IsInf(t.Load, 0) && t.Load >= 0 &&
-		(t.Known && t.ObservedMS > 0 && t.ValidMS > 0 || !t.Known && t.MemoryFree == 0 && t.Load == 0)
+		(t.Known && t.ObservedMS > 0 && t.ValidMS > 0 || !t.Known && t.MemoryFree == 0 && t.DiskFree == 0 && t.Load == 0)
+}
+
+// FreshTelemetry is a necessary freshness check, never an admission grant by
+// itself. Unknown, future-dated, expired or invalid observations cannot prove
+// capacity. Disk constraints additionally require protocol 1.1 or later.
+func FreshTelemetry(t Telemetry, nowMS int64) bool {
+	return telemetry(t) && t.Known && nowMS >= t.ObservedMS && nowMS-t.ObservedMS < t.ValidMS
 }
 
 // RequestHash binds a durable key to the exact operation and JSON body, not a

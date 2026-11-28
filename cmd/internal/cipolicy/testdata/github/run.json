@@ -1,0 +1,27 @@
+{
+  "id": 46093553816,
+  "run_attempt": 1,
+  "head_sha": "33e45270d32e94b832f3ce2ea1ae55ca87ac1e9b",
+  "event": "pull_request",
+  "path": ".github/workflows/ci.yml",
+  "workflow_id": 415474141,
+  "display_title": "ci: build trusted integration policy and coverage debt components",
+  "status": "completed",
+  "conclusion": "success",
+  "repository": {
+    "id": 1454788309,
+    "full_name": "yousan/hataori"
+  },
+  "head_repository": {
+    "id": 1454788309,
+    "full_name": "yousan/hataori"
+  },
+  "actor": {
+    "id": 561613,
+    "login": "yousan"
+  },
+  "triggering_actor": {
+    "id": 561613,
+    "login": "yousan"
+  }
+}

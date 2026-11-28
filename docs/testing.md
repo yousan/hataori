@@ -9,6 +9,46 @@ children so their zombies do not block later removal tests. Packages run
 serially so another package's protected helpers cannot block a removal. This
 isolates the tests; the application's removal check has no exception for tests.
 
+The [CI policy and staged release design](design/ci-policy.md) distinguishes
+development feedback, integration sweeps and immutable release gates. Phase 1
+keeps full applicable ready-PR/main validation; later profiles and branch or
+operator migrations are explicitly gated proposals.
+
+## Draft, ready and merge checks
+
+Draft code PRs run `check` (format, vet, build, test compilation and the
+source-only core/adapter architecture test), `build-macos` and `web`.
+`test`, `test-macos` and the tmux matrix do not allocate runners while draft. Skips provide partial development
+feedback only: mark the PR ready before merging. `ready_for_review` triggers
+the applicable complete gates on that same head without another push;
+subsequent ready updates run them too. Returning to draft cancels superseded
+PR work. Batch fixes into reviewable pushes rather than repeatedly starting
+new runs for intermediate edits.
+
+The shared [filters](../.github/filters.yml) use the entire PR diff or pushed
+main range. Non-policy root Markdown, `docs/`, `site/` and `LICENSE` alone skip
+unrelated runtime/build jobs. Executable contracts `docs/protocol.md`,
+`docs/plugins.md` and `docs/configuration.md` retain full ready/main OS suites
+for their wire/plugin consistency tests. The four explicitly listed
+rate-limit/statusline captures and capture-metadata scrubber used by adapter
+tests also retain OS validation.
+Policy overrides, package Markdown, fixtures,
+dependencies, generated assets and unknown paths remain code. Existing
+`test`, `test-macos`, `build-macos`, `web` and `tmux` job IDs remain; a skipped
+matrix has the aggregate `tmux` check, not ten executed version checks.
+Compatibility is selected from its complete path/dependency/policy diff;
+manual tmux dispatch retains its explicit revision/test inputs.
+
+During this transition, ready main-targeted PRs and applicable main pushes
+still run full Linux/macOS suites and selected compatibility checks. Cheap
+static checks run once before the full suites. Confirm the **ready event's**
+current-head run actually executed every applicable heavy gate, obtain every
+mandatory provider/authority review, and verify the separate actual main
+merge-SHA run after merge. Never merge on a draft's skipped-green result.
+Every main run keeps a separate concurrency group; Pages is unchanged.
+Future partial integration lanes and profiles are planned in the design,
+not installed by these draft optimizations.
+
 ## CI when no macOS runner is available
 
 Rerun a CI job by hand when GitHub cannot assign its hosted macOS runner
@@ -91,6 +131,30 @@ The check skips when Codex is not installed or is not signed in. It uses the ins
 8. With `HATAORI_REAL_CODEX_LONG=1`, wait for four foreground sleeps and check that the turn takes at least 30 minutes and ends once. Without the flag this step is skipped.
 
 The check ends every process it starts, also after a failed step, provided `go test` does not stop it first: it keeps two minutes of the `-timeout` for that, and refuses to start when the time left is too short for its steps. It never writes the user's Codex configuration. It compares the checksum of `config.toml` in the Codex home before and after the check; the adapter passes its trust override on the command line.
+
+### Confined Codex supervisor
+
+```sh
+HATAORI_REAL_CODEX_SUPERVISOR=1 go test -p 1 -count=1 -run '^TestRealCodexSupervisor$' -v -timeout 18m ./cmd/hataori
+```
+
+Linux only, codex-cli 0.163.0, model `gpt-6-luna`, existing ChatGPT CLI
+file authentication and bubblewrap. No terminal or other provider runs. The
+actual adapter launches a disposable daemon/scope with a fake chat surface
+and two fake workers. It checks composed instruction delivery and refresh,
+direct MCP management and file access, actual catalog search outputs with no
+code-mode/custom tool calls, daemon restart,
+process resume, conversation and fresh wake launches, question answering,
+authorized next-stage dispatch, a real five-minute reminder and no duplicate
+worker/stage after restart. The conversation step calls the existing
+`Sessions.Converse` entry point as a chat adapter would; it does not add or
+claim mention routing in a front end.
+
+`HATAORI_CODEX_SUPERVISOR_CAPTURE` may name a new directory for only the
+fixture's output and selected response items, with its generated MCP token
+redacted. Never export authentication, generated credential config or the
+database. Scrub paths and identifiers before committing captures. See the
+[confinement evidence and operator switching procedure](notes/codex-supervisor-1088/README.md).
 
 ### Codex criteria (Appendix E) and their tests
 

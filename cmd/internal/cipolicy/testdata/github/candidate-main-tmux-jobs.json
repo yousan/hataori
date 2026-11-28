@@ -1,0 +1,833 @@
+{
+  "total_count": 11,
+  "jobs": [
+    {
+      "id": 140922426986,
+      "run_id": 46126592215,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "tmux changes",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026421,
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Require complete diff base",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:14Z",
+      "completed_at": "2026-11-28T08:36:20Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922426986"
+    },
+    {
+      "id": 140922460678,
+      "run_id": 46126592215,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "tmux (3.4)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026424,
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build the tmux version under test",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test the holder",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test closed-terminal ownership through the runner",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test host terminal inputs",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Check the split test rejects inherited remain-on-exit",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Repeat the split test with two concurrent copies",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:22Z",
+      "completed_at": "2026-11-28T08:39:03Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922460678"
+    },
+    {
+      "id": 140922460682,
+      "run_id": 46126592215,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "tmux (3.1c, ^TestPipeCommandPreservesLiteralPaths$)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026431,
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build the tmux version under test",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test the holder",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test closed-terminal ownership through the runner",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Test host terminal inputs",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Check the split test rejects inherited remain-on-exit",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Repeat the split test with two concurrent copies",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:23Z",
+      "completed_at": "2026-11-28T08:37:15Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922460682"
+    },
+    {
+      "id": 140922460692,
+      "run_id": 46126592215,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "tmux (3.2)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026430,
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build the tmux version under test",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test the holder",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test closed-terminal ownership through the runner",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test host terminal inputs",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Check the split test rejects inherited remain-on-exit",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Repeat the split test with two concurrent copies",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:22Z",
+      "completed_at": "2026-11-28T08:39:08Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922460692"
+    },
+    {
+      "id": 140922460694,
+      "run_id": 46126592215,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "tmux (3.2a)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026429,
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build the tmux version under test",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test the holder",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test closed-terminal ownership through the runner",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test host terminal inputs",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Check the split test rejects inherited remain-on-exit",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Repeat the split test with two concurrent copies",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:23Z",
+      "completed_at": "2026-11-28T08:39:13Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922460694"
+    },
+    {
+      "id": 140922460695,
+      "run_id": 46126592215,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "tmux (3.0a, ^TestPipeCommandPreservesLiteralPaths$)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026423,
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build the tmux version under test",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test the holder",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test closed-terminal ownership through the runner",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Test host terminal inputs",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Check the split test rejects inherited remain-on-exit",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Repeat the split test with two concurrent copies",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:22Z",
+      "completed_at": "2026-11-28T08:37:12Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922460695"
+    },
+    {
+      "id": 140922460705,
+      "run_id": 46126592215,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "tmux (3.3a, ^TestPipeCommandPreservesLiteralPaths$)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026425,
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build the tmux version under test",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test the holder",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test closed-terminal ownership through the runner",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Test host terminal inputs",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Check the split test rejects inherited remain-on-exit",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Repeat the split test with two concurrent copies",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:22Z",
+      "completed_at": "2026-11-28T08:37:17Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922460705"
+    },
+    {
+      "id": 140922460711,
+      "run_id": 46126592215,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "tmux (3.5a, ^TestPipeCommandPreservesLiteralPaths$)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026426,
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build the tmux version under test",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test the holder",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test closed-terminal ownership through the runner",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Test host terminal inputs",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Check the split test rejects inherited remain-on-exit",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Repeat the split test with two concurrent copies",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:22Z",
+      "completed_at": "2026-11-28T08:37:19Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922460711"
+    },
+    {
+      "id": 140922460715,
+      "run_id": 46126592215,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "tmux (3.7c, ^TestPipeCommandPreservesLiteralPaths$)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026427,
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build the tmux version under test",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test the holder",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test closed-terminal ownership through the runner",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Test host terminal inputs",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Check the split test rejects inherited remain-on-exit",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Repeat the split test with two concurrent copies",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:22Z",
+      "completed_at": "2026-11-28T08:37:01Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922460715"
+    },
+    {
+      "id": 140922460735,
+      "run_id": 46126592215,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "tmux (3.8)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026428,
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build the tmux version under test",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test the holder",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test closed-terminal ownership through the runner",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test host terminal inputs",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Check the split test rejects inherited remain-on-exit",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Repeat the split test with two concurrent copies",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:22Z",
+      "completed_at": "2026-11-28T08:39:01Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922460735"
+    },
+    {
+      "id": 140922460759,
+      "run_id": 46126592215,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "tmux (3.6b, ^TestPipeCommandPreservesLiteralPaths$)",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026432,
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Build the tmux version under test",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test the holder",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Test closed-terminal ownership through the runner",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Test host terminal inputs",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Check the split test rejects inherited remain-on-exit",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Repeat the split test with two concurrent copies",
+          "status": "completed",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:22Z",
+      "completed_at": "2026-11-28T08:37:15Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922460759"
+    }
+  ]
+}

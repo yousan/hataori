@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -86,7 +87,9 @@ type earlyCodec struct{ agent.Codec }
 
 func (h early) NewCodec(s agent.Spec) agent.Codec { return earlyCodec{h.Adapter.NewCodec(s)} }
 
-func (earlyCodec) Interrupt() agent.Actions { return agent.Actions{NotInterrupted: true} }
+func (earlyCodec) Interrupt() agent.Actions {
+	return agent.Actions{NotInterrupted: true, InterruptReason: "the message is waiting for Enter"}
+}
 
 // An interrupt that the codec cannot carry out yet is none: the Stop says
 // so, the turn goes on after the grace time and names nobody (#741).
@@ -95,7 +98,7 @@ func TestAnInterruptThatIsNone(t *testing.T) {
 	f := newFixture(t, options{interrupt: grace, wrap: func(a agent.Adapter) agent.Adapter { return early{a} }})
 	f.start("tool wait 5s\nreply late")
 	waitFor(t, "the tool", 15*time.Second, f.has("tool_started", 1))
-	if err := owner(f.core).Stop(context.Background(), thread, 0); !errors.Is(err, control.ErrNotInterrupted) {
+	if err := owner(f.core).Stop(context.Background(), thread, 0); !errors.Is(err, control.ErrNotInterrupted) || !strings.Contains(err.Error(), "the message is waiting for Enter") {
 		t.Fatalf("the stop: %v", err)
 	}
 	waitFor(t, "the turn's end", 20*time.Second, f.has("turn_ended", 1))

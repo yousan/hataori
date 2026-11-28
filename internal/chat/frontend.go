@@ -401,7 +401,7 @@ func (f *FrontEnd) start(ctx context.Context, r request, o order, n int64) (cont
 	}
 	// No thread is named: once the core allows the Start, it asks this
 	// front end for one (NewThread), which opens it from the trigger.
-	id, startErr := api.Start(ctx, control.StartRequest{Key: r.key, Scope: channel, Repo: o.Repo,
+	id, startErr := api.Start(ctx, control.StartRequest{Machine: o.Machine, Key: r.key, Scope: channel, Repo: o.Repo,
 		Agent: o.Agent, Model: o.Model, Effort: o.Effort, Input: control.Input{Text: o.Prompt}})
 	switch {
 	case errors.Is(startErr, control.ErrForbidden), errors.Is(startErr, control.ErrUnknownAgent):
@@ -410,6 +410,10 @@ func (f *FrontEnd) start(ctx context.Context, r request, o order, n int64) (cont
 		return 0, f.refuseEffort(ctx, r, o, n)
 	case errors.Is(startErr, control.ErrStopped):
 		return 0, f.refuseStopped(ctx, r, n, startErr)
+	}
+	if id == 0 && o.Machine != "" && startErr != nil {
+		err := f.Outbox.Write(ctx, Row{Event: 0, Part: int(n), Conv: r.conv, Message: surface.Message{Text: "Nothing was started: " + startErr.Error(), ReplyTo: r.reply}})
+		return 0, err
 	}
 	if id == 0 {
 		f.Log.Error("trigger: start failed", "scope", channel, "message", r.key, "err", startErr)

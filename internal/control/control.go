@@ -49,6 +49,7 @@ var (
 	// ErrNotInterrupted: the agent's window did not take the interrupt of a
 	// Stop or a Send, such as while a person has scrolled back in it.
 	ErrNotInterrupted = errors.New("the agent's window did not take the interrupt; the turn goes on")
+	ErrActionHeld     = errors.New("the action is waiting for machine reconciliation; nothing has been stopped")
 )
 
 // ReopenRefused is why a ReopenThread was refused: a sentence for a
@@ -155,6 +156,9 @@ type API interface {
 	// is running. For a caller with Propose it gives nothing and returns a
 	// *Proposed (Caller.Propose).
 	Send(ctx context.Context, id ThreadID, key string, in Input, busy Busy) error
+	// DeferredSend explicitly queues, inspects or cancels a durable management
+	// instruction. It never changes Send's immediate/busy behavior.
+	DeferredSend(context.Context, DeferredSendRequest) (DeferredSend, error)
 	// Answer answers an open question, approval or proposal.
 	Answer(ctx context.Context, req RequestID, a Answer) error
 	// AskInterrupt asks a person to approve interrupting the running turn of
@@ -428,6 +432,9 @@ type Caller struct {
 	// interrupts it. A Send with Deliver or Interrupt to a running thread is
 	// refused with ErrBusy and logged.
 	RefuseBusy bool
+	// DeferInput is granted only by the daemon's management caller factory.
+	// Saved caller data never restores this grant.
+	DeferInput bool
 	// NoAnswer makes the caller's Send refused with ErrBusy, like one with
 	// Refuse to a running thread, when the thread waits on a question,
 	// instead of being its answer. The state is read in the transaction
@@ -612,6 +619,8 @@ type TakeInRequest struct {
 
 // StartRequest is the argument of API.Start.
 type StartRequest struct {
+	Machine string `json:"machine,omitempty"` // explicit eligible machine; no fallback
+
 	Key   string `json:"key"`   // safe to repeat: the same key starts nothing twice
 	Scope string `json:"scope"` // opaque; for chat, a channel
 	// Thread makes the first link itself: the conversation Thread in the
@@ -781,10 +790,15 @@ type LayoutThread struct {
 
 // ThreadInfo is one line of Threads.
 type ThreadInfo struct {
-	ID    ThreadID     `json:"id"`              // the thread's number; since 3.0, it replaces number
-	Scope string       `json:"scope"`           // the scope the thread belongs to; since 3.0
-	Links []ThreadLink `json:"links"`           // where it is shown, the first link first; since 3.0
-	Title string       `json:"title,omitempty"` // text: absent for a caller that may not read text, since 2.0
+	PlacementPending bool                 `json:"placement_pending,omitempty"`
+	PlacementReason  string               `json:"placement_reason,omitempty"`
+	Availability     *MachineAvailability `json:"availability,omitempty"`
+	Machine          string               `json:"machine,omitempty"`   // configured key, never an SSH address
+	IOPaused         string               `json:"io_paused,omitempty"` // retained output cannot be read/rebuilt
+	ID               ThreadID             `json:"id"`                  // the thread's number; since 3.0, it replaces number
+	Scope            string               `json:"scope"`               // the scope the thread belongs to; since 3.0
+	Links            []ThreadLink         `json:"links"`               // where it is shown, the first link first; since 3.0
+	Title            string               `json:"title,omitempty"`     // text: absent for a caller that may not read text, since 2.0
 	// Name is the chat thread's own name as the chat service shows it, of
 	// the thread's first link (SetName), which follows a rename; text,
 	// absent for a caller that may not read text, and when none is known.
@@ -818,6 +832,15 @@ type ThreadInfo struct {
 	// Kind is what the thread is to its scope; empty from a daemon of
 	// before 3.38.
 	Kind ThreadKind `json:"kind,omitempty"`
+}
+
+// MachineAvailability is an observation, never a session state or authority.
+type MachineAvailability struct {
+	LastKnownState State      `json:"last_known_state,omitempty"`
+	LastKnownAt    *time.Time `json:"last_known_at,omitempty"`
+	State          string     `json:"state"`
+	At             time.Time  `json:"at"`
+	Reason         string     `json:"reason,omitempty"`
 }
 
 // Attachment is the result of AttachTerminal.

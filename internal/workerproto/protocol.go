@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const Version = "1.0"
+const Version = "1.3"
 
 const (
 	MaxFrame = 1 << 20 // Includes the terminating newline.
@@ -66,6 +66,16 @@ type Connection struct {
 	caps    map[string]bool
 }
 
+// CanPlace is negotiated, not inferred from health or an untrusted report.
+// Older residents ignore optional Start fields and cannot enforce admission.
+func (c *Connection) CanPlace() bool {
+	if c == nil {
+		return false
+	}
+	_, minor, ok := version(c.version)
+	return ok && minor >= 3 && c.caps["placement"]
+}
+
 func version(s string) (int, int, bool) {
 	parts := strings.Split(s, ".")
 	if len(parts) != 2 {
@@ -101,6 +111,10 @@ func identifier(s string) bool {
 	}
 	return true
 }
+
+// ValidID checks the syntax of an opaque identifier only. It grants no access
+// to a handle, installation or session; those need their own binding checks.
+func ValidID(s string) bool { return identifier(s) }
 
 func validBinding(b Binding) bool { return identifier(b.Main) && identifier(b.Worker) }
 func validTarget(t Target) bool {
@@ -253,6 +267,10 @@ func (c *Connection) Decode(data []byte, expected *Target) (Message, error) {
 	if !ok {
 		return Message{}, refuse("unsupported_operation", "operation is not supported")
 	}
+	_, minor, _ := version(c.version)
+	if minor < op.Since {
+		return Message{}, refuse("unsupported_operation", "operation is unavailable at the negotiated minor")
+	}
 	if !c.caps[op.Capability] {
 		return Message{}, refuse("unsupported_capability", "operation capability was not negotiated")
 	}
@@ -271,6 +289,13 @@ func (c *Connection) Decode(data []byte, expected *Target) (Message, error) {
 	}
 	if err := validateBody(m); err != nil {
 		return Message{}, err
+	}
+	if m.Kind == "request" && m.Op == "start" {
+		var start Start
+		json.Unmarshal(m.Body, &start)
+		if start.Admission != nil && !c.CanPlace() {
+			return Message{}, refuse("unsupported_capability", "placement requires worker protocol 1.3 and its capability")
+		}
 	}
 	return m, nil
 }

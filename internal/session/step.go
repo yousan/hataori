@@ -189,6 +189,7 @@ type Result struct {
 type Ended struct {
 	Outcome    string // Completion, Blocked or Failure
 	Reason     string
+	Detail     string // provider explanation of a failed turn, when supplied
 	Background int
 	Subagents  []string // those of the background tasks that are subagents
 }
@@ -222,6 +223,9 @@ func Step(s Snapshot, in Input) (Result, error) {
 		}
 		if e.Reason != "" {
 			d["reason"] = e.Reason
+		}
+		if e.Detail != "" {
+			d["detail"] = e.Detail
 		}
 		if len(e.Subagents) > 0 {
 			d["subagents"] = slices.Clone(e.Subagents)
@@ -398,6 +402,7 @@ func stepAgent(s Snapshot, in Input, r *Result,
 			if ended.Reason == "" {
 				ended.Reason = string(agent.APIError)
 			}
+			ended.Detail = e.Text
 		}
 		end(ended)
 		to(control.Idle, "")
@@ -457,6 +462,7 @@ func stepAgent(s Snapshot, in Input, r *Result,
 }
 
 var agentKinds = map[agent.Kind]control.EventKind{
+	agent.InputWaiting:     "input_waiting",
 	agent.Text:             "text",
 	agent.ToolStarted:      "tool_started",
 	agent.ToolEnded:        "tool_ended",
@@ -472,6 +478,8 @@ var agentKinds = map[agent.Kind]control.EventKind{
 func agentOut(e agent.Event) Out {
 	d := map[string]any{}
 	switch e.Kind {
+	case agent.InputWaiting:
+		d["input"], d["reason"] = e.Input, string(e.Reason)
 	case agent.Text:
 		d["text"], d["final"] = e.Text, e.Final
 	case agent.ToolStarted, agent.ToolEnded:

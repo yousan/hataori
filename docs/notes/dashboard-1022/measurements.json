@@ -1,0 +1,1812 @@
+[
+  {
+    "name": "composer",
+    "width": 1440,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "13px"
+      }
+    ],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 840.203125,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 214.4375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 16.796875,
+        "width": 788
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 54.75
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-question",
+    "width": 1440,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "13px"
+      }
+    ],
+    "filter": null,
+    "question": {
+      "width": 275,
+      "height": 246.0625,
+      "scrollWidth": 273,
+      "clientWidth": 273
+    },
+    "answer": {
+      "width": 788,
+      "height": 36.375,
+      "scrollWidth": 788,
+      "clientWidth": 788
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 840.203125,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 515.453125
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 134.984375
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 126.828125
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 69.890625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "question",
+    "width": 1440,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "13px"
+      }
+    ],
+    "filter": null,
+    "question": {
+      "width": 275,
+      "height": 191.5,
+      "scrollWidth": 273,
+      "clientWidth": 273
+    },
+    "answer": {
+      "width": 788,
+      "height": 18.1875,
+      "scrollWidth": 788,
+      "clientWidth": 788
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 840.203125,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 515.453125
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 134.984375
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 126.828125
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 69.890625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "approval",
+    "width": 1440,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": {
+      "width": 275,
+      "height": 173.3125,
+      "scrollWidth": 273,
+      "clientWidth": 273
+    },
+    "answer": {
+      "width": 788,
+      "height": 18.1875,
+      "scrollWidth": 788,
+      "clientWidth": 788
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 840.203125,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 56.703125
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 55.953125
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "composer",
+    "width": 1440,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "13px"
+      }
+    ],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 840.203125,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 214.4375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 16.796875,
+        "width": 788
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 54.75
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-question",
+    "width": 1440,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "13px"
+      }
+    ],
+    "filter": null,
+    "question": {
+      "width": 275,
+      "height": 246.0625,
+      "scrollWidth": 273,
+      "clientWidth": 273
+    },
+    "answer": {
+      "width": 788,
+      "height": 36.375,
+      "scrollWidth": 788,
+      "clientWidth": 788
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 840.203125,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 515.453125
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 134.984375
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 126.828125
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 69.890625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "question",
+    "width": 1440,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "13px"
+      }
+    ],
+    "filter": null,
+    "question": {
+      "width": 275,
+      "height": 191.5,
+      "scrollWidth": 273,
+      "clientWidth": 273
+    },
+    "answer": {
+      "width": 788,
+      "height": 18.1875,
+      "scrollWidth": 788,
+      "clientWidth": 788
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 840.203125,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 515.453125
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 134.984375
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 126.828125
+      },
+      {
+        "class": "box-send",
+        "height": 46.375,
+        "width": 69.890625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "approval",
+    "width": 1440,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [],
+    "filter": null,
+    "question": {
+      "width": 275,
+      "height": 173.3125,
+      "scrollWidth": 273,
+      "clientWidth": 273
+    },
+    "answer": {
+      "width": 788,
+      "height": 18.1875,
+      "scrollWidth": 788,
+      "clientWidth": 788
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "shell": {
+      "width": 1440,
+      "height": 900,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "bar": {
+      "width": 820,
+      "height": 34,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "pane": {
+      "width": 820,
+      "height": 840.203125,
+      "scrollWidth": 820,
+      "clientWidth": 820
+    },
+    "status": {
+      "width": 1440,
+      "height": 25.796875,
+      "scrollWidth": 1440,
+      "clientWidth": 1440
+    },
+    "controls": [
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 55.03125
+      },
+      {
+        "class": "",
+        "height": 26.1875,
+        "width": 60.046875
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 83.640625
+      },
+      {
+        "class": "tab-main",
+        "height": 33,
+        "width": 218.09375
+      },
+      {
+        "class": "tab-close",
+        "height": 22.1875,
+        "width": 20.90625
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool split-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "icon-tool",
+        "height": 28,
+        "width": 28
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 22.796875,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 56.703125
+      },
+      {
+        "class": "",
+        "height": 28.1875,
+        "width": 55.953125
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 18.796875,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "composer",
+    "width": 390,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "16px"
+      }
+    ],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 106.59375,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 44,
+        "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 370
+      },
+      {
+        "class": "box-send",
+        "height": 54.78125,
+        "width": 54.75
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-question",
+    "width": 390,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "16px"
+      }
+    ],
+    "filter": null,
+    "question": {
+      "width": 370,
+      "height": 267.9375,
+      "scrollWidth": 368,
+      "clientWidth": 368
+    },
+    "answer": {
+      "width": 370,
+      "height": 72.75,
+      "scrollWidth": 370,
+      "clientWidth": 370
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 106.59375,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 44,
+        "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 46.375,
+        "width": 370
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 134.984375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 126.828125
+      },
+      {
+        "class": "box-send",
+        "height": 54.78125,
+        "width": 69.890625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "question",
+    "width": 390,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "16px"
+      }
+    ],
+    "filter": null,
+    "question": {
+      "width": 370,
+      "height": 213.375,
+      "scrollWidth": 368,
+      "clientWidth": 368
+    },
+    "answer": {
+      "width": 370,
+      "height": 18.1875,
+      "scrollWidth": 370,
+      "clientWidth": 370
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 106.59375,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 44,
+        "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 46.375,
+        "width": 370
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 134.984375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 126.828125
+      },
+      {
+        "class": "box-send",
+        "height": 54.78125,
+        "width": 69.890625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "approval",
+    "width": 390,
+    "theme": "light",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "16px"
+      }
+    ],
+    "filter": null,
+    "question": {
+      "width": 370,
+      "height": 213.375,
+      "scrollWidth": 368,
+      "clientWidth": 368
+    },
+    "answer": {
+      "width": 370,
+      "height": 18.1875,
+      "scrollWidth": 370,
+      "clientWidth": 370
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 106.59375,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 44,
+        "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 56.703125
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 55.953125
+      },
+      {
+        "class": "box-send",
+        "height": 54.78125,
+        "width": 54.75
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "composer",
+    "width": 390,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "16px"
+      }
+    ],
+    "filter": null,
+    "question": null,
+    "answer": null,
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 106.59375,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 44,
+        "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 370
+      },
+      {
+        "class": "box-send",
+        "height": 54.78125,
+        "width": 54.75
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "long-question",
+    "width": 390,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "16px"
+      }
+    ],
+    "filter": null,
+    "question": {
+      "width": 370,
+      "height": 267.9375,
+      "scrollWidth": 368,
+      "clientWidth": 368
+    },
+    "answer": {
+      "width": 370,
+      "height": 72.75,
+      "scrollWidth": 370,
+      "clientWidth": 370
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 106.59375,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 44,
+        "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 46.375,
+        "width": 370
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 134.984375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 126.828125
+      },
+      {
+        "class": "box-send",
+        "height": 54.78125,
+        "width": 69.890625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "question",
+    "width": 390,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "16px"
+      }
+    ],
+    "filter": null,
+    "question": {
+      "width": 370,
+      "height": 213.375,
+      "scrollWidth": 368,
+      "clientWidth": 368
+    },
+    "answer": {
+      "width": 370,
+      "height": 18.1875,
+      "scrollWidth": 370,
+      "clientWidth": 370
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 106.59375,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 44,
+        "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 46.375,
+        "width": 370
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 134.984375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 126.828125
+      },
+      {
+        "class": "box-send",
+        "height": 54.78125,
+        "width": 69.890625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 67.8125
+      }
+    ]
+  },
+  {
+    "name": "approval",
+    "width": 390,
+    "theme": "dark",
+    "lang": "en",
+    "inputs": [
+      {
+        "font": "16px"
+      }
+    ],
+    "filter": null,
+    "question": {
+      "width": 370,
+      "height": 213.375,
+      "scrollWidth": 368,
+      "clientWidth": 368
+    },
+    "answer": {
+      "width": 370,
+      "height": 18.1875,
+      "scrollWidth": 370,
+      "clientWidth": 370
+    },
+    "dialog": null,
+    "tableTitle": null,
+    "body": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "shell": {
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "bar": null,
+    "pane": null,
+    "status": {
+      "width": 390,
+      "height": 106.59375,
+      "scrollWidth": 390,
+      "clientWidth": 390
+    },
+    "controls": [
+      {
+        "class": "narrow-back",
+        "height": 44,
+        "width": 119.4375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 72.71875
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 100.34375
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 56.703125
+      },
+      {
+        "class": "",
+        "height": 44,
+        "width": 55.953125
+      },
+      {
+        "class": "box-send",
+        "height": 54.78125,
+        "width": 54.75
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 86.40625
+      },
+      {
+        "class": "passkeys-open",
+        "height": 44,
+        "width": 67.8125
+      }
+    ]
+  }
+]

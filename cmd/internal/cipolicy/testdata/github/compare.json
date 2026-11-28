@@ -1,0 +1,31 @@
+{
+  "base_commit": {
+    "sha": "b9e6c4fcd4f43996a7340d1e36916bda3dada04f"
+  },
+  "merge_base_commit": {
+    "sha": "b9e6c4fcd4f43996a7340d1e36916bda3dada04f"
+  },
+  "status": "ahead",
+  "files": [
+    {
+      "filename": "cmd/hataori/e2e_archive_test.go",
+      "status": "modified"
+    },
+    {
+      "filename": "internal/host/host.go",
+      "status": "modified"
+    },
+    {
+      "filename": "internal/host/stop_overlap_test.go",
+      "status": "added"
+    },
+    {
+      "filename": "internal/workspace/remove.go",
+      "status": "modified"
+    },
+    {
+      "filename": "internal/workspace/signature_test.go",
+      "status": "added"
+    }
+  ]
+}

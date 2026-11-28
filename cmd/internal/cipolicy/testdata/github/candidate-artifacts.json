@@ -1,0 +1,20 @@
+{
+  "total_count": 1,
+  "artifacts": [
+    {
+      "id": 15256295180,
+      "name": "hataori-darwin",
+      "digest": "sha256:00ce4789375ad506178a50a3bd3592dfe59b06538d963540c823c82a676b7a94",
+      "expired": false,
+      "size_in_bytes": 34903050,
+      "created_at": "2026-11-28T08:36:44Z",
+      "workflow_run": {
+        "id": 46126592224,
+        "repository_id": 1454788309,
+        "head_repository_id": 1454788309,
+        "head_branch": "main",
+        "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092"
+      }
+    }
+  ]
+}

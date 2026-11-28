@@ -1,0 +1,1 @@
+{"kind":"refusal","id":"request-acknowledge","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"acknowledge","key":"key-acknowledge","body":{"code":"not_ready","message":"reconciliation is not complete"}}

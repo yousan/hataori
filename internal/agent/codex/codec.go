@@ -36,6 +36,8 @@ const DefaultInputTimeout = 30 * time.Second
 
 // Options configures a Codex codec.
 type Options struct {
+	// Loaded by Adapter.NewCodec; the codec itself performs no I/O.
+	confinedInstructions string
 	// Sandbox is the app-server sandbox policy; empty leaves its default.
 	Sandbox string
 	// ApprovalPolicy is the app-server approval policy; empty leaves its default.
@@ -50,24 +52,31 @@ type pendingInput struct {
 	request int
 	turn    string
 	steer   bool
+	thread  string // frozen native thread for IdleOnly acknowledgement
 }
 
 type codec struct {
-	mu           sync.Mutex      // protects all codec state
-	spec         agent.Spec      // session configuration
-	opts         Options         // app-server policies and input timeout
-	seq          uint64          // last event sequence number
-	next         int             // next request id
-	requests     map[int]string  // outstanding request methods by id
-	session      string          // current thread id
-	ready        bool            // the thread has been reported
-	closed       bool            // the session has ended
-	running      bool            // a turn is running or requested
-	started      bool            // the current turn's start has been reported
-	steerBlocked bool            // a refused input waits for the next turn
-	turnID       string          // current turn id
-	sent         []*pendingInput // written inputs awaiting their report
-	queue        []agent.Input   // inputs waiting to be written
+	mu                sync.Mutex            // protects all codec state
+	spec              agent.Spec            // session configuration
+	opts              Options               // app-server policies and input timeout
+	seq               uint64                // last event sequence number
+	next              int                   // next request id
+	requests          map[int]string        // outstanding request methods by id
+	deferredCompleted map[string]bool       // bounded native completion evidence across warmIO
+	deferredReplies   map[int]deferredReply // bounded retained request evidence for Written reconstruction
+	session           string                // current thread id
+	pendingReady      *agent.Event          // waits for current confined instructions to be injected
+	injection         []byte                // exact trusted request reconstructed from retained output
+	recoverGate       bool                  // first live tick reconciles an unopened codec's injection
+	ready             bool                  // the thread has been reported
+	closed            bool                  // the session has ended
+	running           bool                  // a turn is running or requested
+	started           bool                  // the current turn's start has been reported
+	steerBlocked      bool                  // a refused input waits for the next turn
+	turnID            string                // current turn id
+	sent              []*pendingInput       // written inputs awaiting their report
+	queue             []agent.Input         // inputs waiting to be written
+	nativeTurn        string                // actual provider turn; distinct from an unsent requested turn
 	requestState
 	toolState
 	usageState
@@ -79,7 +88,19 @@ func NewCodec(spec agent.Spec, opts Options) agent.Codec {
 	if opts.InputTimeout == 0 {
 		opts.InputTimeout = DefaultInputTimeout
 	}
-	return &codec{spec: spec, opts: opts, next: 1, requests: make(map[int]string)}
+	c := &codec{spec: spec, opts: opts, next: 1, requests: make(map[int]string)}
+	if spec.Confine != nil {
+		// A daemon reconnect replays stdout without calling Open. Reserve the
+		// same handshake ids so rate-limit response ordering cannot satisfy
+		// the current-instructions gate by accident.
+		c.next = 4
+		c.recoverGate = true
+		c.requests[1], c.requests[2], c.requests[3] = "initialize", "thread/start", RateLimitsRead
+		if spec.ResumeID != "" {
+			c.requests[2] = "thread/resume"
+		}
+	}
+	return c
 }
 
 // emit numbers and appends an event.
@@ -109,6 +130,15 @@ func (c *codec) Open() agent.Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var a agent.Actions
+	c.recoverGate = false // this process receives its original handshake actions
+	if c.spec.Confine != nil && c.opts.confinedInstructions == "" {
+		c.closed = true
+		c.emit(&a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
+		return a
+	}
+	if c.spec.Confine != nil {
+		c.next = 1 // Open emits the handshake reserved by NewCodec for replay.
+	}
 	c.write(&a, "initialize", map[string]any{"clientInfo": map[string]any{"name": "hataori", "version": "0"}, "capabilities": map[string]any{"experimentalApi": true}}, true)
 	c.write(&a, "initialized", map[string]any{}, false)
 	p := map[string]any{}
@@ -127,12 +157,27 @@ func (c *codec) Open() agent.Actions {
 	if c.opts.ApprovalPolicy != "" {
 		p["approvalPolicy"] = c.opts.ApprovalPolicy
 	}
+	if c.spec.Confine != nil {
+		// Keep the complete launch composition for initial context and rebuilds.
+		// Resume also needs the acknowledged injection below to refresh history.
+		p["developerInstructions"] = c.opts.confinedInstructions
+		p["sandbox"] = "read-only"
+		p["approvalPolicy"] = "never"
+		p["config"] = map[string]any{"features.stable_environment_tools": false}
+	}
 	method := "thread/start"
 	if c.spec.ResumeID != "" {
 		method = "thread/resume"
 		p["threadId"] = c.spec.ResumeID
 	} else if c.spec.Effort != "" {
-		p["config"] = map[string]any{"model_reasoning_effort": c.spec.Effort}
+		if config, ok := p["config"].(map[string]any); ok {
+			config["model_reasoning_effort"] = c.spec.Effort
+		} else {
+			p["config"] = map[string]any{"model_reasoning_effort": c.spec.Effort}
+		}
+	}
+	if c.spec.Confine != nil && method == "thread/start" {
+		p["environments"] = []any{}
 	}
 	c.write(&a, method, p, true)
 	c.readLimits(&a)
@@ -147,15 +192,21 @@ func (c *codec) flush(a *agent.Actions) {
 	if !c.ready || c.closed || c.running || len(c.sent) > 0 || len(c.queue) == 0 {
 		return
 	}
+	if c.queue[0].IdleOnly && (len(a.Write) != 0 || len(a.Reply) != 0) {
+		return // finish ordinary cleanup/replies before emitting a deferred submission
+	}
 	in := c.queue[0]
 	c.queue = c.queue[1:]
-	p := map[string]any{"threadId": c.session, "input": []any{map[string]any{"type": "text", "text": in.Text}}}
+	p := map[string]any{"threadId": c.session, "input": []any{c.textInput(in.Text)}}
 	if c.spec.Effort != "" {
 		p["effort"] = c.spec.Effort
 	}
+	if c.spec.Confine != nil {
+		p["environments"] = []any{}
+	}
 	id := c.write(a, "turn/start", p, true)
 	a.Inputs = append(a.Inputs, in.ID)
-	c.sent = append(c.sent, &pendingInput{input: in, request: id})
+	c.sent = append(c.sent, &pendingInput{input: in, request: id, thread: c.session})
 	c.running = true
 }
 
@@ -165,7 +216,10 @@ func (c *codec) Input(in agent.Input) (agent.Actions, error) {
 	defer c.mu.Unlock()
 	var a agent.Actions
 	if in.Written {
-		c.sent = append(c.sent, &pendingInput{input: in})
+		if in.IdleOnly {
+			return c.restoreDeferred(in)
+		}
+		c.sent = append(c.sent, &pendingInput{input: in, at: in.WrittenAt})
 		return a, nil
 	}
 	c.queue = append(c.queue, in)
@@ -191,13 +245,29 @@ func (c *codec) Interrupt() agent.Actions {
 	return a
 }
 
-// Tick expires unreported inputs and writes the next queued input.
+// Tick reconciles an unopened codec's instruction gate, expires unreported
+// inputs and writes the next queued input.
 func (c *codec) Tick(now time.Time) agent.Actions {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var a agent.Actions
+	if c.recoverGate {
+		c.recoverGate = false
+		// warmIO reconstructs the pending request but discards its Write.
+		// The runner reads/commits available output before Tick, so an ack
+		// already waiting at the host clears this gate without a retry.
+		// Only this trusted, turn-free snapshot is safe to repeat. Keep its
+		// original id/bytes: either successful ack releases the same gate.
+		if !c.closed && c.pendingReady != nil && len(c.injection) != 0 {
+			a.Write = append(a.Write, append([]byte(nil), c.injection...))
+		}
+	}
 	remaining := c.sent[:0]
 	for _, s := range c.sent {
+		if s.input.IdleOnly && s.input.Written && s.input.WrittenAt.IsZero() {
+			remaining = append(remaining, s) // receiver has not proved a completed write
+			continue
+		}
 		// The app-server answers steer requests; if it exits, the session ends.
 		// Expiring one would incorrectly end the still-running turn.
 		if s.steer {
@@ -212,7 +282,7 @@ func (c *codec) Tick(now time.Time) agent.Actions {
 			if s.request != 0 {
 				delete(c.requests, s.request)
 				if !s.steer {
-					c.running = false
+					c.running = s.input.IdleOnly && c.nativeTurn != ""
 				}
 			}
 		} else {
@@ -230,6 +300,11 @@ func (c *codec) Decode(src agent.Source, line []byte) agent.Actions {
 	defer c.mu.Unlock()
 	var a agent.Actions
 	if src != agent.Output {
+		return a
+	}
+	if c.spec.Confine != nil && c.opts.confinedInstructions == "" && !c.closed {
+		c.closed = true
+		c.emit(&a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
 		return a
 	}
 	var m message
@@ -324,6 +399,14 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 	method := c.requests[id]
 	delete(c.requests, id)
 	if m.Error != nil {
+		deferredFailure := false
+		for _, s := range c.sent {
+			if s.request == id && s.input.IdleOnly {
+				deferredFailure = true
+			}
+		}
+		c.rememberDeferred(id, deferredReply{err: true})
+		c.confirmDeferred(a, id)
 		msg := m.Error.Message
 		switch {
 		case method == "thread/resume" || (method == "" && strings.HasPrefix(msg, "no rollout found for thread id")):
@@ -334,6 +417,10 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 			}
 			c.closed = true
 			c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: reason})
+		case method == "thread/inject_items":
+			c.closed = true
+			c.injection = nil
+			c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
 		case method == "initialize" || method == "thread/start":
 			c.closed = true
 			c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: agent.Reason(msg)})
@@ -349,11 +436,25 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 					break
 				}
 			}
-			c.running = false
+			c.running = deferredFailure && c.nativeTurn != ""
 			c.flush(a)
 		default:
 			c.unknown(a, line)
 		}
+		return
+	}
+	if method == "thread/inject_items" && c.pendingReady != nil && !c.closed {
+		c.injection = nil
+		var ack map[string]json.RawMessage
+		if json.Unmarshal(m.Result, &ack) != nil || ack == nil || len(ack) != 0 {
+			c.closed = true
+			c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
+			return
+		}
+		c.ready = true
+		c.emit(a, *c.pendingReady)
+		c.pendingReady = nil
+		c.flush(a)
 		return
 	}
 	delete(c.steers, id)
@@ -376,17 +477,37 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 		}
 		c.model = r.Model
 		c.session = r.Thread.ID
-		c.ready = true
-		c.emit(a, agent.Event{Kind: agent.SessionReady, SessionID: c.session, Model: r.Model, Effort: r.Effort})
-		c.flush(a)
+		ready := agent.Event{Kind: agent.SessionReady, SessionID: c.session, Model: r.Model, Effort: r.Effort}
+		if c.spec.Confine != nil {
+			if c.opts.confinedInstructions == "" {
+				c.closed = true
+				c.emit(a, agent.Event{Kind: agent.SessionEnded, Reason: agent.BlockedAtStart})
+				return
+			}
+			c.pendingReady = &ready
+			// Resume restores static instructions from history. Inject the current
+			// trusted composition into model-visible history before any turn.
+			text := "Current supervisor launch instructions replace earlier supervisor instruction snapshots. Preserve the layer precedence within this snapshot.\n\n" + c.opts.confinedInstructions
+			c.write(a, "thread/inject_items", map[string]any{"threadId": c.session, "items": []any{map[string]any{"type": "message", "role": "developer", "content": []any{map[string]any{"type": "input_text", "text": text}}}}}, true)
+			c.injection = append([]byte(nil), a.Write[len(a.Write)-1]...)
+		} else {
+			c.ready = true
+			c.emit(a, ready)
+			c.flush(a)
+		}
 	}
 	if r.Turn != nil {
+		if r.Turn.Status == "inProgress" && c.nativeTurn == "" && !c.deferredCompleted[r.Turn.ID] {
+			c.nativeTurn = r.Turn.ID
+		}
+		c.rememberDeferred(id, deferredReply{turn: r.Turn.ID})
 		for _, s := range c.sent {
 			if s.request == id {
 				s.turn = r.Turn.ID
 				break
 			}
 		}
+		c.confirmDeferred(a, id)
 	}
 }
 
@@ -406,6 +527,7 @@ func (c *codec) reportStart(a *agent.Actions, starter agent.Starter, index int) 
 
 // turnStarted records a turn start and reports it when its input is known.
 func (c *codec) turnStarted(a *agent.Actions, p params) {
+	c.nativeTurn = p.Turn.ID
 	c.steerBlocked = false
 	c.running = true
 	c.started = false
@@ -413,7 +535,7 @@ func (c *codec) turnStarted(a *agent.Actions, p params) {
 	c.turnID = p.Turn.ID
 	c.held = nil
 	for i, s := range c.sent {
-		if !s.steer && s.request != 0 && (s.turn == "" || s.turn == p.Turn.ID) {
+		if !s.input.IdleOnly && !s.steer && s.request != 0 && (s.turn == "" || s.turn == p.Turn.ID) {
 			c.reportStart(a, agent.ByCaller, i)
 			break
 		}
@@ -444,7 +566,10 @@ func (c *codec) item(a *agent.Actions, p params, method string, line []byte) {
 			}
 			text := normalize(strings.Join(parts, ""))
 			for i, s := range c.sent {
-				if normalize(s.input.Text) == text {
+				if s.input.IdleOnly {
+					continue // only the frozen turn/start response confirms this input
+				}
+				if normalize(c.inputText(s.input.Text)) == text {
 					c.reportStart(a, agent.ByCaller, i)
 					return
 				}
@@ -484,6 +609,10 @@ func (c *codec) item(a *agent.Actions, p params, method string, line []byte) {
 
 // turnCompleted reports the final text and end of a turn.
 func (c *codec) turnCompleted(a *agent.Actions, p params) {
+	c.completeDeferredTurn(p.Turn.ID)
+	if c.nativeTurn == p.Turn.ID {
+		c.nativeTurn = ""
+	}
 	if !c.started {
 		c.reportStart(a, agent.ByAgent, -1)
 	}

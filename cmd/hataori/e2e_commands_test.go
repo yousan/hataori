@@ -88,7 +88,7 @@ func commandRun(t *testing.T, words bool) {
 	do(th, "status", "!go status")
 	r.postedWith(t, th, "Thread #"+n+": idle", "Model: m1", "Last: hello")
 	do(c1, "status", "!go status")
-	r.postedWith(t, c1, "Threads here:", "#"+n+" idle: reply hello")
+	r.postedWith(t, c1, "Threads here:", "#"+n+" idle on local: reply hello")
 }
 
 func TestCommandsStartStopAndShowStatus(t *testing.T) { commandRun(t, false) }
