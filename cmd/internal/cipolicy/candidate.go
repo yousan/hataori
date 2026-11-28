@@ -440,6 +440,12 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 			if err != sql.ErrNoRows {
 				return err
 			}
+			if err = candidateIDAvailable(ctx, conn, tuple.Request.Sweep.ID, ""); err != nil {
+				return err
+			}
+			if err = nonCandidateIDAvailable(ctx, conn, tuple.Request.Sweep.ID); err != nil {
+				return err
+			}
 			_, err = conn.ExecContext(ctx, "INSERT INTO candidate(id,pull,revision,status,tuple) VALUES(?,?,1,'frozen',?)", candidateID(tuple), pull, b)
 			return err
 		})
@@ -472,6 +478,23 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 			oldIntent, intentErr := candidateIntent(ctx, s.db, record)
 			if intentErr != nil && intentErr != sql.ErrNoRows {
 				return out, intentErr
+			}
+			if intentErr == sql.ErrNoRows || oldIntent.Status == "prepared" {
+				// Prepared describes our local send claim, not absence of a run
+				// created by the previously supported external proof route.
+				id, e := a.discoverRun(ctx, control, record.Tuple.Request.Sweep)
+				if e != nil {
+					return out, e
+				}
+				if id > 0 {
+					if intentErr == nil || (record.Evidence != nil && (record.Evidence.Run != id || record.Evidence.Attempt != 1)) {
+						return out, ErrAmbiguous
+					}
+					run, e := a.candidateDispatchRun(ctx, control, record.Tuple.Request, id)
+					if e != nil || run.Status != "completed" {
+						return out, fmt.Errorf("candidate proof still unresolved")
+					}
+				}
 			}
 			if intentErr == nil {
 				if oldIntent.Status == "uncertain" {

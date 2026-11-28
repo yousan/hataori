@@ -61,9 +61,11 @@ current authority cannot commit a new main observation.
 
 After freeze, `candidate-prepare` creates a local pre-lane outbox row. It does not
 initialize a coverage lane or send anything. A unique intent ID cannot be reused
-from candidate history, bootstrap or a coverage sweep; only one candidate intent
-can remain prepared or uncertain. Prepared, uncertain, bound and retired receipts
-survive restart and are never deleted by invalidation or a new candidate.
+from candidate history (including legacy evidence without an outbox), bootstrap
+or a coverage sweep; only one candidate intent
+can remain prepared or uncertain. Bootstrap preparation/recovery and candidate freezing reserve IDs through the
+same serialized store in both ordering directions. Prepared, uncertain, bound
+and retired receipts survive restart and are never deleted by invalidation or a new candidate.
 
 `candidate-pump` first discovers an existing matching run. If none exists and the
 intent is still prepared, it uses the shared real Actions sender: validate the
@@ -92,12 +94,22 @@ steps; a retained outbox must bind that exact run before evidence is committed.
 Restart thus connects the original receipt to evidence without trusting a
 success string. Binding queued/running/failed metadata is only identity capture.
 
-Owner invalidation may retire a definitely unsent prepared intent. It cannot
+Owner invalidation discovers existing original runs before retiring a prepared
+intent or legacy request. A prepared request with a discovered run first needs
+read-only reconciliation; an unknown/duplicate discovery cannot be discarded.
+A legacy request without an outbox also needs a known terminal original run, or
+complete discovery showing none. A definitely unsent prepared intent may retire. It cannot
 abandon an uncertain send or a bound run that is still running/unknown. A known
 terminal original run may be invalidated while its receipt remains retained; a
 new tuple must use a new intent ID. No path cancels a proof or releases coverage
 debt. Root/key/credential/process/DB provisioning and the first real candidate
 execution remain external, unacquired inputs; merging this code activates none.
+
+A local one-origin, 28-file closure case used 105 API requests under the existing
+128-request root budget. This is not a ten-merge measurement or release saving.
+Before adoption, size the independently signed request budget for the actual
+source range and closure; larger/truncated ranges fail closed, without a resend
+or automatic budget increase.
 
 ## Full proof and artifacts
 

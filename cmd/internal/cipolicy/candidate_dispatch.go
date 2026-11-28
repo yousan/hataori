@@ -177,17 +177,11 @@ func (c *Coordinator) candidateDispatchOperation(ctx context.Context, operation 
 			if record.Status != "frozen" || record.Evidence != nil {
 				return fmt.Errorf("candidate proof already verified")
 			}
-			// Existing pre-lane/lane IDs cannot be repurposed into a second send.
-			var reused int
-			if e = conn.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM intent WHERE id=?)+(SELECT count(*) FROM bootstrap_archive WHERE intent=?)", tuple.Request.Sweep.ID, tuple.Request.Sweep.ID).Scan(&reused); e != nil {
+			if e = candidateIDAvailable(ctx, conn, tuple.Request.Sweep.ID, record.ID); e != nil {
 				return e
 			}
-			_, boot, e := bootstrapIntent(ctx, conn)
-			if e != nil && e != sql.ErrNoRows {
+			if e = nonCandidateIDAvailable(ctx, conn, tuple.Request.Sweep.ID); e != nil {
 				return e
-			}
-			if reused != 0 || (e == nil && boot.Sweep.ID == tuple.Request.Sweep.ID) {
-				return fmt.Errorf("proof intent ID already used")
 			}
 			raw, _ := json.Marshal(tuple.Request.Sweep)
 			_, e = conn.ExecContext(ctx, "INSERT INTO candidate_intent VALUES(?,?,?,'prepared',0,0)", record.ID, tuple.Request.Sweep.ID, raw)
@@ -303,4 +297,51 @@ func (c *Coordinator) candidateDispatchOperation(ctx context.Context, operation 
 		return e
 	})
 	return out, err
+}
+
+// Reserve IDs against retained tuples as well as outboxes. Legacy evidence has
+// no outbox, but must not make an invalidated proof reusable by a new request.
+func candidateIDAvailable(ctx context.Context, conn *sql.Conn, intent, current string) error {
+	var reserved int
+	if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM candidate_intent WHERE intent=? AND candidate_id!=?", intent, current).Scan(&reserved); err != nil {
+		return err
+	}
+	if reserved != 0 {
+		return fmt.Errorf("candidate proof intent ID already used")
+	}
+	rows, err := conn.QueryContext(ctx, "SELECT id,tuple FROM candidate WHERE id!=?", current)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var raw []byte
+		var tuple CandidateTuple
+		if err = rows.Scan(&id, &raw); err != nil {
+			return err
+		}
+		if json.Unmarshal(raw, &tuple) != nil || candidateID(tuple) != id {
+			return fmt.Errorf("candidate history seal mismatch")
+		}
+		if tuple.Request.Sweep.ID == intent {
+			return fmt.Errorf("candidate proof intent ID already used")
+		}
+	}
+	return rows.Err()
+}
+
+func nonCandidateIDAvailable(ctx context.Context, conn *sql.Conn, id string) error {
+	var reused int
+	if err := conn.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM intent WHERE id=?)+(SELECT count(*) FROM bootstrap_archive WHERE intent=?)", id, id).Scan(&reused); err != nil {
+		return err
+	}
+	_, boot, err := bootstrapIntent(ctx, conn)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if reused != 0 || (err == nil && boot.Sweep.ID == id) {
+		return fmt.Errorf("proof intent ID already used")
+	}
+	return nil
 }

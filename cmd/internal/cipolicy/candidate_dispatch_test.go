@@ -479,11 +479,8 @@ func TestCandidateBoundProofAndRetiredIDCannotBeReplaced(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.adapter.root.Candidate.ExpiresAt = c.adapter.root.Candidate.ExpiresAt.Add(time.Minute)
-	if _, err := c.Execute(ctx, "candidate-freeze", 1200, 0); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.Execute(ctx, "candidate-prepare", 1200, 0); err == nil {
-		t.Fatal("retained intent ID reused")
+	if _, err := c.Execute(ctx, "candidate-freeze", 1200, 0); err == nil {
+		t.Fatal("retained intent ID reused by a new tuple")
 	}
 	if h.count() != 1 {
 		t.Fatal("invalidation/prepare dispatched replacement")
@@ -578,4 +575,141 @@ type candidateCountingTransport struct {
 func (c candidateCountingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	c.requests.Add(1)
 	return c.next.RoundTrip(r)
+}
+
+func TestCandidateInvalidationPreservesUnboundExistingProof(t *testing.T) {
+	for _, scenario := range []string{"prepared", "legacy-no-outbox", "duplicate", "unknown"} {
+		t.Run(scenario, func(t *testing.T) {
+			c, f, seam, h := candidateDispatchFixture(t)
+			ctx := context.Background()
+			seam.now = clock.Add(3 * time.Minute)
+			seam.run.Status, seam.run.Conclusion = "in_progress", ""
+			h.posts = 1
+			f.refs[dispatchRef(c.adapter.root.Candidate.Sweep)] = c.adapter.root.Candidate.Result
+			if _, err := c.Execute(ctx, "candidate-freeze", 1200, 0); err != nil {
+				t.Fatal(err)
+			}
+			if scenario != "legacy-no-outbox" {
+				if _, err := c.Execute(ctx, "candidate-prepare", 1200, 0); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario == "duplicate" {
+				h.duplicate = true
+			}
+			if scenario == "unknown" {
+				seam.run.RunAttempt = 2
+			}
+			if _, err := c.execute(ctx, "candidate-invalidate", 0, 0, "do not abandon an unbound existing proof"); err == nil {
+				t.Fatal("existing proof abandoned", scenario)
+			}
+			row, _ := candidateAt(ctx, c.store.db, 1200)
+			if row.Status != "frozen" || h.count() != 1 {
+				t.Fatal(row.Status, h.count())
+			}
+			if scenario == "prepared" {
+				if _, err := c.Execute(ctx, "candidate-dispatch-reconcile", 1200, 0); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := c.execute(ctx, "candidate-invalidate", 0, 0, "still running"); err == nil {
+					t.Fatal("running bound proof abandoned")
+				}
+				finishCandidate(seam)
+				if _, err := c.execute(ctx, "candidate-invalidate", 0, 0, "terminal original retained"); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestCandidateLegacyIDRemainsReservedWithoutOutbox(t *testing.T) {
+	c, _, _ := candidateFixture(t)
+	ctx := context.Background()
+	for _, op := range []string{"candidate-freeze", "candidate-verify"} {
+		if _, err := c.Execute(ctx, op, 1200, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := c.execute(ctx, "candidate-invalidate", 0, 0, "legacy terminal proof"); err != nil {
+		t.Fatal(err)
+	}
+	c.adapter.root.Candidate.ExpiresAt = c.adapter.root.Candidate.ExpiresAt.Add(time.Minute)
+	if _, err := c.Execute(ctx, "candidate-freeze", 1200, 0); err == nil {
+		t.Fatal("legacy tuple intent reused")
+	}
+	var count int
+	c.store.db.QueryRow("SELECT count(*) FROM candidate_intent").Scan(&count)
+	if count != 0 {
+		t.Fatal("test did not exercise legacy history")
+	}
+}
+
+func TestCandidateAndBootstrapReservationsAreReciprocal(t *testing.T) {
+	for _, scenario := range []string{"candidate-first", "bootstrap-first", "concurrent", "recovery"} {
+		t.Run(scenario, func(t *testing.T) {
+			c, _, seam, h := candidateDispatchFixture(t)
+			ctx := context.Background()
+			a := c.adapter
+			request := a.root.Candidate.Sweep
+			a.root.Bootstrap = BootstrapRequirement{Target: request.Target, Attempt: 1, Sweep: request}
+			other := candidateTwin(t, c)
+			switch scenario {
+			case "candidate-first":
+				prepareCandidateDispatch(t, c)
+				if _, err := other.store.PrepareBootstrap(ctx, a); err == nil {
+					t.Fatal("bootstrap reused candidate reservation")
+				}
+			case "bootstrap-first":
+				if _, err := other.store.PrepareBootstrap(ctx, a); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := c.Execute(ctx, "candidate-freeze", 1200, 0); err == nil {
+					t.Fatal("candidate reused bootstrap reservation")
+				}
+			case "concurrent":
+				gate := make(chan struct{})
+				errs := make(chan error, 2)
+				go func() { <-gate; _, err := c.Execute(ctx, "candidate-freeze", 1200, 0); errs <- err }()
+				go func() { <-gate; _, err := other.store.PrepareBootstrap(ctx, a); errs <- err }()
+				close(gate)
+				successes := 0
+				for range 2 {
+					if err := <-errs; err == nil {
+						successes++
+					}
+				}
+				if successes != 1 {
+					t.Fatal("reservations not serialized", successes)
+				}
+			case "recovery":
+				old := request
+				old.ID = "bootstrap-before-candidate"
+				a.root.Bootstrap = BootstrapRequirement{Target: old.Target, Attempt: 1, Sweep: old}
+				if _, err := other.store.PrepareBootstrap(ctx, a); err != nil {
+					t.Fatal(err)
+				}
+				// Retain a captured-shape terminal failed old bootstrap receipt. The next
+				// independently authorized request must still respect candidate reservations.
+				seam.run.Title = sweepTitle(old)
+				seam.run.Conclusion = "failure"
+				seam.now = clock.Add(3 * time.Minute)
+				if _, err := c.store.db.Exec("UPDATE bootstrap_intent SET status='bound',run=?,attempt=1", seam.run.ID); err != nil {
+					t.Fatal(err)
+				}
+				prepareCandidateDispatch(t, c)
+				a.root.Bootstrap = BootstrapRequirement{Target: request.Target, Attempt: 1, Sweep: request}
+				if _, err := other.store.RecoverBootstrap(ctx, a, "terminal original retained; collision rejected"); err == nil {
+					t.Fatal("bootstrap recovery reused candidate reservation")
+				}
+				_, retained, err := bootstrapIntent(ctx, c.store.db)
+				if err != nil || retained.Sweep.ID != old.ID || retained.Status != "bound" {
+					t.Fatal(retained, err)
+				}
+			}
+			if h.count() != 0 {
+				t.Fatal("reservation dispatched", h.count())
+			}
+		})
+	}
 }
