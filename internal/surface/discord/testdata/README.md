@@ -121,3 +121,64 @@ What the service reported:
 - A webhook message made in the server settings carries `application_id` as well as `webhook_id`. So `application_id` alone does not mean an application-owned webhook. This corrects the research note on that point.
 - The webhook message's `author` has `bot: true`, so `author.bot` alone does not tell a webhook from a bot account; `webhook_id` does.
 - The thread creator could rename and archive its own thread without Manage Threads. Deleting it was refused while it was archived (403) and accepted later, after a post had unarchived it (the cleanup run).
+
+## History reads (#886): reused evidence and remaining captures
+
+`history_replay_test.go` replays the original REST envelopes of
+`unbroken/rest-history-page-1.json` through `-4.json` for consecutive `after=`
+pages (2, 2, 1, 0 messages), and `person/rest-history-channel.json` and
+`person/rest-history-direct.json` for actual latest pages (`limit=10`, no cursor).
+The empty fourth after response remains an error without a successful permission
+probe. These existing observations require no new credentials or service calls.
+Existing single-message, reply, bot/webhook, own application response, attachment,
+forward-text and notice captures are reused too. The person fixtures are not
+relabeled as this driver's own posts.
+
+The collection envelopes, before pages, private/unknown-type variations and
+single-message envelopes assembled from page objects in the supplementary tests
+are **composed**, not endpoint captures. They test regression boundaries but do
+not close the missing-evidence review finding. No new live capture was taken.
+
+Required new scrubbed observations, from a permitted isolated test environment:
+
+| Capture | Required evidence |
+|---|---|
+| `rest-history-channel.json`, `rest-history-thread.json` | Exact GET lookups tying the requested public thread to its parent channel/guild. |
+| `rest-history-active.json` | The real guild active collection, including at least two public threads of the test channel and a private thread visible to the bot; replay must omit the private thread. |
+| `rest-history-private-thread.json` | Exact GET private thread object (`type=12`), with its real parent relationship; replay both read entry points and prove no message GET follows refusal. |
+| `rest-history-archived-1.json` onward | Consecutive public archived collection responses, at least two nonempty pages, `has_more` true then false, preserving archive timestamp cursors. |
+| `rest-history-last.json`, `rest-history-before-1.json` onward | Latest page followed by at least two nonempty before pages and an empty terminal response; exact exclusive cursors/order and no missing/duplicate ids. Existing latest observations above already cover that endpoint's shape. |
+| `rest-history-single.json` | Individual GET of a message from that same public fixture, tying the collection result to lookup. |
+| `rest-history-forward-attachment.json` | A real forwarded snapshot containing an attachment with service-listed metadata. Existing `calls/rest-forward.json` has text but no forwarded attachment. |
+
+The existing captured service-error bodies remain useful for status/code
+preservation, but replaying one on another endpoint is not a new observation of
+that endpoint's permissions. The helper records any failure and stops; do not
+turn a failed or incomplete capture into a successful acceptance run.
+
+The capture operator prepares at least two active public threads, three archived
+public threads, an active private thread visible to the bot, and a selected public
+thread with at least five messages, including a forwarded attachment. Use only
+consented disposable test content. Set these explicit test fixture ids in addition
+to the test token-file/channel environment variables above:
+
+- `HATAORI_DISCORD_HISTORY_THREAD`: selected public thread.
+- `HATAORI_DISCORD_HISTORY_PRIVATE_THREAD`: selected active private thread.
+- `HATAORI_DISCORD_HISTORY_FORWARD_MESSAGE`: attachment forward in the public thread.
+
+`capture.py history RAW_DIR` uses only GET requests: channel/thread lookups,
+active/archive collections, latest/before/after pages and individual messages.
+It creates, changes and deletes nothing, follows no attachment URL, opens no
+gateway, and reads no deployment configuration. It bounds archive/before traversal
+to eight pages each and refuses incomplete preparation or nonadvancing cursors.
+This helper does not prepare the fixtures or exercise missing-permission variants.
+The operator must use a separate permitted environment; no production data,
+configuration, keys or logs may be used or handed to reviewers.
+
+Run `scrub.py` as above before supplying captures. Preserve exact requests,
+status/rate headers, collection envelopes and cross-file id relationships. Inspect
+content as well as automated secret/id checks before publishing. Then add actual
+replay assertions for every new response; merely adding files is not acceptance.
+The required Claude review and final-head/exact-merge-main Linux/macOS CI remain
+separate gates. Driver capability alone is not a usable supervisor history tool;
+caller authorization, provenance and agent-tool wiring remain #888/#894 work.

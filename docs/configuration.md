@@ -662,6 +662,36 @@ A thread can be shown in more than one chat conversation, on one chat service or
 - Attaching a thread where it is shown already changes nothing. A chat thread that shows one hataori thread is not linked to another.
 - A refused attach links nothing, opens nothing and writes one log line.
 
+## Optional chat history reads
+
+The Discord driver implements `surface.ThreadLister` and `surface.MessageReader`
+(#886). These are driver capabilities and add no configuration keys. A driver
+without the corresponding interface cannot perform that read; the fake driver
+implements neither.
+
+Thread listing reads one channel's public active or public archived threads per
+query. Private threads never appear in those lists. Cursors for active threads
+are message ids; archived cursors are archive timestamps. Treat both as opaque
+and reuse them only for the same channel and query kind. History reads accept
+before, after, or the last 1–100 messages, return them chronologically, and keep
+pagination moving past omitted system notices. Public thread type is reported
+on both paged and single-message reads. Discord refuses private threads and
+unsupported conversation types before reading any messages, even when its bot
+account can see them. Supplying a private thread id directly does not grant access.
+Files and forwarded files are metadata only: no content is fetched. Own posts
+retain their conversation and message id so the caller can identify their link;
+the driver does not know work-thread numbers.
+
+These capabilities grant no caller access and are not exposed by the control
+socket or supervisor tools in this step. Authorization and context delivery are
+separate work (#888, #889, #894). The control protocol remains unchanged.
+
+Reads use the same identity check and rate limiter as other Discord REST calls.
+Service errors retain their reason. Discord silently returns an empty message
+list without Read Message History; an empty result is therefore checked with a
+single-message read. If no message can be named or that check fails, the read
+returns an error rather than reporting an empty history. This also conservatively
+refuses a truly empty conversation whose history permission cannot be verified.
 
 ## Worker resident configuration
 

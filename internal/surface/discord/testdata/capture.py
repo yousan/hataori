@@ -17,12 +17,16 @@ usage:
                                  that mention the bot itself, @everyone and a role (no gateway connection)
   capture.py calls RAW_DIR MIN   what is a call and what is not: say one step after another on the terminal,
                                  wait up to MIN minutes for the person to do them all (README)
+  capture.py history RAW_DIR     read prepared test threads and messages (README)
   capture.py cleanup RAW_DIR     delete what the bot posted in the runs above
 
 Environment:
   HATAORI_DISCORD_TOKEN_FILE  file holding the bot token (read at run time, never printed)
   HATAORI_DISCORD_CHANNEL     the test channel's id
   HATAORI_DISCORD_OWNER       the owner's user id (person, lookups and calls runs only)
+  HATAORI_DISCORD_HISTORY_THREAD          prepared public test thread (history run)
+  HATAORI_DISCORD_HISTORY_PRIVATE_THREAD  prepared private test thread (history run)
+  HATAORI_DISCORD_HISTORY_FORWARD_MESSAGE forwarded attachment in the public test thread (history run)
 
 RAW_DIR receives one JSON file per capture:
   rest-<name>.json   {"source": "rest", "request", "status", "headers", "body"}
@@ -718,6 +722,95 @@ def calls_run(raw, minutes):
         gw.close()
 
 
+def history_run(raw):
+    """Read-only capture of an explicitly supplied test channel.
+
+    Prepare public active, public archived and private active threads first.
+    Uses no deployment configuration and creates/deletes no service objects.
+    """
+    from urllib.parse import urlencode
+
+    # Read all explicitly selected fixture ids before making a request. This
+    # mode never discovers credentials or targets from a deployment root.
+    ch = os.environ["HATAORI_DISCORD_CHANNEL"]
+    target = os.environ["HATAORI_DISCORD_HISTORY_THREAD"]
+    private = os.environ["HATAORI_DISCORD_HISTORY_PRIVATE_THREAD"]
+    forward = os.environ["HATAORI_DISCORD_HISTORY_FORWARD_MESSAGE"]
+    if not all(v.isdecimal() and int(v) > 0 for v in (ch, target, private, forward)):
+        raise ValueError("history fixture ids must be positive decimal ids")
+
+    def get(name, path):
+        status, data = rest(raw, name, "GET", path)
+        if status != 200:
+            raise RuntimeError(f"{name}: expected HTTP 200, received {status}; response was recorded")
+        return data
+
+    channel = get("history-channel", f"/channels/{ch}")
+    public_thread = get("history-thread", f"/channels/{target}")
+    private_thread = get("history-private-thread", f"/channels/{private}")
+    if (channel["id"] != ch or public_thread["id"] != target or
+            public_thread["type"] not in (10, 11) or public_thread["parent_id"] != ch or
+            private_thread["id"] != private or private_thread["type"] != 12 or
+            private_thread["parent_id"] != ch):
+        raise RuntimeError("prepared public/private fixture threads do not match the selected channel")
+    active = get("history-active", f"/guilds/{channel['guild_id']}/threads/active")
+    if not any(t["id"] == private and t["type"] == 12 for t in active["threads"]):
+        raise RuntimeError("active collection did not include the prepared private thread")
+    if sum(t["parent_id"] == ch and t["type"] in (10, 11) for t in active["threads"]) < 2:
+        raise RuntimeError("prepare at least two active public threads for listing continuation")
+    before = ""
+    archive_pages = 0
+    for page in range(1, 9):
+        query = {"limit": 2}
+        if before:
+            query["before"] = before
+        data = get(f"history-archived-{page}",
+                   f"/channels/{ch}/threads/archived/public?" + urlencode(query))
+        if data["threads"]:
+            archive_pages += 1
+        if not data["has_more"]:
+            break
+        next_before = data["threads"][-1]["thread_metadata"]["archive_timestamp"]
+        if before and next_before >= before:
+            raise RuntimeError("archive cursor did not advance")
+        before = next_before
+    else:
+        raise RuntimeError("archive fixture exceeded eight pages; use a smaller isolated test channel")
+
+    if archive_pages < 2:
+        raise RuntimeError("prepare at least three archived public threads to capture continuation")
+
+    data = get("history-last", f"/channels/{target}/messages?limit=2")
+    if len(data) != 2:
+        raise RuntimeError("public fixture needs at least five messages")
+    oldest = min((m["id"] for m in data), key=int)
+    newest = max((m["id"] for m in data), key=int)
+    get("history-single", f"/channels/{target}/messages/{newest}")
+    get("history-after", f"/channels/{target}/messages?after={oldest}&limit=2")
+    before_pages = 0
+    for page in range(1, 9):
+        data = get(f"history-before-{page}",
+                   f"/channels/{target}/messages?" + urlencode({"before": oldest, "limit": 2}))
+        if not data:
+            break
+        before_pages += 1
+        next_oldest = min((m["id"] for m in data), key=int)
+        if int(next_oldest) >= int(oldest):
+            raise RuntimeError("message cursor did not advance")
+        oldest = next_oldest
+    else:
+        raise RuntimeError("history fixture exceeded eight pages; use a smaller prepared test thread")
+
+    if before_pages < 2:
+        raise RuntimeError("prepare at least five messages for two nonempty before pages")
+
+    message = get("history-forward-attachment", f"/channels/{target}/messages/{forward}")
+    if (message["id"] != forward or message["channel_id"] != target or
+            (message.get("message_reference") or {}).get("type") != 1 or
+            not any(s.get("message", {}).get("attachments") for s in message.get("message_snapshots", []))):
+        raise RuntimeError("prepared forward did not contain service-listed snapshot attachments")
+
+
 def cleanup(raw):
     for conv, mid in raw.created["messages"]:
         st, _ = rest(None, None, "DELETE", f"/channels/{conv}/messages/{mid}")
@@ -737,4 +830,4 @@ if __name__ == "__main__":
      "second": lambda: second_run(raw), "lookups": lambda: lookups(raw), "pages": lambda: pages_run(raw), "rethread": lambda: rethread_run(raw),
      "commands": lambda: commands_run(raw, float(sys.argv[3])),
      "choices": lambda: choices_run(raw, float(sys.argv[3])), "lamps": lambda: lamps_run(raw),
-     "calls": lambda: calls_run(raw, float(sys.argv[3])), "cleanup": lambda: cleanup(raw)}[cmd]()
+     "history": lambda: history_run(raw), "calls": lambda: calls_run(raw, float(sys.argv[3])), "cleanup": lambda: cleanup(raw)}[cmd]()
