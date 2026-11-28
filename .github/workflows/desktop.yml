@@ -1,0 +1,130 @@
+name: Desktop
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  desktop-inputs:
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.paths.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: desktop/.nvmrc
+      - name: Classify the complete frozen PR or push range
+        id: paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo 'relevant=true' >> "$GITHUB_OUTPUT"
+          else
+            [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$BASE_SHA" =~ [1-9a-f] ]]
+            relevant="$(git diff --name-only -z --no-renames "$BASE_SHA" "$HEAD_SHA" | node desktop/scripts/paths.mjs)"
+            echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+          fi
+
+  desktop-check:
+    needs: desktop-inputs
+    if: needs.desktop-inputs.outputs.relevant == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: desktop/.nvmrc
+      - run: npm ci --ignore-scripts --prefix desktop
+      - run: npm test --prefix desktop
+      - run: go test -p 1 -parallel 1 -count=1 -timeout 90s ./internal/desktopstate ./internal/desktopsetup ./internal/desktopbridge
+      - name: Compile the hosted fixture without running it
+        run: go test -exec /bin/true ./cmd/hataori
+
+  desktop-macos:
+    needs: [desktop-inputs, desktop-check]
+    if: needs.desktop-inputs.outputs.relevant == 'true' && !startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      DESKTOP_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: desktop/.nvmrc
+      - run: bash desktop/scripts/hosted-check.sh
+
+  desktop-tagged-draft:
+    needs: [desktop-inputs, desktop-check]
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push' && github.repository == 'yousan/hataori' && github.actor == github.repository_owner
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      DESKTOP_HEAD: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      # A maintainer creates this stable candidate tag only after exact-head
+      # reviews/full CI. It may precede merge to supply private Mac acceptance.
+      # PRs never get this authority, and no workflow creates a tag here.
+      - name: Require the exact stable maintainer candidate tag
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git rev-parse HEAD)" = "$DESKTOP_HEAD"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: desktop/.nvmrc
+      - run: bash desktop/scripts/hosted-check.sh
+      - name: Deliver only to a maintainer-controlled unpublished draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node desktop/scripts/draft-release.mjs

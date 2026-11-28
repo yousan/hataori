@@ -239,15 +239,15 @@ func (s *State) VerifySelection(ctx context.Context, selection Selection) error 
 			return err
 		}
 	}
-	database, err := nativehttp.OpenPrivateDatabase(s.state, "hataori.db")
-	if err == nil {
-		database.Close()
+	exists, err := CheckMainDatabase(s.state)
+	if err != nil {
+		return err
+	}
+	if exists {
 		current, err := store.ReadSchemaVersion(ctx, s.root.Name())
 		if err != nil || current > manifest.Schema {
 			return errors.New("desktop: persisted schema is incompatible; rollback refused")
 		}
-	} else if !os.IsNotExist(err) {
-		return err
 	}
-	return nil
+	return s.CheckHosts(ctx)
 }

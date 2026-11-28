@@ -95,6 +95,17 @@ func TestStateRefusesLinksAndNameCollisions(t *testing.T) {
 			} else if name == "\u00e9" {
 				wanted = "e\u0301"
 			}
+			// A normalization-insensitive filesystem may store the other
+			// spelling regardless of the one supplied to Mkdir.
+			if name == "e\u0301" || name == "\u00e9" {
+				entries, err := os.ReadDir(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if entries[0].Name() == wanted {
+					wanted = name
+				}
+			}
 			if err := RefuseCollision(root, wanted); err == nil {
 				t.Fatal("ambiguous case/Unicode name accepted")
 			}

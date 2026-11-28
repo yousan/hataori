@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { checkedBinding, checkedRegistration, guiEnvironment, startSetup, enableLogin, disableLogin } from '../src/lifecycle.mjs';
+import { checkedBinding, checkedRegistration, guiEnvironment, startSetup, startManaged, enableLogin, disableLogin } from '../src/lifecycle.mjs';
 
 test('setup lifetime is private, bounded and joined before ordinary startup', async () => {
   let args, options;
@@ -19,6 +19,24 @@ test('setup lifetime is private, bounded and joined before ordinary startup', as
   child.emit('close', 0); assert.deepEqual(await setup.done, binding);
   assert.deepEqual(guiEnvironment({ HOME: '/home/fixture', PATH: '/bin', BOT_TOKEN: 'private', NODE_OPTIONS: '--require bad' }), { HOME: '/home/fixture', PATH: '/bin' });
   assert.throws(() => checkedBinding({ ...binding, Version: '0.9.0' }, '1.0.0'));
+});
+
+test('interrupted setup can explicitly recover registration and retry bootstrap without implicitly undoing Stop', async () => {
+  let stopped = true, registered = false, consent = false, bootstrapFails = true;
+  const calls = [];
+  const actions = {
+    registration: async () => { calls.push('read'); if (!registered) throw new Error('interrupted setup'); return 'own-registration'; },
+    register: async () => { calls.push('consent'); if (!consent) throw new Error('cancel'); registered = true; return 'own-registration'; },
+    persistStart: async () => { calls.push('start'); stopped = false; },
+    enable: async reg => { assert.equal(reg, 'own-registration'); calls.push('enable'); if (bootstrapFails) throw new Error('fixture bootstrap refusal'); },
+    ready: async () => { calls.push('ready'); return 'bound-instance'; },
+  };
+  await assert.rejects(startManaged(actions)); assert.equal(stopped, true);
+  consent = true; calls.length = 0;
+  await assert.rejects(startManaged(actions)); assert.deepEqual(calls, ['read', 'consent', 'start', 'enable']);
+  bootstrapFails = false; calls.length = 0;
+  assert.equal(await startManaged(actions), 'bound-instance');
+  assert.deepEqual(calls, ['read', 'start', 'enable', 'ready']);
 });
 
 test('login actions name only a verified exact service and preserve daemon ownership', async () => {

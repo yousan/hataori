@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/yousan/hataori/internal/agent"
@@ -16,9 +16,9 @@ import (
 	"github.com/yousan/hataori/internal/agent/codex"
 	"github.com/yousan/hataori/internal/dashboard"
 	"github.com/yousan/hataori/internal/desktopsetup"
+	"github.com/yousan/hataori/internal/desktopstate"
 	"github.com/yousan/hataori/internal/instance"
 	"github.com/yousan/hataori/internal/nativehttp"
-	"github.com/yousan/hataori/internal/store"
 	"github.com/yousan/hataori/internal/surface/discord"
 	"github.com/yousan/hataori/internal/version"
 	"github.com/yousan/hataori/internal/workspace"
@@ -32,22 +32,28 @@ func desktopAgents(look func(string) (string, error)) []desktopsetup.Agent {
 		if err != nil || !filepath.IsAbs(command) {
 			continue
 		}
-		command, err = filepath.EvalSymlinks(command)
+		file, err := nativehttp.OpenInstalledExecutable(command)
 		if err != nil {
 			continue
 		}
-		info, err := os.Stat(command)
-		if err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 && info.Mode().Perm()&0o022 == 0 {
-			found = append(found, desktopsetup.Agent{Name: candidate.name, Command: command})
-		}
+		found = append(found, desktopsetup.Agent{Name: candidate.name, Command: file.Name()})
+		file.Close()
 	}
 	return found
 }
 
 var desktopID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 
+func desktopValidID(value string) bool {
+	if !desktopID.MatchString(value) {
+		return false
+	}
+	_, err := strconv.ParseUint(value, 10, 64)
+	return err == nil
+}
+
 func desktopBuildConfig(in desktopsetup.Input, selected desktopsetup.Agent, tokenFile string) ([]byte, error) {
-	if strings.TrimSpace(in.Owner) == "" || !desktopID.MatchString(in.OwnerID) || !desktopID.MatchString(in.BotID) || !desktopID.MatchString(in.Scope) || workspace.CheckAddress(in.Repository) != nil {
+	if strings.TrimSpace(in.Owner) == "" || !desktopValidID(in.OwnerID) || !desktopValidID(in.BotID) || !desktopValidID(in.Scope) || workspace.CheckAddress(in.Repository) != nil {
 		return nil, errors.New("invalid first-run input")
 	}
 	return json.MarshalIndent(map[string]any{
@@ -80,47 +86,13 @@ func desktopValidateConfig(data []byte) error {
 	return nil
 }
 
-func desktopSetupIdentity(ctx context.Context, root string) (string, error) {
-	r, err := nativehttp.OpenPrivateRoot(root)
-	if err != nil {
-		return "", err
-	}
-	defer r.Close()
-	state, err := nativehttp.OpenPrivateDir(r, "state", false)
-	if err != nil {
-		return "", err
-	}
-	defer state.Close()
-	f, err := nativehttp.OpenPrivateDatabase(state, "hataori.db")
-	if err == nil {
-		f.Close()
-		return store.ReadMainIdentity(ctx, root)
-	}
-	if !os.IsNotExist(err) {
-		return "", err
-	}
-	// Reserve a private database only for an empty instance under its root
-	// lock. Schema creation exposes no ordinary API or agent/chat startup.
-	f, err = nativehttp.OpenPrivateFile(state, "hataori.db", os.O_RDWR|os.O_CREATE|os.O_EXCL)
-	if err != nil {
-		return "", err
-	}
-	f.Close()
-	s, err := store.Open(ctx, root)
-	if err != nil {
-		return "", err
-	}
-	defer s.Close()
-	return s.MainIdentity(ctx)
-}
-
 func desktopSetupMain(ctx context.Context, root string, input io.ReadCloser, output io.Writer) error {
 	setup, err := desktopsetup.Open(root, desktopAgents(exec.LookPath), desktopBuildConfig, desktopValidateConfig)
 	if err != nil {
 		return err
 	}
 	defer setup.Close()
-	id, err := desktopSetupIdentity(ctx, setup.Root())
+	id, err := desktopstate.InitializeMainIdentity(ctx, setup.Root())
 	if err != nil {
 		return err
 	}

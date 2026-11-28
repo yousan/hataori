@@ -18,6 +18,17 @@ export async function command(binary, args, run = execute) {
   return stdout ? JSON.parse(stdout) : null;
 }
 
+// Start is the only path that can clear persistent Stop. Missing registration
+// goes through a fresh explicit-consent UI; a failed/cancelled recovery cannot
+// start a daemon. A failed bootstrap can be retried through the same action.
+export async function startManaged({ registration, register, persistStart, enable, ready }) {
+  let reg;
+  try { reg = await registration(); } catch { reg = await register(); }
+  await persistStart();
+  await enable(reg);
+  return ready();
+}
+
 // Setup owns one child and one lifetime pipe. It never force-kills a process
 // tree or looks up a saved PID. Success is usable only after child exit joins
 // the restricted listener and releases the daemon's existing root lock.

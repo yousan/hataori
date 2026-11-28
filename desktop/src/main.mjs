@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { NativeTransport } from './transport.mjs';
 import { createWindow } from './window.mjs';
 import { verifyManifest } from './manifest.mjs';
-import { command, checkedBinding, checkedRegistration, startSetup, enableLogin, disableLogin } from './lifecycle.mjs';
+import { command, checkedBinding, checkedRegistration, startSetup, startManaged, enableLogin, disableLogin } from './lifecycle.mjs';
 
 const { app, protocol, dialog, Menu, Tray, nativeImage, Notification } = electron;
 protocol.registerSchemesAsPrivileged([{ scheme: 'hataori-desktop', privileges: {
@@ -27,6 +27,18 @@ const loginDirectory = async () => {
   return realpath(directory);
 };
 const registration = async () => checkedRegistration(await desktop('login-info'), root, await loginDirectory());
+async function registerLogin() {
+  if (!managed) throw new Error('External instance is not app managed');
+  const consent = await dialog.showMessageBox({ type: 'question', title: 'hataori',
+    message: 'Register launch at login for this selected instance?',
+    detail: 'This recovers an interrupted setup. Configuration and logins stay intact. Persistent Stop is retained until you explicitly choose Start daemon.',
+    buttons: ['Cancel', 'Register login launcher'], defaultId: 0, cancelId: 0 });
+  if (consent.response !== 1) throw new Error('Registration cancelled');
+  const directory = await loginDirectory();
+  const reg = checkedRegistration(await desktop('login-install', '--login-directory', directory), root, directory);
+  await enableLogin(reg, process.getuid());
+  return reg;
+}
 
 // Stable facade across setup/daemon replacement. Reload drops old streams;
 // no uncertain mutation or terminal input crosses a reconnect.
@@ -68,9 +80,9 @@ async function waitForDaemon() {
 async function stage() { return desktop('stage', '--resources', resources); }
 async function start() {
   if (!managed) throw new Error('External instance is not app managed');
-  const reg = await registration();
-  await desktop('start'); await enableLogin(reg, process.getuid());
-  await display(await waitForDaemon()); notify('Daemon started.');
+  const next = await startManaged({ registration, register: registerLogin,
+    persistStart: () => desktop('start'), enable: reg => enableLogin(reg, process.getuid()), ready: waitForDaemon });
+  await display(next); notify('Daemon started.');
 }
 async function stop() {
   if (!managed) throw new Error('External instance is not app managed');
@@ -113,6 +125,7 @@ function menu() {
     { label: 'Show hataori', click: show, enabled: !!window },
     { label: 'Start daemon', enabled: managed && !busy && !setup, click: action(start) },
     { label: 'Stop daemon', enabled: managed && !busy && !setup, click: action(stop) },
+    { label: 'Register login launcher…', enabled: managed && !busy && !setup, click: action(registerLogin) },
     { label: 'Use installed app’s daemon version…', enabled: managed && !busy && !setup, click: action(update) },
     { label: 'Disable login launcher…', enabled: managed && !busy && !setup, click: action(uninstall) },
     { type: 'separator' },
@@ -164,7 +177,7 @@ async function open() {
 }
 
 // Coordination only shows this window; argv/extra data never select authority.
-if (process.argv.includes('--version')) { console.log(app.getVersion()); app.exit(0); }
+if (process.argv.includes('--desktop-build-version')) { console.log(app.getVersion()); app.exit(0); }
 else if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', show); app.on('activate', show);
@@ -182,5 +195,10 @@ else {
     binary = join(resources, 'hataori'); helper = join(resources, 'hataori-desktop-transport');
     tray = new Tray(nativeImage.createEmpty()); tray.setTitle('h'); tray.setToolTip('hataori');
     tray.on('click', show); menu(); await open();
-  }).catch(() => { unavailable(); app.quit(); });
+  }).catch(() => {
+    unavailable();
+    // A failed bootstrap/readiness must leave explicit Start/update/registration
+    // recovery reachable. Persisted Stop is never changed by this error path.
+    if (managed && tray) menu(); else app.quit();
+  });
 }

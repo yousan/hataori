@@ -45,8 +45,11 @@ test('window installs private session, CSP-preserving scheme and renderer refusa
   let refused = 0;
   const event = { preventDefault() { refused++; } };
   window.webContents.emit('will-navigate', event, 'https://example.com/');
+  window.webContents.emit('will-frame-navigate', { ...event, url: origin + '/' });
+  assert.equal(refused, 1, 'fixed-origin root navigation was refused');
+  window.webContents.emit('will-frame-navigate', { ...event, url: 'https://example.com/' });
   window.webContents.emit('will-redirect', event);
   window.webContents.emit('will-attach-webview', event);
   session.emit('will-download', event);
-  assert.equal(refused, 4);
+  assert.equal(refused, 5);
 });

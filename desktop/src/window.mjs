@@ -28,7 +28,9 @@ export async function createWindow(electron, transport, preload) {
   };
   contents.on('will-navigate', navigation);
   contents.on('will-redirect', event => event.preventDefault());
-  contents.on('will-frame-navigate', navigation);
+  // Electron's frame-navigation event carries its URL on the event itself;
+  // unlike will-navigate it has no separate second URL argument.
+  contents.on('will-frame-navigate', event => navigation(event, event.url));
   contents.on('will-attach-webview', event => event.preventDefault());
   contents.setWindowOpenHandler(() => ({ action: 'deny' }));
   contents.on('render-process-gone', () => transport.close());

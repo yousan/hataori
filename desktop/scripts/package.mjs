@@ -55,7 +55,7 @@ const output = await packager({ dir: staged, name: 'hataori', platform: 'darwin'
 if (output.length !== 1) throw new Error('Expected one architecture-specific app');
 const app = path.join(output[0], 'hataori.app');
 await verifyManifest(path.join(app, 'Contents/Resources'), version, arch);
-const runtimeVersion = execFileSync(path.join(app, 'Contents/MacOS/hataori'), ['--version'], { encoding: 'utf8' }).trim();
+const runtimeVersion = execFileSync(path.join(app, 'Contents/MacOS/hataori'), ['--desktop-build-version'], { encoding: 'utf8' }).trim();
 if (runtimeVersion !== version) throw new Error('Packaged runtime/package/manifest version mismatch');
 const dmg = path.join(desktop, 'out', `hataori-${version}-${arch}.dmg`);
 execFileSync('/usr/bin/hdiutil', ['create', '-volname', 'hataori', '-srcfolder', app, '-format', 'UDZO', dmg], { stdio: 'inherit' });

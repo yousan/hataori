@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // OpenPrivateRoot applies the native transport's owner, mode, ACL, link and
@@ -14,6 +15,45 @@ func OpenPrivateRoot(path string) (*os.Root, error) { return openPrivateRoot(pat
 // OpenPrivateDir opens one checked child, optionally creating it privately.
 func OpenPrivateDir(parent *os.Root, name string, create bool) (*os.Root, error) {
 	return privateDir(parent, name, create)
+}
+
+// OpenInstalledExecutable permits the normal root/user-owned executable in a
+// GUI PATH, including a resolved package-manager link. It never invokes it.
+// Unlike private instance files, installed programs can be 0755/root-owned;
+// their target and ancestors must still exclude other-user writes/ACL grants.
+func OpenInstalledExecutable(path string) (*os.File, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	abs, err = filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil, err
+	}
+	if err := trustedAncestors(abs); err != nil {
+		return nil, err
+	}
+	before, err := os.Lstat(abs)
+	if err != nil {
+		return nil, err
+	}
+	stat, ok := before.Sys().(*syscall.Stat_t)
+	if !ok || !before.Mode().IsRegular() || stat.Nlink != 1 || stat.Uid != 0 && int(stat.Uid) != os.Geteuid() || before.Mode().Perm()&0o022 != 0 || before.Mode().Perm()&0o111 == 0 || before.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
+		return nil, errors.New("desktop: untrusted installed executable")
+	}
+	if err := checkACL(abs); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(abs, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	after, err := f.Stat()
+	if err != nil || !os.SameFile(before, after) {
+		f.Close()
+		return nil, errors.New("desktop: installed executable changed")
+	}
+	return f, nil
 }
 
 // OpenPrivateFile checks a regular single-link 0600 child before and after
