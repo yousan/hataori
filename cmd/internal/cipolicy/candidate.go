@@ -71,6 +71,7 @@ type CandidateRecord struct {
 }
 
 type CandidateReport struct {
+	Dispatch                                         *Intent `json:",omitempty"`
 	Record                                           CandidateRecord
 	PromotionAllowed, ReleaseAllowed, UpgradeAllowed bool
 	Boundary                                         string
@@ -130,11 +131,9 @@ func (a *Adapter) candidateTuple(ctx context.Context, pull int, merged bool) (Ca
 	if r.Sweep.Control != c.revision || r.Sweep.Digest != c.selection.digest || r.Sweep.Authority != c.authority || c.requirement.WorkflowPath != ProofWorkflow {
 		return tuple, c, pr, fmt.Errorf("candidate execution/control scope changed")
 	}
-	if err = a.request(ctx, "GET", fmt.Sprintf("%s/pulls/%d", a.prefix(), pull), nil, &pr); err != nil {
+	pr, err = a.candidatePull(ctx, *r, merged)
+	if err != nil {
 		return tuple, c, pr, err
-	}
-	if pr.Number != pull || pr.Draft || pr.Head.Repo.ID != a.root.RepositoryID || pr.Base.Repo.ID != a.root.RepositoryID || pr.Base.Ref != a.root.ControlRef || pr.Head.Ref != r.SourceRef || pr.Head.SHA != r.Head || (!merged && (pr.State != "open" || pr.Merged || pr.Base.SHA != r.Base || pr.MergeSHA != r.Result)) || (merged && (!pr.Merged || pr.State != "closed" || pr.MergedAt.IsZero() || !pr.MergedAt.Before(r.ExpiresAt))) {
-		return tuple, c, pr, fmt.Errorf("frozen candidate PR changed")
 	}
 	if err = a.candidateRefs(ctx, *r, merged, pr.MergeSHA); err != nil {
 		return tuple, c, pr, err
@@ -173,6 +172,18 @@ func (a *Adapter) candidateTuple(ctx context.Context, pull int, merged bool) (Ca
 	json.Unmarshal(b, &tuple.Request)
 	tuple.Repository, tuple.Key, tuple.Control, tuple.Policy, tuple.Scope = a.root.RepositoryID, a.keyDigest, c.revision, c.selection.digest, c.authority
 	return tuple, c, pr, nil
+}
+
+func (a *Adapter) candidatePull(ctx context.Context, r CandidateRequirement, merged bool) (pullRecord, error) {
+	var pr pullRecord
+	pull := r.Pull
+	if err := a.request(ctx, "GET", fmt.Sprintf("%s/pulls/%d", a.prefix(), pull), nil, &pr); err != nil {
+		return pr, err
+	}
+	if pr.Number != pull || pr.Draft || pr.Head.Repo.ID != a.root.RepositoryID || pr.Base.Repo.ID != a.root.RepositoryID || pr.Base.Ref != a.root.ControlRef || pr.Head.Ref != r.SourceRef || pr.Head.SHA != r.Head || (!merged && (pr.State != "open" || pr.Merged || pr.Base.SHA != r.Base || pr.MergeSHA != r.Result)) || (merged && (!pr.Merged || pr.State != "closed" || pr.MergedAt.IsZero() || !pr.MergedAt.Before(r.ExpiresAt))) {
+		return pr, fmt.Errorf("frozen candidate PR changed")
+	}
+	return pr, nil
 }
 
 func (a *Adapter) candidateRefs(ctx context.Context, r CandidateRequirement, merged bool, merge string) error {
@@ -387,6 +398,9 @@ func candidateAt(ctx context.Context, db interface {
 }
 
 func (c *Coordinator) candidateOperation(ctx context.Context, operation string, pull int, reason string) (Outcome, error) {
+	if operation == "candidate-prepare" || operation == "candidate-pump" || operation == "candidate-dispatch-reconcile" {
+		return c.candidateDispatchOperation(ctx, operation, pull)
+	}
 	a, s := c.adapter, c.store
 	ctx = a.budget(ctx)
 	out := Outcome{Operation: operation}
@@ -416,7 +430,7 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 			old, err := candidateAt(ctx, conn, pull)
 			if err == nil {
 				if old.ID == candidateID(tuple) && old.Status != "invalidated" {
-					return nil
+					return retainCandidateRunAuthority(ctx, conn, tuple, a, control)
 				}
 				if old.Status != "invalidated" || old.ID == candidateID(tuple) {
 					return fmt.Errorf("candidate already frozen; invalidate explicitly")
@@ -426,8 +440,17 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 			if err != sql.ErrNoRows {
 				return err
 			}
+			if err = candidateIDAvailable(ctx, conn, tuple.Request.Sweep.ID, ""); err != nil {
+				return err
+			}
+			if err = nonCandidateIDAvailable(ctx, conn, tuple.Request.Sweep.ID); err != nil {
+				return err
+			}
 			_, err = conn.ExecContext(ctx, "INSERT INTO candidate(id,pull,revision,status,tuple) VALUES(?,?,1,'frozen',?)", candidateID(tuple), pull, b)
-			return err
+			if err != nil {
+				return err
+			}
+			return retainCandidateRunAuthority(ctx, conn, tuple, a, control)
 		})
 		if err != nil {
 			return out, err
@@ -455,10 +478,68 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 			if err = a.request(ctx, "GET", "/user", nil, &who); err != nil || who != control.requirement.Owner {
 				return out, fmt.Errorf("responsible owner required")
 			}
+			original, retainedControl, e := a.candidateInvalidationAuthority(ctx, s, record, control)
+			if e != nil {
+				return out, e
+			}
+			var originalRun int64
+			oldIntent, intentErr := candidateIntent(ctx, s.db, record)
+			if intentErr != nil && intentErr != sql.ErrNoRows {
+				return out, intentErr
+			}
+			if intentErr == sql.ErrNoRows || oldIntent.Status == "prepared" {
+				// Prepared describes our local send claim, not absence of a run
+				// created by the previously supported external proof route.
+				id, e := original.discoverRun(ctx, retainedControl, record.Tuple.Request.Sweep)
+				if e != nil {
+					return out, e
+				}
+				if id > 0 {
+					if record.Evidence != nil && (record.Evidence.Run != id || record.Evidence.Attempt != 1) {
+						return out, ErrAmbiguous
+					}
+					run, e := original.candidateDispatchRun(ctx, retainedControl, record.Tuple.Request, id)
+					if e != nil || run.Status != "completed" {
+						return out, fmt.Errorf("candidate proof still unresolved")
+					}
+					originalRun = id
+				}
+			}
+			if intentErr == nil {
+				if oldIntent.Status == "uncertain" {
+					return out, ErrAmbiguous
+				}
+				if oldIntent.Status == "bound" {
+					run, e := original.candidateDispatchRun(ctx, retainedControl, record.Tuple.Request, oldIntent.RunID)
+					if e != nil || run.Status != "completed" {
+						return out, fmt.Errorf("candidate proof still unresolved")
+					}
+				}
+			}
 			// Retain tuple/evidence and an auditable reason; no remote operation.
 			err = s.transaction(ctx, func(conn *sql.Conn) error {
 				if !s.clock().Before(a.root.ExpiresAt) || control.selection.Report(s.clock()).FullOnly {
 					return fmt.Errorf("candidate authority expired before invalidation")
+				}
+				current, e := candidateIntent(ctx, conn, record)
+				if intentErr == sql.ErrNoRows {
+					if e != sql.ErrNoRows {
+						return ErrConflict
+					}
+				} else {
+					if e != nil || current != oldIntent {
+						return ErrConflict
+					}
+					if current.Status == "prepared" {
+						if originalRun > 0 {
+							_, e = conn.ExecContext(ctx, "UPDATE candidate_intent SET status='bound',run=?,attempt=1 WHERE candidate_id=? AND status='prepared'", originalRun, record.ID)
+						} else {
+							_, e = conn.ExecContext(ctx, "UPDATE candidate_intent SET status='retired' WHERE candidate_id=? AND status='prepared'", record.ID)
+						}
+						if e != nil {
+							return e
+						}
+					}
 				}
 				row, e := conn.ExecContext(ctx, "UPDATE candidate SET revision=revision+1,status='invalidated' WHERE id=? AND revision=? AND status IN ('frozen','verified')", record.ID, record.Revision)
 				if e != nil {
@@ -495,6 +576,15 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 				if operation == "candidate-verify" && !s.clock().Before(record.Tuple.Request.ExpiresAt) {
 					return fmt.Errorf("candidate expired before evidence commit")
 				}
+				if operation == "candidate-verify" {
+					i, e := candidateIntent(ctx, conn, record)
+					if e != sql.ErrNoRows {
+						proof := evidence.(*CandidateEvidence)
+						if e != nil || i.Status != "bound" || i.RunID != proof.Run || i.Attempt != proof.Attempt {
+							return fmt.Errorf("candidate dispatch receipt missing or changed")
+						}
+					}
+				}
 				row, e := conn.ExecContext(ctx, "UPDATE candidate SET revision=revision+1,status=?,"+column+"=? WHERE id=? AND revision=? AND status!='invalidated'", status, b, record.ID, record.Revision)
 				if e != nil {
 					return e
@@ -514,5 +604,13 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 	}
 	record, err := candidateAt(ctx, s.db, pull)
 	out.Candidate = &CandidateReport{Record: record, Boundary: "historical evidence only; no GitHub atomic promotion/provider contract proved; existing main/release/upgrade gates remain"}
+	if err == nil {
+		i, e := candidateIntent(ctx, s.db, record)
+		if e == nil {
+			out.Candidate.Dispatch = &i
+		} else if e != sql.ErrNoRows {
+			return out, e
+		}
+	}
 	return out, err
 }
