@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 ENV = {**os.environ, "GOMAXPROCS": "1"}
@@ -22,7 +23,17 @@ MUTATIONS = [
     ("effect deduplication", "internal/worker/operations.go", "if prior := r.state.Receipts[key]; prior != nil {", 'if prior := r.state.Receipts[key]; prior != nil && m.Op != "input" {', "./cmd/hataori", "^TestFirstWorkerLostWriteReplyDedupAndCatchup$"),
     ("catch-up before dispatch", "internal/store/away.go", "if n != 0 {", "if false && n != 0 {", "./cmd/hataori", "^TestFirstWorkerLostWriteReplyDedupAndCatchup$"),
     ("worker removal proof", "internal/workspace/registered.go", "if err := r.check(ctx, abs, root); err != nil {", "if err := r.check(ctx, abs, root); false && err != nil {", "./cmd/hataori", "^TestFirstWorkerRemovalPreservesSoleCopy$"),
+    ("fixture process ownership", "cmd/hataori/first_worker_process_test.go", "owned := r != nil && r.owner == o && o.records[r]", "owned := true", "./cmd/hataori", "^TestFirstWorkerProcessOwnershipAndExitBarrier$"),
+    ("fixture child exit barrier", "cmd/hataori/first_worker_process_test.go", "case <-r.done:", "case <-time.After(time.Nanosecond):", "./cmd/hataori", "^TestFirstWorkerProcessOwnershipAndExitBarrier$"),
+    ("fixture generation quiescence", "cmd/hataori/first_worker_ssh_test.go", "if err := o.waitHandlers(); err != nil {", "if err := error(nil); err != nil {", "./cmd/hataori", "^TestFirstWorkerGenerationWaitsForAuthorizedHandler$"),
+    ("fixture parent lease", "cmd/hataori/first_worker_ssh_test.go", "if err != nil || ended || !((parent == main.pid && birth == main.birth) || (parent == o.cli.pid && birth == o.cli.birth)) {", "if false && (err != nil || ended || !((parent == main.pid && birth == main.birth) || (parent == o.cli.pid && birth == o.cli.birth))) {", "./cmd/hataori", "^TestFirstWorkerSSHAuthorityRejectsForeignConnection$"),
+
+    ("fixture registration freeze", "cmd/hataori/first_worker_ssh_test.go", "func (o *firstWorkerSSHOwner) close() error {\n\to.freeze()\n\trecords := o.processes.snapshot()\n\tchildren, observationErr := firstWorkerDescendants(records)", "func (o *firstWorkerSSHOwner) close() error {\n\trecords := o.processes.snapshot()\n\tchildren, observationErr := firstWorkerDescendants(records)\n\to.freeze()", "./cmd/hataori", "^TestFirstWorkerLateSSHDescendantExitEvidence$"),
+
 ]
+
+if sys.platform == "linux":
+    MUTATIONS.append(("fixture procfs fallback", "cmd/hataori/first_worker_identity_linux_test.go", "return firstWorkerScanChildren(root, pid)", "return nil, nil", "./cmd/hataori", "^TestFirstWorkerProcChildrenFallback$"))
 
 
 def run(package, pattern):
@@ -57,6 +68,12 @@ def main():
                 "effect deduplication": "all original worker turn ends committed",
                 "catch-up before dispatch": "unknown receipt blocks catch-up after restart",
                 "worker removal proof": "removal accepted untracked sole-copy file",
+                "fixture process ownership": "foreign owner accepted",
+                "fixture child exit barrier": "cleanup returned before owned child exit",
+                "fixture generation quiescence": "generation cleanup returned before authorized handler finished",
+                "fixture parent lease": "foreign main generation was admitted",
+                "fixture registration freeze": "late SSH descendant evidence missing",
+                "fixture procfs fallback": "fallback descendant tree incomplete",
             }
             proved = proved and expected[name] in output
             results.append({"guard": name, "command": " ".join(command), "expected_failure": proved, "exit_code": result.returncode,
