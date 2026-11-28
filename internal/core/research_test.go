@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -60,27 +61,30 @@ func researchCounts(t *testing.T, c *Core) map[string]int {
 func TestResearchUnsupportedPreflightHasNoArtifacts(t *testing.T) {
 	for _, propose := range []bool{false, true} {
 		for _, declared := range []bool{false, true} {
-			f := newFixture(t, fakeOwner{key: "new"})
-			var asksIn control.ThreadID
-			if propose {
-				asksIn, _ = f.running(t, "existing-asker")
-			}
-			o := &researchOwner{fakeOwner: fakeOwner{key: "new"}}
-			w := &researchWorkspaces{}
-			f.core.Owners["chat"], f.core.Workspaces = o, w
-			if declared {
-				f.core.CanOmitProjectSettings = func(string) bool { return false }
-			}
-			before := researchCounts(t, f.core)
-			beforeCalls := f.runner.Calls()
-			api := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all, Research: true, Propose: propose, AsksIn: asksIn})
-			id, err := api.Start(context.Background(), control.StartRequest{Key: "unsupported", Scope: "s", Repo: "https://example.test/present/repo", Research: true, Input: control.Input{Text: "read current checks"}})
-			if id != 0 || !errors.Is(err, session.ErrRefused) || !strings.Contains(err.Error(), "settings-free research is unsupported by agent \"fake\"") || !strings.Contains(err.Error(), "cannot omit the repository's project settings") {
-				t.Errorf("id %d, refusal %v", id, err)
-			}
-			if !reflect.DeepEqual(before, researchCounts(t, f.core)) || o.calls != 0 || w.calls != 0 || f.runner.Calls() != beforeCalls {
-				t.Fatal("unsupported research created artifacts or consumed an owner/workspace/runner call")
-			}
+			t.Run(fmt.Sprintf("propose_%v/declaration_%v", propose, declared), func(t *testing.T) {
+				f := newFixture(t, fakeOwner{key: "new"})
+				var asksIn control.ThreadID
+				if propose {
+					asksIn, _ = f.running(t, "existing-asker")
+				}
+				o := &researchOwner{fakeOwner: fakeOwner{key: "new"}}
+				w := &researchWorkspaces{}
+				f.core.Owners["chat"], f.core.Workspaces = o, w
+				if declared {
+					f.core.CanOmitProjectSettings = func(string) bool { return false }
+				}
+				before := researchCounts(t, f.core)
+				beforeCalls := f.runner.Calls()
+				api := f.core.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: all, Research: true, Propose: propose, AsksIn: asksIn})
+				id, err := api.Start(context.Background(), control.StartRequest{Key: "unsupported", Scope: "s", Repo: "https://example.test/present/repo", Research: true, Input: control.Input{Text: "read current checks"}})
+				if id != 0 || !errors.Is(err, session.ErrRefused) || !strings.Contains(err.Error(), "settings-free research is unsupported by agent \"fake\"") || !strings.Contains(err.Error(), "cannot omit the repository's project settings") {
+					t.Errorf("id %d, refusal %v", id, err)
+				}
+				after := researchCounts(t, f.core)
+				if !reflect.DeepEqual(before, after) || o.calls != 0 || w.calls != 0 || f.runner.Calls() != beforeCalls {
+					t.Fatalf("unsupported research created artifacts or consumed an owner/workspace/runner call (proposals %d -> %d)", before["proposals"], after["proposals"])
+				}
+			})
 		}
 	}
 }
