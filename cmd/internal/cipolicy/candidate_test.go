@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -243,6 +244,12 @@ func candidateFixture(t *testing.T) (*Coordinator, *githubFixture, *candidateSea
 			for i := range reviews {
 				reviews[i].CommitID = sha(109)
 			}
+			if seam.mode == "source-provider-missing" {
+				reviews = reviews[:1]
+			}
+			if seam.mode == "source-provider-late" {
+				reviews[1].SubmittedAt = clock
+			}
 			write(reviews)
 			seam.mu.Unlock()
 			return true
@@ -433,7 +440,7 @@ func TestCandidateFrozenFullProofAndIndependentMain(t *testing.T) {
 }
 
 func TestCandidateRejectsChangedOrPartialEvidence(t *testing.T) {
-	for _, scenario := range []string{"base", "head", "policy", "candidate-policy", "dependency", "before-control", "review", "provider", "manual-source", "expired", "wrong-tree", "rerun", "late", "duplicate-run", "skip", "wrong-job-head", "upload-skipped", "artifact-missing", "check-missing", "untrusted-check"} {
+	for _, scenario := range []string{"base", "head", "policy", "candidate-policy", "dependency", "before-control", "review", "provider", "manual-source", "expired", "wrong-tree", "wrong-result", "rerun", "late", "duplicate-run", "skip", "wrong-job-head", "upload-skipped", "artifact-missing", "check-missing", "untrusted-check"} {
 		t.Run(scenario, func(t *testing.T) {
 			c, f, seam := candidateFixture(t)
 			ctx := context.Background()
@@ -457,6 +464,8 @@ func TestCandidateRejectsChangedOrPartialEvidence(t *testing.T) {
 						record.Content = ""
 					}
 				}
+			case "wrong-result":
+				f.candidate.MergeSHA = sha(999)
 			case "before-control":
 				seam.run.CreatedAt = clock.Add(-time.Minute)
 			case "review":
@@ -788,5 +797,95 @@ func TestCandidateInvalidationNeedsRealOwnerAndUnexpiredRoot(t *testing.T) {
 				t.Fatal(record)
 			}
 		})
+	}
+}
+
+// Use the actual complete-diff classifier and source API path. Candidate's own
+// valid approvals must not replace an integration source's review requirements.
+func TestCandidateSourceReviewBoundaries(t *testing.T) {
+	for _, scenario := range []string{"high-risk-unset", "grant-provider-missing", "grant-provider-late", "grant-positive", "grant-mismatch"} {
+		t.Run(scenario, func(t *testing.T) {
+			c, f, seam := candidateFixture(t)
+			a := c.adapter
+			r := *a.root.Candidate
+			a.root.RequiredPullReviews = nil
+			if scenario == "high-risk-unset" {
+				a.root.RiskReviewers = nil // Direct seam also retains history's defensive guard.
+			} else {
+				origin := f.commits[r.Head]
+				origin.Compatibility = false // Known ordinary source, no risk-review fallback.
+				f.commits[r.Head] = origin
+				a.root.Routes = map[int]RouteGrant{1199: {Head: sha(109), Base: r.IntegrationFrom, Ref: a.root.IntegrationRef, Reviews: []Identity{f.candidateReviews[1].User}}}
+				switch scenario {
+				case "grant-provider-missing":
+					seam.mode = "source-provider-missing"
+				case "grant-provider-late":
+					seam.mode = "source-provider-late"
+				case "grant-mismatch":
+					g := a.root.Routes[1199]
+					g.Head = sha(999)
+					a.root.Routes[1199] = g
+				}
+			}
+			origins, err := a.candidateOrigins(a.budget(context.Background()), r)
+			if scenario == "grant-positive" {
+				if err != nil || len(origins) != 1 || len(origins[0].Reviews) != 1 {
+					t.Fatal("valid source grant review rejected", origins, err)
+				}
+			} else if err == nil {
+				t.Fatal("source review boundary bypassed", scenario)
+			}
+		})
+	}
+}
+
+func TestCandidateCASRechecksAuthorityExpiry(t *testing.T) {
+	for _, operation := range []string{"candidate-freeze", "candidate-verify", "candidate-main", "candidate-invalidate"} {
+		for _, bound := range []string{"root", "policy"} {
+			t.Run(operation+"/"+bound, func(t *testing.T) {
+				c, f, seam := candidateFixture(t)
+				ctx := context.Background()
+				if operation == "candidate-main" {
+					prepareCandidateMain(t, c, f, seam)
+				} else if operation != "candidate-freeze" {
+					if _, err := c.Execute(ctx, "candidate-freeze", 1200, 0); err != nil {
+						t.Fatal(err)
+					}
+				}
+				before, _ := candidateAt(ctx, c.store.db, 1200)
+				deadline := c.adapter.root.ExpiresAt
+				if bound == "policy" {
+					p := validPolicy()
+					deadline = p.ExpiresAt
+					// Keep root live past policy so each bound is independently exercised.
+					c.adapter.root.ExpiresAt = deadline.Add(time.Hour)
+				}
+				// Remote reads finish while authority is valid. Time advances at the
+				// serialized commit seam, including a possible SQLite writer-lock wait.
+				c.store.clock = func() time.Time { return deadline }
+				_, err := c.execute(ctx, operation, 1200, 0, "expiry regression")
+				if err == nil {
+					t.Fatal("expired authority committed", operation, bound)
+				}
+				after, readErr := candidateAt(ctx, c.store.db, 1200)
+				if operation == "candidate-freeze" {
+					if readErr != sql.ErrNoRows {
+						t.Fatal("expired freeze persisted", after, readErr)
+					}
+				} else if readErr != nil || after.Revision != before.Revision || after.Status != before.Status {
+					t.Fatal("expired operation changed record", before, after, readErr)
+				}
+			})
+		}
+	}
+}
+
+func TestCandidateMainRetainsHistoricalCandidateExpiry(t *testing.T) {
+	c, f, seam := candidateFixture(t)
+	prepareCandidateMain(t, c, f, seam)
+	seam.now = c.adapter.root.Candidate.ExpiresAt
+	out, err := c.Execute(context.Background(), "candidate-main", 1200, 0)
+	if err != nil || out.Candidate.Record.Status != "main_verified" {
+		t.Fatal("historical on-time candidate proof rejected", out, err)
 	}
 }

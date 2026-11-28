@@ -11,43 +11,43 @@ import (
 	"time"
 )
 
-func (a *Adapter) verifyCandidate(ctx context.Context, record CandidateRecord) (*CandidateEvidence, error) {
+func (a *Adapter) verifyCandidate(ctx context.Context, record CandidateRecord) (*CandidateEvidence, verifiedControl, error) {
 	tuple, c, pr, err := a.candidateTuple(ctx, record.Tuple.Request.Pull, false)
 	if err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	if candidateID(tuple) != record.ID {
-		return nil, fmt.Errorf("frozen candidate tuple changed")
+		return nil, c, fmt.Errorf("frozen candidate tuple changed")
 	}
 	r := tuple.Request
 	reviews, err := a.candidateReviews(ctx, c, r, pr, a.clock())
 	if err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	id, err := a.candidateRunID(ctx, c, r.Sweep)
 	if err != nil || id <= 0 {
-		return nil, fmt.Errorf("unique frozen candidate run unavailable")
+		return nil, c, fmt.Errorf("unique frozen candidate run unavailable")
 	}
 	if record.Evidence != nil && record.Evidence.Run != id {
-		return nil, fmt.Errorf("frozen candidate proof cannot be replaced")
+		return nil, c, fmt.Errorf("frozen candidate proof cannot be replaced")
 	}
 	var current runRecord
 	if err = a.request(ctx, "GET", fmt.Sprintf("%s/actions/runs/%d", a.prefix(), id), nil, &current); err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	if current.ID != id || current.RunAttempt != 1 || current.HeadBranch != strings.TrimPrefix(dispatchRef(r.Sweep), "heads/") || current.Status != "completed" || current.Conclusion != "success" || current.CreatedAt.IsZero() || current.CreatedAt.Before(c.approvedAt) || current.CreatedAt.Before(c.selection.policy.StartsAt) || current.UpdatedAt.Before(current.CreatedAt) || current.UpdatedAt.After(a.clock()) || !current.UpdatedAt.Before(r.ExpiresAt) {
-		return nil, fmt.Errorf("candidate run incomplete, rerun or late")
+		return nil, c, fmt.Errorf("candidate run incomplete, rerun or late")
 	}
 	completion, err := a.completion(ctx, c, r.Sweep, id, 1)
 	if err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	if completion == nil || completion.Linux != "success" || completion.MacOS != "success" || (r.Sweep.CompatibilityRequired && completion.Compatibility != "success") {
-		return nil, fmt.Errorf("full candidate proof incomplete")
+		return nil, c, fmt.Errorf("full candidate proof incomplete")
 	}
 	jobs, err := a.jobs(ctx, r.Sweep, id, 1)
 	if err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	minimum := map[string][]string{"contract": {"Validate frozen dispatch"}, "linux": {"Full Linux suite", "Cross-build macOS", "Upload frozen candidate builds"}, "macos": {"Full macOS suite"}, "web": {"Reproducible web build"}}
 	labels := map[string][]string{"contract": {"ubuntu-latest"}, "linux": {"ubuntu-latest"}, "macos": {"macos-latest"}, "web": {"ubuntu-latest"}}
@@ -60,20 +60,20 @@ func (a *Adapter) verifyCandidate(ctx context.Context, record CandidateRecord) (
 	}
 	ids, err := executedCandidateJobs(jobs, minimum, labels, r.ExpiresAt)
 	if err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	artifacts, err := a.candidateArtifacts(ctx, current, r)
 	if err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	checks, err := a.candidateChecks(ctx, r.Result, r.Checks, a.clock(), a.trustedJobChecks(jobs, minimum, labels))
 	if err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	// This closes observed races only. These HTTP reads are not a GitHub merge
 	// transaction and never mint a reusable permission or promotion capability.
 	if err = a.candidateRefs(ctx, r, false, ""); err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	evidence := &CandidateEvidence{Run: id, Workflow: c.requirement.WorkflowID, Attempt: 1, Jobs: ids, Reviews: reviews, Checks: checks, Artifacts: artifacts, At: a.clock().UTC()}
 	if record.Evidence != nil {
@@ -81,10 +81,10 @@ func (a *Adapter) verifyCandidate(ctx context.Context, record CandidateRecord) (
 		before, _ := json.Marshal(record.Evidence)
 		after, _ := json.Marshal(evidence)
 		if string(before) != string(after) {
-			return nil, fmt.Errorf("frozen evidence identity changed; invalidate explicitly")
+			return nil, c, fmt.Errorf("frozen evidence identity changed; invalidate explicitly")
 		}
 	}
-	return evidence, nil
+	return evidence, c, nil
 }
 
 // Discovery does not claim approval. Only the subsequent current-run and full
@@ -188,41 +188,42 @@ func (a *Adapter) candidateMainRun(ctx context.Context, workflow int64, path, me
 	return found, fmt.Errorf("main run enumeration incomplete")
 }
 
-func (a *Adapter) verifyCandidateMain(ctx context.Context, record CandidateRecord) (*CandidateMainEvidence, error) {
+func (a *Adapter) verifyCandidateMain(ctx context.Context, record CandidateRecord) (*CandidateMainEvidence, verifiedControl, error) {
+	var c verifiedControl
 	if record.Evidence == nil || record.Status != "verified" && record.Status != "main_verified" {
-		return nil, fmt.Errorf("candidate has no verified full proof")
+		return nil, c, fmt.Errorf("candidate has no verified full proof")
 	}
-	tuple, control, pr, err := a.candidateTuple(ctx, record.Tuple.Request.Pull, true)
+	tuple, c, pr, err := a.candidateTuple(ctx, record.Tuple.Request.Pull, true)
 	if err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	if candidateID(tuple) != record.ID || !record.Evidence.At.Before(pr.MergedAt) {
-		return nil, fmt.Errorf("candidate proof must predate merge")
+		return nil, c, fmt.Errorf("candidate proof must predate merge")
 	}
 	r := tuple.Request
 	if err = a.candidateObject(ctx, pr.MergeSHA, r); err != nil {
-		return nil, err
+		return nil, c, err
 	}
-	reviews, err := a.candidateReviews(ctx, control, r, pr, pr.MergedAt)
+	reviews, err := a.candidateReviews(ctx, c, r, pr, pr.MergedAt)
 	if err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	for p, want := range r.MainFiles {
 		b, e := a.content(ctx, pr.MergeSHA, p)
 		if e != nil || Digest(b) != want {
-			return nil, fmt.Errorf("actual-main execution source changed")
+			return nil, c, fmt.Errorf("actual-main execution source changed")
 		}
 	}
 	ci, err := a.candidateMainRun(ctx, r.MainCI, ".github/workflows/ci.yml", pr.MergeSHA, r.MainActor)
 	if err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	if ci.ID == record.Evidence.Run || ci.CreatedAt.Before(pr.MergedAt) {
-		return nil, fmt.Errorf("candidate proof cannot substitute for main")
+		return nil, c, fmt.Errorf("candidate proof cannot substitute for main")
 	}
 	jobs, err := a.jobs(ctx, Sweep{Target: pr.MergeSHA}, ci.ID, 1)
 	if err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	steps := map[string][]string{"changes": {"Require complete diff base"}, "check": {"compile tests without running them", "core and adapter boundary"}, "test": {"Run go test -timeout 30m ./..."}, "test-macos": {"go test"}, "web": {"the build is reproducible"}, "build-macos": {"build"}}
 	labels := map[string][]string{}
@@ -231,25 +232,25 @@ func (a *Adapter) verifyCandidateMain(ctx context.Context, record CandidateRecor
 	}
 	labels["test-macos"] = []string{"macos-latest"}
 	if len(jobs) != len(steps) {
-		return nil, fmt.Errorf("main CI job manifest changed")
+		return nil, c, fmt.Errorf("main CI job manifest changed")
 	}
 	ids, err := executedCandidateJobs(jobs, steps, labels, a.clock().Add(time.Nanosecond))
 	if err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	trustedChecks := a.trustedJobChecks(jobs, steps, labels)
 	runs := []int64{ci.ID}
 	if r.Sweep.CompatibilityRequired {
 		tmux, err := a.candidateMainRun(ctx, r.MainTmux, ".github/workflows/tmux.yml", pr.MergeSHA, r.MainActor)
 		if err != nil {
-			return nil, err
+			return nil, c, err
 		}
 		if tmux.ID == ci.ID || tmux.ID == record.Evidence.Run || tmux.CreatedAt.Before(pr.MergedAt) {
-			return nil, fmt.Errorf("main compatibility proof unrelated")
+			return nil, c, fmt.Errorf("main compatibility proof unrelated")
 		}
 		tmuxJobs, err := a.jobs(ctx, Sweep{Target: pr.MergeSHA}, tmux.ID, 1)
 		if err != nil {
-			return nil, err
+			return nil, c, err
 		}
 		full, labels := map[string][]string{}, map[string][]string{}
 		for _, v := range compatibilityVersions {
@@ -260,11 +261,11 @@ func (a *Adapter) verifyCandidateMain(ctx context.Context, record CandidateRecor
 			full[name], labels[name] = []string{"Test the holder"}, []string{"ubuntu-24.04"}
 		}
 		if len(tmuxJobs) != len(full)+1 || tmuxJobs["tmux changes"].Conclusion != "success" {
-			return nil, fmt.Errorf("main compatibility manifest changed")
+			return nil, c, fmt.Errorf("main compatibility manifest changed")
 		}
 		more, err := executedCandidateJobs(tmuxJobs, full, labels, a.clock().Add(time.Nanosecond))
 		if err != nil {
-			return nil, err
+			return nil, c, err
 		}
 		for id, name := range a.trustedJobChecks(tmuxJobs, full, labels) {
 			trustedChecks[id] = name
@@ -274,12 +275,12 @@ func (a *Adapter) verifyCandidateMain(ctx context.Context, record CandidateRecor
 	}
 	checks, err := a.candidateChecks(ctx, pr.MergeSHA, r.Checks, a.clock(), trustedChecks)
 	if err != nil {
-		return nil, err
+		return nil, c, err
 	}
 	if err = a.candidateRefs(ctx, r, true, pr.MergeSHA); err != nil {
-		return nil, err
+		return nil, c, err
 	}
-	return &CandidateMainEvidence{Merge: pr.MergeSHA, Tree: r.Tree, Runs: runs, Jobs: ids, Reviews: reviews, Checks: checks, At: a.clock().UTC()}, nil
+	return &CandidateMainEvidence{Merge: pr.MergeSHA, Tree: r.Tree, Runs: runs, Jobs: ids, Reviews: reviews, Checks: checks, At: a.clock().UTC()}, c, nil
 }
 
 // Actions checks share one app identity across workflows. Bind them to actual

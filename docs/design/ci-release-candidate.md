@@ -30,12 +30,13 @@ reports Closed=true and nonzero exit even after successful evidence collection:
 an unproved promotion route is still closed. Status is historical evidence, not
 a cached allowance. Internal success must not be translated into worker Done.
 
-Freeze validates actual ready/open PR and refs, exact ordered C parents B/H and
+Freeze validates actual ready/open PR, its GitHub test-merge result C and refs, exact ordered C parents B/H and
 tree T, approved policy bytes at C, pinned dependencies/main workflow sources,
 and the complete B..C classifier result. Unknown or truncated diff closes; no
 candidate can choose its own compatibility exemption. G must already be an
 ancestor of B (or equal B). Every first-parent merge G..H needs actual integration
-PR provenance and its mandatory exact-head reviews before integration. Manual
+PR provenance and its mandatory exact-head reviews before integration, including
+reviewers in an applicable signed owner grant and high-risk requirements. Manual
 writes, ambiguous association, missing provider reviews and incomplete ancestry
 fail. The initial source contract retains integration merge commits; a squash or
 rewritten source needs a separately reviewed provenance contract, not an assumed
@@ -47,7 +48,10 @@ scope. Invalidation authenticates the responsible owner, retains tuple/evidence
 and diagnosis, and prevents a late verifier from committing over it. A different
 tuple may then be frozen without deleting the old record. Repository/key identity
 remains pinned across this history. Concurrent observers use revision CAS; these
-database guarantees do not serialize external GitHub writers.
+database guarantees do not serialize external GitHub writers. Every mutation
+rechecks current root/policy validity inside that serialized path; historical
+on-time candidate evidence may be observed after candidate expiry, while expired
+current authority cannot commit a new main observation.
 
 ## Full proof and artifacts
 

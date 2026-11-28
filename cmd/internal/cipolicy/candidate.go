@@ -133,7 +133,7 @@ func (a *Adapter) candidateTuple(ctx context.Context, pull int, merged bool) (Ca
 	if err = a.request(ctx, "GET", fmt.Sprintf("%s/pulls/%d", a.prefix(), pull), nil, &pr); err != nil {
 		return tuple, c, pr, err
 	}
-	if pr.Number != pull || pr.Draft || pr.Head.Repo.ID != a.root.RepositoryID || pr.Base.Repo.ID != a.root.RepositoryID || pr.Base.Ref != a.root.ControlRef || pr.Head.Ref != r.SourceRef || pr.Head.SHA != r.Head || (!merged && (pr.State != "open" || pr.Merged || pr.Base.SHA != r.Base)) || (merged && (!pr.Merged || pr.State != "closed" || pr.MergedAt.IsZero() || !pr.MergedAt.Before(r.ExpiresAt))) {
+	if pr.Number != pull || pr.Draft || pr.Head.Repo.ID != a.root.RepositoryID || pr.Base.Repo.ID != a.root.RepositoryID || pr.Base.Ref != a.root.ControlRef || pr.Head.Ref != r.SourceRef || pr.Head.SHA != r.Head || (!merged && (pr.State != "open" || pr.Merged || pr.Base.SHA != r.Base || pr.MergeSHA != r.Result)) || (merged && (!pr.Merged || pr.State != "closed" || pr.MergedAt.IsZero() || !pr.MergedAt.Before(r.ExpiresAt))) {
 		return tuple, c, pr, fmt.Errorf("frozen candidate PR changed")
 	}
 	if err = a.candidateRefs(ctx, *r, merged, pr.MergeSHA); err != nil {
@@ -394,13 +394,13 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 		pull = a.root.Candidate.Pull
 	}
 	if operation == "candidate-freeze" {
-		tuple, _, _, err := a.candidateTuple(ctx, pull, false)
+		tuple, control, _, err := a.candidateTuple(ctx, pull, false)
 		if err != nil {
 			return out, err
 		}
 		b, _ := json.Marshal(tuple)
 		err = s.transaction(ctx, func(conn *sql.Conn) error {
-			if !s.clock().Before(tuple.Request.ExpiresAt) {
+			if !s.clock().Before(a.root.ExpiresAt) || control.selection.Report(s.clock()).FullOnly || !s.clock().Before(tuple.Request.ExpiresAt) {
 				return fmt.Errorf("candidate expired before freeze")
 			}
 			var previous []byte
@@ -457,6 +457,9 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 			}
 			// Retain tuple/evidence and an auditable reason; no remote operation.
 			err = s.transaction(ctx, func(conn *sql.Conn) error {
+				if !s.clock().Before(a.root.ExpiresAt) || control.selection.Report(s.clock()).FullOnly {
+					return fmt.Errorf("candidate authority expired before invalidation")
+				}
 				row, e := conn.ExecContext(ctx, "UPDATE candidate SET revision=revision+1,status='invalidated' WHERE id=? AND revision=? AND status IN ('frozen','verified')", record.ID, record.Revision)
 				if e != nil {
 					return e
@@ -473,11 +476,12 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 				return out, fmt.Errorf("candidate invalidated")
 			}
 			var evidence any
+			var control verifiedControl
 			column, status := "evidence", "verified"
 			if operation == "candidate-verify" {
-				evidence, err = a.verifyCandidate(ctx, record)
+				evidence, control, err = a.verifyCandidate(ctx, record)
 			} else {
-				evidence, err = a.verifyCandidateMain(ctx, record)
+				evidence, control, err = a.verifyCandidateMain(ctx, record)
 				column, status = "main_evidence", "main_verified"
 			}
 			if err != nil {
@@ -485,6 +489,9 @@ func (c *Coordinator) candidateOperation(ctx context.Context, operation string, 
 			}
 			b, _ := json.Marshal(evidence)
 			err = s.transaction(ctx, func(conn *sql.Conn) error {
+				if !s.clock().Before(a.root.ExpiresAt) || control.selection.Report(s.clock()).FullOnly {
+					return fmt.Errorf("candidate authority expired before evidence commit")
+				}
 				if operation == "candidate-verify" && !s.clock().Before(record.Tuple.Request.ExpiresAt) {
 					return fmt.Errorf("candidate expired before evidence commit")
 				}

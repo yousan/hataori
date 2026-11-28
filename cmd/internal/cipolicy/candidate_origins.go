@@ -63,7 +63,16 @@ func (a *Adapter) candidateOrigins(ctx context.Context, r CandidateRequirement) 
 			return nil, err
 		}
 		required := append([]Identity{}, a.root.RequiredPullReviews[found.Number]...)
+		if grant, ok := a.root.Routes[found.Number]; ok {
+			if grant.Head != found.Head.SHA || grant.Base != object.Parents[0].SHA || grant.Ref != a.root.IntegrationRef {
+				return nil, fmt.Errorf("source grant does not match integration")
+			}
+			required = append(required, grant.Reviews...)
+		}
 		if Classify(changes, true).HighRisk {
+			if len(a.root.RiskReviewers) == 0 {
+				return nil, fmt.Errorf("high-risk review requirements unestablished")
+			}
 			required = append(required, a.root.RiskReviewers...)
 		}
 		var ids []int64
