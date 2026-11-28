@@ -9,6 +9,13 @@ import (
 
 func (*Adapter) CanDeferInput() bool { return true }
 
+func (c *codec) DeferredInputReady(command [][]byte) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, thread, err := deferredCommand(command)
+	return err == nil && thread == c.session && c.ready && !c.closed && c.pendingReady == nil && c.nativeTurn == ""
+}
+
 func deferredCommand(command [][]byte) (id int, thread string, err error) {
 	if len(command) != 1 {
 		return 0, "", errors.New("codex: deferred input needs one complete turn/start")

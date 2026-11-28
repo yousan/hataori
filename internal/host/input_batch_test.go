@@ -3,11 +3,34 @@ package host
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"sync"
 	"testing"
 )
+
+func TestInputBatchExplicitRefusalDiffersFromLostReply(t *testing.T) {
+	h := &host{run: "fixture-run", done: make(chan struct{}), input: inputWriterFunc(func(b []byte) (int, error) { t.Fatal("refused batch wrote bytes"); return 0, nil }), batches: map[string]InputReceipt{}}
+	for n := 0; n < MaxInputBatches; n++ {
+		h.batches[string(rune(n+1))] = InputReceipt{State: "written", Digest: "old"}
+	}
+	c := batchPeer(t, h)
+	_, err := c.InputBatch(InputBatch{Run: h.run, Key: "new-key", Data: [][]byte{[]byte("never written")}})
+	var refused *InputBatchRefused
+	if !errors.As(err, &refused) {
+		t.Fatalf("explicit capacity refusal was ambiguous: %v", err)
+	}
+	got, err := c.InputReceipt(h.run, "new-key")
+	if err != nil || got.State != "absent" {
+		t.Fatal(got, err)
+	}
+	c.Close()
+	_, err = c.InputBatch(InputBatch{Run: h.run, Key: "new-key", Data: [][]byte{[]byte("never written")}})
+	if err == nil || errors.As(err, &refused) {
+		t.Fatalf("connection loss was called a received refusal: %v", err)
+	}
+}
 
 func batchPeer(t *testing.T, h *host) *Client {
 	t.Helper()

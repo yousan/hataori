@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -32,6 +34,8 @@ type deferredPeer struct {
 	writes     int
 	bytes      []byte
 	lost, hold bool
+	refuse     bool
+	old        bool
 }
 
 func (p *deferredPeer) listen(t *testing.T, dir string) {
@@ -66,7 +70,11 @@ func (p *deferredPeer) serve(c net.Conn) {
 		reply := map[string]any{"ok": true}
 		drop := false
 		if req.Op == "input-capability" {
-			reply["input_capability"] = host.InputCapability{Version: host.InputBatchVersion, Run: p.run}
+			if p.old {
+				reply["error"] = "fixture old receiver has no capability"
+			} else {
+				reply["input_capability"] = host.InputCapability{Version: host.InputBatchVersion, Run: p.run}
+			}
 		} else if req.Batch != nil && req.Batch.Run == p.run {
 			b := req.Batch
 			r, ok := p.receipts[b.Key]
@@ -74,6 +82,14 @@ func (p *deferredPeer) serve(c net.Conn) {
 				r.State = "absent"
 			}
 			if req.Op == "input-batch" && !ok {
+				if p.refuse {
+					reply["error"] = "fixture capacity refusal"
+					p.mu.Unlock()
+					if enc.Encode(reply) != nil {
+						return
+					}
+					continue
+				}
 				r = host.InputReceipt{State: "pending", Digest: host.InputBatchDigest(b.Data)}
 				p.data[b.Key] = b.Data
 				if !p.hold {
@@ -118,9 +134,15 @@ func (p *deferredPeer) release() {
 }
 func (p *deferredPeer) count() int { p.mu.Lock(); defer p.mu.Unlock(); return p.writes }
 
+type undeclaredDeferredCodec struct{ agent.Codec }
+type undeclaredDeferredAdapter struct{ agent.Adapter }
+
 func deferredNative(t *testing.T) (before [][]byte, command, response, started, user, ended []byte, text string) {
+	return deferredNativeScenario(t, "start")
+}
+func deferredNativeScenario(t *testing.T, scenario string) (before [][]byte, command, response, started, user, ended []byte, text string) {
 	t.Helper()
-	f, e := os.Open("../agent/codex/testdata/0.163.0/start/wire.jsonl")
+	f, e := os.Open(filepath.Join("../agent/codex/testdata/0.163.0", scenario, "wire.jsonl"))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -185,10 +207,11 @@ func deferredNative(t *testing.T) (before [][]byte, command, response, started, 
 }
 
 func TestDeferredRecovery(t *testing.T) {
-	for _, boundary := range []string{"accepted", "frozen", "lost-reply", "reserved", "ack-uncommitted", "ack-committed"} {
+	for _, boundary := range []string{"accepted", "frozen", "lost-reply", "reserved", "reserved-action", "holder-preference", "unsupported-remote", "unsupported-held", "unsupported-codec", "unsupported-adapter", "unsupported-old", "ack-uncommitted", "ack-committed", "refused", "absent-active", "late-action", "cached-ack-failure"} {
 		t.Run(boundary, func(t *testing.T) {
 			ctx := context.Background()
-			before, _, response, started, user, _, text := deferredNative(t)
+			before, _, response, started, user, ended, text := deferredNative(t)
+			_, _, _, secondStarted, secondUser, secondEnded, _ := deferredNativeScenario(t, "resume")
 			ad, e := codex.New(nil)
 			if e != nil {
 				t.Fatal(e)
@@ -198,7 +221,7 @@ func TestDeferredRecovery(t *testing.T) {
 			r.Machine = &session.Machine{Store: r.Store}
 			lv.adapter = ad
 			r.live = map[int64]*live{1: lv}
-			p := &deferredPeer{run: "fixture-original-run", receipts: map[string]host.InputReceipt{}, data: map[string][][]byte{}, lost: boundary == "lost-reply", hold: boundary == "reserved"}
+			p := &deferredPeer{run: "fixture-original-run", receipts: map[string]host.InputReceipt{}, data: map[string][][]byte{}, lost: boundary == "lost-reply", hold: boundary == "reserved" || boundary == "reserved-action", refuse: boundary == "refused"}
 			p.listen(t, lv.dir)
 			c := &core.Core{Store: r.Store, Machine: r.Machine, Runner: r, Log: r.Log, Scopes: map[string]core.Scope{"s": {Enabled: true}}, People: people.New([]people.Person{{Name: "sv", IDs: []string{"supervisor:s"}}}, "owner", map[string][]string{"s": {"sv"}})}
 			caller := control.Caller{From: "supervisor:s", AsksIn: 2, Scopes: []string{"s"}, May: control.OpRead | control.OpSend, OrdinaryOnly: true, RefuseBusy: true, DeferInput: true}
@@ -235,15 +258,40 @@ func TestDeferredRecovery(t *testing.T) {
 			}
 			x.appendTo(filepath.Join(lv.dir, host.EventsFile), before...)
 			readCommit()
+			if boundary == "holder-preference" {
+				r.Holder = HolderTmux // preference does not turn an owned pipe host into tmux
+			}
 			api := c.As(caller)
 			req := control.DeferredSendRequest{Action: "queue", Target: 1, Key: "stable", Text: text}
+			switch boundary {
+			case "unsupported-remote":
+				lv.remote = true
+			case "unsupported-held":
+				if e = os.WriteFile(filepath.Join(lv.dir, HeldFile), []byte(`{"holder":"tmux"}`), 0600); e != nil {
+					t.Fatal(e)
+				}
+			case "unsupported-codec":
+				lv.codec = undeclaredDeferredCodec{lv.codec}
+			case "unsupported-adapter":
+				lv.adapter = undeclaredDeferredAdapter{ad}
+			case "unsupported-old":
+				p.old = true // before the first capability query
+			}
 			queued, e := api.DeferredSend(ctx, req)
+			if strings.HasPrefix(boundary, "unsupported-") {
+				var artifacts int
+				r.Store.DB.QueryRow(`SELECT (SELECT count(*) FROM deferred_sends)+(SELECT count(*) FROM proposals)`).Scan(&artifacts)
+				if !errors.Is(e, control.ErrNotSupported) || artifacts != 0 || p.count() != 0 {
+					t.Fatalf("unsupported preflight created effects: %v artifacts=%d writes=%d", e, artifacts, p.count())
+				}
+				return
+			}
 			if e != nil {
 				t.Fatal(e)
 			}
-			if boundary == "accepted" || boundary == "frozen" {
+			if boundary == "accepted" || boundary == "frozen" || boundary == "absent-active" || boundary == "late-action" {
 				r.point = func(point string) {
-					if (boundary == "accepted" && point == "before pending dispatch") || (boundary == "frozen" && point == "deferred frozen") {
+					if ((boundary == "accepted" || boundary == "late-action") && point == "before pending dispatch") || ((boundary == "frozen" || boundary == "absent-active") && point == "deferred frozen") {
 						panic("fixture daemon stops")
 					}
 				}
@@ -259,6 +307,49 @@ func TestDeferredRecovery(t *testing.T) {
 				r.point = nil
 			} else {
 				c.Deferred.DispatchOnce(ctx)
+			}
+			if boundary == "absent-active" {
+				x.appendTo(filepath.Join(lv.dir, host.EventsFile), secondStarted, secondUser)
+			}
+			if boundary == "late-action" {
+				x.appendTo(filepath.Join(lv.dir, host.EventsFile), started, user)
+				readCommit()
+				r.Store.DB.QueryRow(`SELECT coalesce(max(id),0) FROM pending_inputs WHERE session_id=1`).Scan(&lv.upTo)
+				r.handOverPending(lv)
+				x.appendTo(filepath.Join(lv.dir, host.EventsFile), ended, secondStarted, secondUser)
+				readCommit()
+				if p.count() != 0 {
+					t.Fatal("delayed action crossed a native active turn")
+				}
+				got, e := api.DeferredSend(ctx, control.DeferredSendRequest{Action: "inspect", Number: queued.Number})
+				if e != nil || got.State != "accepted" {
+					t.Fatalf("busy delayed action crossed the freeze/cancellation cutoff: %+v %v", got, e)
+				}
+			}
+			if boundary == "cached-ack-failure" {
+				x.appendTo(filepath.Join(lv.dir, host.EventsFile), response)
+				x.commitStep() // retained native evidence checkpoint, not an ACK commit
+				for _, q := range []string{`CREATE TABLE fixture_ack_fault(flag INTEGER)`, `INSERT INTO fixture_ack_fault VALUES(1)`, `CREATE TRIGGER fixture_fail_ack BEFORE UPDATE ON deferred_sends WHEN NEW.state='delivered' AND EXISTS(SELECT 1 FROM fixture_ack_fault WHERE flag=1) BEGIN SELECT RAISE(ABORT,'fixture ACK commit failure'); END`} {
+					if _, e = r.Store.DB.Exec(q); e != nil {
+						t.Fatal(e)
+					}
+				}
+				x.lv = x.load(ad.NewCodec(agent.Spec{}))
+				lv = x.lv
+				lv.adapter = ad
+				r.live[1] = lv
+				r.Store.DB.QueryRow(`SELECT last_seq FROM sessions WHERE id=1`).Scan(&lv.seq)
+				r.warm(lv)
+				r.handOverWritten(lv)
+				got, e := api.DeferredSend(ctx, control.DeferredSendRequest{Action: "inspect", Number: queued.Number})
+				var pending int
+				r.Store.DB.QueryRow(`SELECT count(*) FROM pending_inputs WHERE session_id=1`).Scan(&pending)
+				if e != nil || got.State != "handoff" || pending != 1 || !lv.warmPending || !lv.deferredBlocked {
+					t.Fatalf("failed cached ACK was consumed: %+v %v pending=%d warm=%v blocked=%v", got, e, pending, lv.warmPending, lv.deferredBlocked)
+				}
+				if _, e = r.Store.DB.Exec(`UPDATE fixture_ack_fault SET flag=0`); e != nil {
+					t.Fatal(e)
+				}
 			}
 			if boundary == "ack-uncommitted" || boundary == "ack-committed" {
 				x.appendTo(filepath.Join(lv.dir, host.EventsFile), response)
@@ -295,16 +386,61 @@ func TestDeferredRecovery(t *testing.T) {
 					t.Fatal(e)
 				}
 				r.handOverPending(lv)
-				if boundary == "reserved" {
+				if boundary == "absent-active" || boundary == "late-action" {
+					if p.count() != 0 {
+						t.Fatal("native busy recovery wrote the absent frozen request")
+					}
+				}
+				if boundary == "reserved" || boundary == "reserved-action" {
 					if p.count() != 0 || !lv.deferredBlocked {
 						t.Fatal("pending receiver was retried or allowed timeout")
 					}
 					if a := r.tickCodec(lv); len(a.Events) != 0 {
 						t.Fatal("pending write expired")
 					}
+					if boundary == "reserved-action" {
+						// An already-consumed later codec action must neither write
+						// around the pending receiver nor disappear without rewarm.
+						if e = r.act(lv, agent.Actions{Write: [][]byte{[]byte("later fixture action")}}); e == nil || !lv.warmPending || !lv.pending {
+							t.Fatal("pending receipt did not fence and reconstruct the later action", e)
+						}
+					}
 				}
 			}
-			if boundary == "reserved" {
+			if boundary == "absent-active" || boundary == "late-action" {
+				x.appendTo(filepath.Join(lv.dir, host.EventsFile), secondEnded)
+				readCommit()
+				if e = r.reconcileDeferred(lv); e != nil {
+					t.Fatal(e)
+				}
+				if p.count() != 1 {
+					t.Fatalf("idle boundary produced %d writes", p.count())
+				}
+				got, e := api.DeferredSend(ctx, control.DeferredSendRequest{Action: "inspect", Number: queued.Number})
+				if e != nil || got.State != "handoff" {
+					t.Fatalf("write alone claimed delivery: %+v %v", got, e)
+				}
+				return // exact ACK cases above use their original native turn IDs
+			}
+			if boundary == "refused" {
+				got, e := api.DeferredSend(ctx, control.DeferredSendRequest{Action: "inspect", Number: queued.Number})
+				var pending int
+				r.Store.DB.QueryRow(`SELECT count(*) FROM pending_inputs WHERE session_id=1`).Scan(&pending)
+				if e != nil || got.State != "failed" || p.count() != 0 || pending != 0 {
+					t.Fatalf("permanent refusal did not terminate safely: %+v %v writes=%d pending=%d", got, e, p.count(), pending)
+				}
+				return
+			}
+			if boundary == "reserved" || boundary == "reserved-action" {
+				if lv.warmPending {
+					x.lv = x.load(ad.NewCodec(agent.Spec{}))
+					lv = x.lv
+					lv.adapter = ad
+					r.live[1] = lv
+					r.Store.DB.QueryRow(`SELECT last_seq FROM sessions WHERE id=1`).Scan(&lv.seq)
+					r.warm(lv)
+					r.handOverWritten(lv)
+				}
 				p.release()
 				if e = r.reconcileDeferred(lv); e != nil {
 					t.Fatal(e)
@@ -314,7 +450,7 @@ func TestDeferredRecovery(t *testing.T) {
 				t.Fatalf("physical fixture writes %d", p.count())
 			}
 			// A repeated same-text notification is not a matching request ACK.
-			if boundary != "ack-committed" && boundary != "ack-uncommitted" {
+			if boundary != "ack-committed" && boundary != "ack-uncommitted" && boundary != "cached-ack-failure" {
 				x.appendTo(filepath.Join(lv.dir, host.EventsFile), started, user, user)
 				readCommit()
 				got, e := api.DeferredSend(ctx, control.DeferredSendRequest{Action: "inspect", Number: queued.Number})

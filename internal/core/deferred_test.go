@@ -289,6 +289,47 @@ func TestDeferredUnsupportedTransportCreatesNothing(t *testing.T) {
 	}
 }
 
+func TestDeferredProposalDecisionPreservesOutcomeAndDecider(t *testing.T) {
+	for _, decision := range []string{"refuse", "authority-changed", "target-changed"} {
+		t.Run(decision, func(t *testing.T) {
+			x := newDeferredFixture(t)
+			x.core.People = people.New([]people.Person{{Name: "sv", IDs: []string{"supervisor:s"}}, {Name: "owner", IDs: []string{"fixture:human"}}}, "owner", map[string][]string{"s": {"sv"}})
+			x.caller.Propose = true
+			r := x.queue(t)
+			var handle control.RequestID
+			if e := x.core.Store.DB.QueryRow(`SELECT handle FROM proposals WHERE id=?`, r.Proposal).Scan(&handle); e != nil {
+				t.Fatal(e)
+			}
+			if decision == "authority-changed" {
+				x.repos = nil
+			}
+			if decision == "target-changed" {
+				if _, e := x.core.Store.DB.Exec(`UPDATE sessions SET agent_session_id='different-conversation' WHERE id=?`, x.sid); e != nil {
+					t.Fatal(e)
+				}
+			}
+			decider := x.core.As(control.Caller{Principal: "owner", From: "fixture:human", Scopes: []string{"s"}, May: control.OpAnswer})
+			if e := decider.Answer(context.Background(), handle, control.Answer{Allow: decision != "refuse"}); e != nil {
+				t.Fatal(e)
+			}
+			var state, by, from string
+			if e := x.core.Store.DB.QueryRow(`SELECT state,approved_by,approved_from FROM proposals WHERE id=?`, r.Proposal).Scan(&state, &by, &from); e != nil {
+				t.Fatal(e)
+			}
+			want := proposalFailed
+			if decision == "refuse" {
+				want = proposalRefused
+			}
+			if state != want || by != "owner" || from != "fixture:human" {
+				t.Fatalf("lost human decision: outcome=%s by=%s from=%s", state, by, from)
+			}
+			if got := x.receipt(t, r.Number).State; got != "refused" {
+				t.Fatal(got)
+			}
+		})
+	}
+}
+
 func TestDeferredLateQuestionAndRevocationBeforeFirstAttempt(t *testing.T) {
 	for _, frozen := range []bool{false, true} {
 		t.Run(fmt.Sprint(frozen), func(t *testing.T) {
@@ -427,5 +468,41 @@ func TestDeferredReusedPendingSlotBindsCurrentOrigin(t *testing.T) {
 	}
 	if _, bound, e = x.d.Input(ctx, x.sid, input); e != nil || bound {
 		t.Fatalf("old deferred receipt captured ordinary input: %v %v", bound, e)
+	}
+}
+
+// The fake runner is record-only. Native CannotResume parsing is covered by
+// the Codex resume_unknown capture; this verifies its durable core boundary
+// without starting any host or replacement worker.
+func TestDeferredCannotResumeRemainsFailedAcrossReconstruction(t *testing.T) {
+	x := newDeferredFixture(t)
+	ctx := context.Background()
+	r := x.queue(t)
+	x.idle(t)
+	if e := x.core.Machine.Apply(ctx, x.sid, session.Input{Kind: session.IdleTimeout}); e != nil {
+		t.Fatal(e)
+	}
+	x.d.DispatchOnce(ctx)
+	conversation, bound, e := x.d.ResumeIdentity(ctx, x.sid)
+	if e != nil || !bound || conversation != "original-conversation" {
+		t.Fatal("same-session resume lost its original identity", conversation, bound, e)
+	}
+	for range 2 {
+		x.reconstruct()
+		if e := x.core.Store.Update(ctx, func(tx *store.Tx) error {
+			prevent, e := x.d.PreventReplacementTx(ctx, tx, x.sid)
+			if e == nil && !prevent {
+				return errors.New("deferred cannot-resume allowed a replacement")
+			}
+			return e
+		}); e != nil {
+			t.Fatal(e)
+		}
+		if got := x.receipt(t, r.Number); got.State != "failed" || !strings.Contains(got.Reason, "no replacement") {
+			t.Fatal(got)
+		}
+		if count(t, x.core.Store, "sessions") != 2 {
+			t.Fatal("replacement session was created")
+		}
 	}
 }

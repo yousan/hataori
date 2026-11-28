@@ -1980,6 +1980,10 @@ delivery. Existing immediate `Send` semantics are unchanged. See
 `agent.DeferredInputAdapter` is optional: `CanDeferInput() bool` and
 `ValidateDeferredInput(Actions) error` declare one complete pipe submission,
 idle-only hold and exact Written ACK reconstruction. Absence refuses queueing.
+The codec must also implement `DeferredInputCodec.DeferredInputReady` to
+recheck current native idle state before freezing an emitted action and before
+the first attempt when the original receiver proves a frozen key absent. An
+earlier emitted action or the logical session state alone is insufficient.
 `agent.Input.IdleOnly` survives acceptance and codec holding: it cannot steer
 or be acknowledged by equal text/a bare native turn notification.
 `agent.Input.Command [][]byte` is opaque frozen adapter command evidence for
@@ -1998,7 +2002,13 @@ most 128 KiB/128 chunks. The durable frozen batch and ordinary Written marker
 commit together. Reconnect reconciles only that original run/key/bytes after
 retained-read/readiness checks; written clocks come from actual receiver
 completion and are preserved across reconstructions. Host receipt is not an
-agent ACK. Dead receivers/partial writes are explicit unconfirmed failure,
+agent ACK. A pending receipt fences later codec I/O; consumed later actions
+require reconstruction before writing. Cached exact ACK restoration propagates
+store failures and reconstructs again rather than losing the acknowledgement.
+A complete receiver rejection (including non-evicting capacity exhaustion) is
+terminal, distinct from an ambiguous connection failure. Global terminal holder
+preference does not exclude an existing owned pipe host; the actual holder is
+checked. Dead receivers/partial writes are explicit unconfirmed failure,
 without a replacement worker or a new-run retry. No claim is made for exactly
 once arbitrary pipe effects across receiver death.
 

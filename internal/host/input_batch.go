@@ -36,6 +36,13 @@ type InputReceipt struct {
 	CompletedAt int64  `json:"completed_at,omitempty"`
 }
 
+// InputBatchRefused means a complete receiver refusal reply was received.
+// It is distinct from losing a reply after the receiver may have reserved a
+// key. In particular, a non-evicting full cache cannot become free on retry.
+type InputBatchRefused struct{}
+
+func (*InputBatchRefused) Error() string { return "host: idempotent input was explicitly refused" }
+
 func InputBatchDigest(data [][]byte) string {
 	b, _ := json.Marshal(data)
 	s := sha256.Sum256(b)
@@ -143,6 +150,9 @@ func (c *Client) inputBatch(b InputBatch, lookup bool) (InputReceipt, error) {
 	}
 	r, err := c.call(request{Op: op, Batch: &b})
 	if err != nil {
+		if r.Error != "" {
+			return InputReceipt{}, &InputBatchRefused{}
+		}
 		return InputReceipt{}, err
 	}
 	if r.InputReceipt == nil {

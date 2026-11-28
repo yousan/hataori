@@ -8,6 +8,13 @@ type DeferredInputAdapter interface {
 	ValidateDeferredInput(Actions) error
 }
 
+// DeferredInputCodec rechecks current native idle eligibility at the actual
+// effect boundary, including a frozen request that the receiver proves absent.
+// A previously emitted action alone is not current eligibility evidence.
+type DeferredInputCodec interface {
+	DeferredInputReady(command [][]byte) bool
+}
+
 func CanDeferInput(a Adapter) bool {
 	d, ok := a.(DeferredInputAdapter)
 	return ok && d.CanDeferInput()

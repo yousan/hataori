@@ -1257,7 +1257,7 @@ func (r *Runner) handOverWritten(lv *live) {
 	r.Store.DB.QueryRow(`SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi)
 	var f firstInput
 	if fi != "" && json.Unmarshal([]byte(fi), &f) == nil && f.Sent && f.Written {
-		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true, WrittenAt: r.writtenClock(lv, f.WrittenAt), WrittenText: f.WrittenText, Earlier: !f.Current}))
+		r.restoreWrittenInput(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true, WrittenAt: r.writtenClock(lv, f.WrittenAt), WrittenText: f.WrittenText, Earlier: !f.Current})
 		lv.resend = false
 	}
 	rows, err := r.Store.DB.Query(`SELECT id, data, context, written, written_text, written_at FROM pending_inputs
@@ -1282,7 +1282,7 @@ func (r *Runner) handOverWritten(lv *live) {
 	rows.Close()
 	for _, in := range ins {
 		in.WrittenAt = r.writtenClock(lv, in.WrittenAt.UnixMilli())
-		r.do(lv, r.inputActions(lv, in))
+		r.restoreWrittenInput(lv, in)
 	}
 }
 
@@ -1809,8 +1809,16 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 		r.Log.Warn("deferred input recovery waits", "session", lv.id, "err", err)
 		return true
 	}
-	for _, a := range b.actions {
+	if lv.deferredBlocked {
+		r.holdDeferredActions(lv, b.actions)
+		return true
+	}
+	for i, a := range b.actions {
 		r.act(lv, a)
+		if lv.deferredBlocked {
+			r.holdDeferredActions(lv, b.actions[i+1:])
+			return true
+		}
 	}
 	if len(lv.replayReplies) > 0 {
 		r.replayReplies(lv)
@@ -2285,6 +2293,10 @@ func (r *Runner) do(lv *live, a agent.Actions) error {
 // act hands input to the agent through its holder and answers waiting hook
 // calls. It returns the first error, which it has logged.
 func (r *Runner) act(lv *live, a agent.Actions) error {
+	if lv.deferredBlocked && (len(a.Keys) > 0 || len(a.Write) > 0 || len(a.Reply) > 0) {
+		r.holdDeferredActions(lv, []agent.Actions{a})
+		return core.ErrMachineUnchecked
+	}
 	if handled, err := r.actDeferred(lv, a); handled {
 		return err
 	}

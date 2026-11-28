@@ -76,6 +76,7 @@ type codec struct {
 	turnID            string                // current turn id
 	sent              []*pendingInput       // written inputs awaiting their report
 	queue             []agent.Input         // inputs waiting to be written
+	nativeTurn        string                // actual provider turn; distinct from an unsent requested turn
 	requestState
 	toolState
 	usageState
@@ -483,6 +484,9 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 		}
 	}
 	if r.Turn != nil {
+		if r.Turn.Status == "inProgress" && c.nativeTurn == "" && !c.deferredCompleted[r.Turn.ID] {
+			c.nativeTurn = r.Turn.ID
+		}
 		c.rememberDeferred(id, deferredReply{turn: r.Turn.ID})
 		for _, s := range c.sent {
 			if s.request == id {
@@ -510,6 +514,7 @@ func (c *codec) reportStart(a *agent.Actions, starter agent.Starter, index int) 
 
 // turnStarted records a turn start and reports it when its input is known.
 func (c *codec) turnStarted(a *agent.Actions, p params) {
+	c.nativeTurn = p.Turn.ID
 	c.steerBlocked = false
 	c.running = true
 	c.started = false
@@ -592,6 +597,9 @@ func (c *codec) item(a *agent.Actions, p params, method string, line []byte) {
 // turnCompleted reports the final text and end of a turn.
 func (c *codec) turnCompleted(a *agent.Actions, p params) {
 	c.completeDeferredTurn(p.Turn.ID)
+	if c.nativeTurn == p.Turn.ID {
+		c.nativeTurn = ""
+	}
 	if !c.started {
 		c.reportStart(a, agent.ByAgent, -1)
 	}

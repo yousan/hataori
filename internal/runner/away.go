@@ -260,7 +260,7 @@ func (r *Runner) writtenClock(lv *live, at int64) time.Time {
 }
 
 func (r *Runner) tickCodec(lv *live) agent.Actions {
-	if lv.deferredBlocked {
+	if lv.deferredBlocked || (r.Deferred != nil && lv.warmPending) {
 		return agent.Actions{}
 	}
 	if c, ok := lv.codec.(agent.ClockedTicker); ok {

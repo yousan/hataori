@@ -80,15 +80,18 @@ func (d *DeferredInputs) answerProposal(ctx context.Context, a *api, req control
 				return e
 			}
 		}
-		if e = d.transitionTx(ctx, tx, &r, next, reason); e != nil {
-			return e
-		}
 		var linkJSON any
 		if link != nil {
 			raw, _ := json.Marshal(link)
 			linkJSON = string(raw)
 		}
 		if _, e = tx.ExecContext(ctx, `UPDATE proposals SET state=?,closed_at=?,approved_by=?,approved_from=?,approved_link=?,approved_via=? WHERE id=? AND state='open'`, outcome, d.Core.now().UnixMilli(), string(a.caller.Principal), a.caller.From, linkJSON, a.caller.Via, number); e != nil {
+			return e
+		}
+		// Record this human decision before transitionTx cancels any still
+		// open proposal. Refusal/failed approval must retain the real outcome
+		// and decider rather than looking like an automatic cancellation.
+		if e = d.transitionTx(ctx, tx, &r, next, reason); e != nil {
 			return e
 		}
 		data := map[string]any{"request": req, "number": number, "action": "send", "allow": allow, "outcome": outcome, "target": r.Target, "deferred": id, "principal": a.caller.Principal}

@@ -36,11 +36,14 @@ func (r *Runner) deferredResume(ctx context.Context, sid int64, first firstInput
 // deferredClient never starts a host or changes its holder to gain support.
 // Each receipt operation has a dedicated bounded connection.
 func (r *Runner) deferredClient(ctx context.Context, lv *live) (*host.Client, string, error) {
-	if lv.remote || lv.taken != nil || r.Holder == HolderTmux || !agent.CanDeferInput(lv.adapter) {
+	if lv.remote || lv.taken != nil || !agent.CanDeferInput(lv.adapter) {
 		return nil, "", errors.New("this adapter or holder cannot durably defer input")
 	}
 	if _, ok := heldOf(lv.dir); ok {
 		return nil, "", errors.New("a held window cannot durably defer input")
+	}
+	if _, ok := lv.codec.(agent.DeferredInputCodec); !ok {
+		return nil, "", errors.New("the codec has no current native eligibility contract")
 	}
 	c, err := host.DialContext(ctx, lv.dir)
 	if err != nil {
@@ -157,6 +160,10 @@ func (r *Runner) actDeferred(lv *live, a agent.Actions) (bool, error) {
 	}
 	// Only complete pipe submissions are supported. Terminal paste and submit
 	// have separate effects, even if transported in one byte batch.
+	if state, ok := lv.codec.(agent.DeferredInputCodec); !ok || !state.DeferredInputReady(a.Write) {
+		lv.warmPending, lv.pending, lv.deferredBlocked = true, true, true
+		return true, nil // no freeze/mark/write; reconstruct the held input
+	}
 	c, run, err := r.deferredClient(context.Background(), lv)
 	if err != nil {
 		return refuse("the original owned receiver is unavailable or unsupported")
@@ -185,9 +192,21 @@ func (r *Runner) submitDeferred(lv *live, c *host.Client, input string, b core.D
 	lv.deferredBlocked = true
 	got, err := c.InputReceipt(b.Run, b.Key)
 	if err != nil {
+		var refused *host.InputBatchRefused
+		if errors.As(err, &refused) {
+			return r.failDeferred(lv, input, "the original receiver explicitly refused reconciliation; no new receiver was used")
+		}
 		return err
 	} // ambiguous connection: reconcile the original key
 	if got.State == "absent" {
+		state, ok := lv.codec.(agent.DeferredInputCodec)
+		if !ok {
+			return r.failDeferred(lv, input, "the codec cannot recheck current native idle eligibility")
+		}
+		if !state.DeferredInputReady(b.Command) {
+			lv.deferredBlocked = true
+			return nil
+		}
 		var denied error
 		err = r.Store.Update(context.Background(), func(tx *store.Tx) error {
 			denied = r.Deferred.BeforeAbsentTx(context.Background(), tx, lv.id, input)
@@ -204,6 +223,10 @@ func (r *Runner) submitDeferred(lv *live, c *host.Client, input string, b core.D
 		}
 		got, err = c.InputBatch(host.InputBatch{Run: b.Run, Key: b.Key, Data: b.Data})
 		if err != nil {
+			var refused *host.InputBatchRefused
+			if errors.As(err, &refused) {
+				return r.failDeferred(lv, input, "the receiver explicitly refused the frozen input (capacity or validation); not retried")
+			}
 			return err
 		} // receiver reservation survives a lost reply
 	}
@@ -313,7 +336,7 @@ func (r *Runner) refreshDeferred(lv *live, input string) error {
 	if err != nil {
 		return r.failDeferred(lv, input, "adapter could not restore exact deferred input correlation")
 	}
-	return r.do(lv, a)
+	return r.commitDeferredRestore(lv, a)
 }
 
 func (r *Runner) deferredEvents(ctx context.Context, tx *store.Tx, sid int64, events []agent.Event) ([]agent.Event, error) {
@@ -335,4 +358,63 @@ func (r *Runner) deferredEvents(ctx context.Context, tx *store.Tx, sid int64, ev
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+func (r *Runner) restoreWrittenInput(lv *live, in agent.Input) {
+	bound := false
+	if r.Deferred != nil {
+		_, ok, err := r.Deferred.Input(context.Background(), lv.id, in.ID)
+		if err != nil {
+			lv.warmPending, lv.deferredBlocked = true, true
+			r.Log.Error("deferred Written lookup", "session", lv.id, "err", err)
+			return
+		}
+		bound = ok
+	}
+	if !bound {
+		r.do(lv, r.inputActions(lv, in))
+		return
+	}
+	a, err := r.codecInput(lv, in)
+	if err == nil {
+		err = r.commitDeferredRestore(lv, a)
+	}
+	if err != nil {
+		lv.warmPending, lv.pending, lv.deferredBlocked = true, true, true
+		r.Log.Error("deferred Written restoration waits", "session", lv.id, "err", err)
+	}
+}
+
+// Written restoration may emit a cached exact ACK. Its commit error must
+// propagate: the codec has consumed that ACK and must reconstruct it again.
+// The ordinary do path and its existing error behavior are unchanged.
+func (r *Runner) commitDeferredRestore(lv *live, a agent.Actions) error {
+	if len(a.Keys) > 0 || len(a.Write) > 0 || len(a.Reply) > 0 {
+		return errors.New("deferred Written restoration attempted new I/O")
+	}
+	if len(a.Events) == 0 {
+		return nil
+	}
+	b := batch{events: a.Events, offset: lv.offset, screenOffset: lv.seenTo, files: map[string]int64{}}
+	for p, o := range lv.files {
+		b.files[p] = o
+	}
+	_, err := r.commit(lv, b)
+	if err != nil {
+		lv.warmPending, lv.pending, lv.deferredBlocked = true, true, true
+	}
+	return err
+}
+
+// If codec actions were consumed from committed output while a receiver was
+// pending, reconstruct them from durable input/reply/read evidence before any
+// later write. Do not leave an unsent steer waiting forever for its ACK.
+func (r *Runner) holdDeferredActions(lv *live, actions []agent.Actions) {
+	lv.pending = true
+	for _, a := range actions {
+		if len(a.Write) > 0 || len(a.Keys) > 0 || len(a.Reply) > 0 {
+			lv.warmPending = true
+			return
+		}
+	}
 }

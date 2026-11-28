@@ -18,6 +18,12 @@ before handoff records no physical input and does not refund budget; after the
 cutoff it reports too late. No operation interrupts, replaces a worker, changes
 provider or weakens a readiness/confinement gate.
 
+The durable queue/input receipt retains its accepted issuer and retry identity.
+An exact ACK arriving after another native turn ended can precede a later
+ordinary turn label without carrying that issuer into the label. Delivery
+evidence does not promise display attribution or model obedience. A late ACK
+never manufactures a new turn for one already completed.
+
 Support requires a surviving capable owned pipe host and a declared adapter
 (Codex, or fake pipes for fixtures). Claude Code, terminal submission, old/relay
 hosts, remote and held/taken-in workers refuse before queue/proposal artifacts.
@@ -34,6 +40,15 @@ peer. These fixtures start no CLI, terminal, worker or provider. They do not
 establish new live provider behavior. Authored instruction goldens change only
 by the exact layer insertion; existing external provider captures remain
 immutable. Full runtime suites run in CI, not locally.
+
+Recovery regressions also exercise an active native turn after a frozen but
+absent request, a delayed idle-only action followed by a new native turn in the
+same read batch, permanent receiver refusal, a pending receipt fencing later
+I/O, and a cached exact ACK whose store commit fails. Temporary guard removals
+must fail those assertions. Human proposal refusal and changed authority/target
+retain the decision outcome and decider in the same transaction. CI additionally
+runs `TestDeferredOwnedHostRecoveryCI` with a real disposable owned pipe host
+and the retained capture reflector; it is intentionally skipped locally.
 
 Completion requires meaningful restart/recovery and authority regressions,
 independent implementation and authority reviews of the final head, full
