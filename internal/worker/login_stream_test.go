@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -93,16 +94,60 @@ func assertLoginMarkerAbsent(t *testing.T, root string) {
 		if err != nil {
 			return err
 		}
-		for _, marker := range [][]byte{[]byte("marker-secret"), []byte("marker-device"), []byte("https://login.example.invalid/")} {
-			encoded := []byte(base64.StdEncoding.EncodeToString(marker))
-			if bytes.Contains(b, marker) || bytes.Contains(b, encoded) {
-				t.Errorf("login marker persisted in %s", filepath.Base(path))
-			}
+		if loginMarkerIn(b, 0) {
+			t.Errorf("login marker persisted in %s", filepath.Base(path))
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+var loginEncodedToken = regexp.MustCompile(`[A-Za-z0-9+/_-]{8,}={0,2}`)
+
+// Scan only disposable fixture bytes. Worker Data encodes the entire JSON
+// payload, so searching base64(marker) alone misses its alignment in a frame.
+// Each level decodes disjoint tokens to fewer bytes; nesting is bounded.
+func loginMarkerIn(b []byte, depth int) bool {
+	for _, marker := range [][]byte{[]byte("marker-secret"), []byte("marker-device"), []byte("https://login.example.invalid/")} {
+		if bytes.Contains(b, marker) {
+			return true
+		}
+	}
+	if depth >= 8 {
+		return false
+	}
+	for _, token := range loginEncodedToken.FindAll(b, -1) {
+		for _, encoding := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+			decoded, err := encoding.DecodeString(string(token))
+			if err != nil {
+				continue
+			}
+			if loginMarkerIn(decoded, depth+1) {
+				return true
+			}
+			break
+		}
+	}
+	return false
+}
+
+func TestWorkerLoginMarkerScanFindsEncodedWirePayloads(t *testing.T) {
+	data := testJSON(t, workerproto.LoginData{ShowCode: "marker-device", NoCode: true})
+	stream := testJSON(t, workerproto.LoginStream{Attempt: "fixture-attempt", State: "data", Data: data})
+	for _, b := range [][]byte{
+		[]byte("marker-secret"),
+		[]byte(base64.StdEncoding.EncodeToString([]byte("marker-secret"))),
+		stream,
+		[]byte(base64.StdEncoding.EncodeToString(stream)),
+	} {
+		if !loginMarkerIn(b, 0) {
+			t.Fatal("encoded worker login payload escaped marker scan")
+		}
+	}
+	if loginMarkerIn([]byte(`{"attempt":"fixture-attempt","result":"logged_in"}`), 0) {
+		t.Fatal("marker-free fixture data was rejected")
 	}
 }
 

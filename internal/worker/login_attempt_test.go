@@ -150,6 +150,14 @@ func TestWorkerLoginProcessHelper(t *testing.T) {
 	case "device":
 		fmt.Println("link https://login.example.invalid/device")
 		fmt.Println("device marker-device")
+		if address := os.Getenv("WORKER_LOGIN_DEVICE_RELEASE"); address != "" {
+			c, err := net.Dial("tcp", address)
+			if err != nil {
+				os.Exit(1)
+			}
+			defer c.Close()
+			c.Read(make([]byte, 1)) // fixture's external device-auth completion
+		}
 	case "flood":
 		fmt.Print(strings.Repeat("x", loginLineLimit+1))
 		os.Stdin.Read(make([]byte, 1))

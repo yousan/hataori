@@ -71,17 +71,23 @@ provider completion and cannot certify login.
 `TestWorkerLoginOwnerOutageAndPersistence` checks the isolated main database
 and worker roots, including receipts/session state, and the diagnostic sink
 for raw and base64 marker material. `TestWorkerLoginFakeSurfacePersistence`
-also runs the actual fake chat driver, front end and relay with the resident.
+also runs the actual fake chat driver, front end and relay with the resident
+for code-back and device-auth fixtures.
 The guest's button opens no transport, the owner's button starts the attempt,
 the link reaches the direct-message sink, and the owner's exact reply ends
-only the selected outage. The guard, login and status helpers record their
+only the selected outage. The device fixture accepts no stdin code; its owned
+loopback completion barrier models the external page without a provider login.
+The guard, login and status helpers record their
 real process arguments; the four observations are included in the marker scan.
 This is disposable fixture evidence, not a real provider login. The negative controls
 in `notes/worker-login/negative-guards.json` record behavioral failures for
 guard removals/reversions. A separately identified persistence instrumentation
-controls write an encoded input frame into an isolated file or put a fixture
-marker into the observed process arguments and prove the marker scan detects
-them. These two controls are instrumentation, not guard removals. Compilation
+controls write an encoded input frame or an actual device output frame into
+isolated files, or put a fixture marker into observed process arguments.
+The scanner checks raw markers and bounded recursive decoding of base64 tokens,
+including base64 of the entire `LoginData` JSON inside a transport frame. The
+three controls prove those forbidden writes/arguments are detected; they are
+instrumentation, not guard removals. Compilation
 failures do not count as regressions.
 The script uses serial Go overlays without editing the original sources and
 records the source hashes. These controls are not real provider evidence.

@@ -17,21 +17,32 @@
     "internal/session/worker_login.go": "fa902fcb83161fb76e35661b6911eeffbb008d6f3d84085cd74f56240e48b945",
     "internal/session/worker_login_test.go": "03fe0104a8ee3e9c71a94953656ddc538680fc5e429610c7aa87255b07d9b0fd",
     "internal/worker/login_attempt.go": "c8db0ea0e8dc4810cf1da3872b56f8628ee82d1690b553aa744fdd9ce390e153",
-    "internal/worker/login_attempt_test.go": "6c5210f7503281552e7e4b77322951b8de2c371bdbaba60c5b3b454f79abd39a",
+    "internal/worker/login_attempt_test.go": "a7c7ecfe3293a902f49552e8226454939b82810d3016564a461b5d328b1e1bbc",
     "internal/worker/login_capture_test.go": "83b342ef95be2493b0756e7f57788c900b796195abb745c6f389d885af2809a8",
     "internal/worker/login_command.go": "6785487ab9375c38c74a22331eb9c3a6c1382edc5312f0e6d045cdd2ac9ba5aa",
     "internal/worker/login_guard.go": "7a540f6f911727cf5b295bd266cdbb4e69c033ac3f1ca2b2b784fd9c01b5ed4f",
     "internal/worker/login_lifecycle_test.go": "c81debaa4967aa73b9b431d1f5316ed855c1ac4019c6609d1f2e93f8a712e16e",
-    "internal/worker/login_relay_test.go": "6792532d41b970676db2380e79f4f1edbb7f1acc67dbbcb82af8c897f3c3fb84",
+    "internal/worker/login_relay_test.go": "d3234f47296d82b1ca10f8b3ee416feeb6b0b9263de8e6b5928db66b95c16b6f",
     "internal/worker/login_stream.go": "2827e06a720e82cc4dc7bd498492c2e375880e8f65387412cc74280337871baf",
-    "internal/worker/login_stream_test.go": "5ab94aa9752abf3c2e2ff19f68e671880209ad90248e82d619065979e6cdbe33",
+    "internal/worker/login_stream_test.go": "2477ca0cb6f4bfafbbc81674a8877bf63229d5f2caf009bd49dbebbe37f04c4d",
     "internal/worker/resident.go": "340e92cf496e56cc488bbce2ceaceea6783401f099c0a9a460bb0900b54f2326",
     "internal/worker/server.go": "fa12ee2ff9d7c2ebeb7b18c5576d1ffd74b7d6b07eb9db35419687c523d1f2df",
-    "internal/worker/testdata/login_negative.py": "d24f8f657baf5bed172dcaeb3e1838f30e946ea7b80f387a078bf523ad7eb4f6",
+    "internal/worker/testdata/login_negative.py": "5ca59a30fb96daf5fd2bb0f7c34fb59c5a06f260f07653a55c658ac82e8a69c8",
     "internal/workerproto/login.go": "a2f5f337984c6f688eb09741f7c6c43e544d33a2b9d3c504676f8ad5c8de8643",
     "internal/workerproto/login_test.go": "2d8f8a3f0d105a5b72a306676303fbb87dccba4bef3e2606f30df73915a7f097"
   },
   "results": [
+    {
+      "guard": "encoded_fixture_marker_scan",
+      "source": "internal/worker/login_stream_test.go",
+      "package": "./internal/worker",
+      "kind": "guard removal/reversion",
+      "test": "^TestWorkerLoginMarkerScanFindsEncodedWirePayloads$",
+      "exit_code": 1,
+      "seconds": 3.781,
+      "accepted_negative": true,
+      "output": "--- FAIL: TestWorkerLoginMarkerScanFindsEncodedWirePayloads (0.00s)\n    login_stream_test.go:146: encoded worker login payload escaped marker scan\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.016s\nFAIL\n"
+    },
     {
       "guard": "daemon_pinned_transport_wiring",
       "source": "cmd/hataori/daemon.go",
@@ -39,9 +50,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginDaemonUsesPinnedTransport$",
       "exit_code": 1,
-      "seconds": 13.937,
+      "seconds": 2.593,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginDaemonUsesPinnedTransport (0.21s)\n    worker_login_test.go:52: daemon did not give the login relay its pinned worker transport\nFAIL\nFAIL\tgithub.com/yousan/hataori/cmd/hataori\t0.233s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginDaemonUsesPinnedTransport (0.22s)\n    worker_login_test.go:52: daemon did not give the login relay its pinned worker transport\nFAIL\nFAIL\tgithub.com/yousan/hataori/cmd/hataori\t0.236s\nFAIL\n"
     },
     {
       "guard": "explicit_reply_refusal",
@@ -50,9 +61,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginDirectReplyBoundary$/unknown$",
       "exit_code": 1,
-      "seconds": 5.577,
+      "seconds": 1.377,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginDirectReplyBoundary (0.24s)\n    --- FAIL: TestWorkerLoginDirectReplyBoundary/unknown (0.24s)\n        worker_login_test.go:64: unrelated reply reached the waiting login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/chat\t0.244s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginDirectReplyBoundary (0.28s)\n    --- FAIL: TestWorkerLoginDirectReplyBoundary/unknown (0.28s)\n        worker_login_test.go:64: unrelated reply reached the waiting login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/chat\t0.284s\nFAIL\n"
     },
     {
       "guard": "reply_thread_identity",
@@ -61,9 +72,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginDirectReplyBoundary$/wrong-thread$",
       "exit_code": 1,
-      "seconds": 6.235,
+      "seconds": 1.454,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginDirectReplyBoundary (0.77s)\n    --- FAIL: TestWorkerLoginDirectReplyBoundary/wrong-thread (0.45s)\n        worker_login_test.go:64: unrelated reply reached the waiting login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/chat\t0.782s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginDirectReplyBoundary (0.46s)\n    --- FAIL: TestWorkerLoginDirectReplyBoundary/wrong-thread (0.23s)\n        worker_login_test.go:64: unrelated reply reached the waiting login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/chat\t0.470s\nFAIL\n"
     },
     {
       "guard": "followup_thread_identity",
@@ -72,9 +83,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginDirectReplyBoundary$/followup-wrong-thread$",
       "exit_code": 1,
-      "seconds": 5.613,
+      "seconds": 1.193,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginDirectReplyBoundary (0.24s)\n    --- FAIL: TestWorkerLoginDirectReplyBoundary/followup-wrong-thread (0.24s)\n        worker_login_test.go:64: unrelated reply reached the waiting login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/chat\t0.245s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginDirectReplyBoundary (0.24s)\n    --- FAIL: TestWorkerLoginDirectReplyBoundary/followup-wrong-thread (0.24s)\n        worker_login_test.go:64: unrelated reply reached the waiting login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/chat\t0.246s\nFAIL\n"
     },
     {
       "guard": "reply_outage_selection",
@@ -83,9 +94,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginDirectReplyBoundary$/other-outage$",
       "exit_code": 1,
-      "seconds": 5.693,
+      "seconds": 1.263,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginDirectReplyBoundary (0.25s)\n    --- FAIL: TestWorkerLoginDirectReplyBoundary/other-outage (0.25s)\n        worker_login_test.go:64: unrelated reply reached the waiting login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/chat\t0.255s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginDirectReplyBoundary (0.32s)\n    --- FAIL: TestWorkerLoginDirectReplyBoundary/other-outage (0.32s)\n        worker_login_test.go:64: unrelated reply reached the waiting login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/chat\t0.328s\nFAIL\n"
     },
     {
       "guard": "front_end_owner_input",
@@ -94,9 +105,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginDirectReplyBoundary$/guest$",
       "exit_code": 1,
-      "seconds": 5.631,
+      "seconds": 1.326,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginDirectReplyBoundary (0.32s)\n    --- FAIL: TestWorkerLoginDirectReplyBoundary/guest (0.32s)\n        worker_login_test.go:64: unrelated reply reached the waiting login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/chat\t0.334s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginDirectReplyBoundary (0.28s)\n    --- FAIL: TestWorkerLoginDirectReplyBoundary/guest (0.28s)\n        worker_login_test.go:64: unrelated reply reached the waiting login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/chat\t0.290s\nFAIL\n"
     },
     {
       "guard": "guard_lifetime_fd_private",
@@ -105,9 +116,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginGuardDescriptorsArePrivate$",
       "exit_code": 1,
-      "seconds": 3.389,
+      "seconds": 3.443,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginGuardDescriptorsArePrivate (0.02s)\n    login_lifecycle_test.go:208: guard descriptors reached the CLI\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.027s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginGuardDescriptorsArePrivate (0.01s)\n    login_lifecycle_test.go:208: guard descriptors reached the CLI\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.025s\nFAIL\n"
     },
     {
       "guard": "direct_child_session_change",
@@ -116,9 +127,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginGuardEndsDirectChildThatChangesSession$",
       "exit_code": 1,
-      "seconds": 5.679,
+      "seconds": 6.108,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginGuardEndsDirectChildThatChangesSession (2.05s)\n    login_lifecycle_test.go:237: direct login child survived by changing session\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t2.059s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginGuardEndsDirectChildThatChangesSession (2.05s)\n    login_lifecycle_test.go:237: direct login child survived by changing session\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t2.061s\nFAIL\n"
     },
     {
       "guard": "guard_status_fd_private",
@@ -127,9 +138,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginGuardDescriptorsArePrivate$",
       "exit_code": 1,
-      "seconds": 3.14,
+      "seconds": 3.899,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginGuardDescriptorsArePrivate (0.02s)\n    login_lifecycle_test.go:208: guard descriptors reached the CLI\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.027s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginGuardDescriptorsArePrivate (0.01s)\n    login_lifecycle_test.go:208: guard descriptors reached the CLI\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.026s\nFAIL\n"
     },
     {
       "guard": "empty_environment_isolation",
@@ -138,9 +149,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginEmptyEnvironmentDoesNotInherit$",
       "exit_code": 1,
-      "seconds": 3.318,
+      "seconds": 3.912,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginEmptyEnvironmentDoesNotInherit (0.02s)\n    login_lifecycle_test.go:250: empty login environment inherited the parent's fixture marker\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.034s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginEmptyEnvironmentDoesNotInherit (0.03s)\n    login_lifecycle_test.go:250: empty login environment inherited the parent's fixture marker\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.036s\nFAIL\n"
     },
     {
       "guard": "owner_input",
@@ -149,9 +160,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginOwnerOutageAndPersistence$/explicit$",
       "exit_code": 1,
-      "seconds": 4.998,
+      "seconds": 3.831,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginOwnerOutageAndPersistence (0.23s)\n    --- FAIL: TestWorkerLoginOwnerOutageAndPersistence/explicit (0.23s)\n        login_relay_test.go:188: non-owner sent a code to the waiting command\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.246s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginOwnerOutageAndPersistence (0.32s)\n    --- FAIL: TestWorkerLoginOwnerOutageAndPersistence/explicit (0.32s)\n        login_relay_test.go:201: non-owner sent a code to the waiting command\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.333s\nFAIL\n"
     },
     {
       "guard": "installation_pin",
@@ -160,9 +171,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginOwnerOutageAndPersistence$/explicit$",
       "exit_code": 1,
-      "seconds": 4.995,
+      "seconds": 4.032,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginOwnerOutageAndPersistence (0.25s)\n    --- FAIL: TestWorkerLoginOwnerOutageAndPersistence/explicit (0.25s)\n        login_relay_test.go:150: unpinned installation reached transport\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.267s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginOwnerOutageAndPersistence (0.29s)\n    --- FAIL: TestWorkerLoginOwnerOutageAndPersistence/explicit (0.29s)\n        login_relay_test.go:163: unpinned installation reached transport\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.298s\nFAIL\n"
     },
     {
       "guard": "bounded_status_opt_in",
@@ -171,9 +182,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginRefusesAdapterWithoutBoundedStatus$",
       "exit_code": 1,
-      "seconds": 3.23,
+      "seconds": 3.469,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginRefusesAdapterWithoutBoundedStatus (0.01s)\n    login_capture_test.go:36: adapter without bounded status was admitted\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.028s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginRefusesAdapterWithoutBoundedStatus (0.02s)\n    login_capture_test.go:36: adapter without bounded status was admitted\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.026s\nFAIL\n"
     },
     {
       "guard": "status_deadline",
@@ -182,9 +193,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly$/status-hang$",
       "exit_code": 1,
-      "seconds": 7.22,
+      "seconds": 7.716,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly (4.01s)\n    --- FAIL: TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly/status-hang (4.01s)\n        login_capture_test.go:104: status command exceeded its enforced deadline\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t4.017s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly (4.01s)\n    --- FAIL: TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly/status-hang (4.01s)\n        login_capture_test.go:104: status command exceeded its enforced deadline\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t4.020s\nFAIL\n"
     },
     {
       "guard": "stream_attempt_correlation",
@@ -193,9 +204,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginWireCorrelations$/stream-attempt$",
       "exit_code": 1,
-      "seconds": 0.538,
+      "seconds": 0.727,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginWireCorrelations (0.00s)\n    --- FAIL: TestWorkerLoginWireCorrelations/stream-attempt (0.00s)\n        login_test.go:90: uncorrelated login frame was accepted\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/machineio\t0.005s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginWireCorrelations (0.00s)\n    --- FAIL: TestWorkerLoginWireCorrelations/stream-attempt (0.00s)\n        login_test.go:90: uncorrelated login frame was accepted\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/machineio\t0.094s\nFAIL\n"
     },
     {
       "guard": "input_ack_attempt_correlation",
@@ -204,7 +215,7 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginWireCorrelations$/input-ack-attempt$",
       "exit_code": 1,
-      "seconds": 0.515,
+      "seconds": 0.697,
       "accepted_negative": true,
       "output": "--- FAIL: TestWorkerLoginWireCorrelations (0.00s)\n    --- FAIL: TestWorkerLoginWireCorrelations/input-ack-attempt (0.00s)\n        login_test.go:90: uncorrelated login frame was accepted\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/machineio\t0.006s\nFAIL\n"
     },
@@ -215,7 +226,7 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginWireCorrelations$/cancel-ack-id$",
       "exit_code": 1,
-      "seconds": 0.605,
+      "seconds": 0.585,
       "accepted_negative": true,
       "output": "--- FAIL: TestWorkerLoginWireCorrelations (0.00s)\n    --- FAIL: TestWorkerLoginWireCorrelations/cancel-ack-id (0.00s)\n        login_test.go:96: uncorrelated login frame was accepted\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/machineio\t0.006s\nFAIL\n"
     },
@@ -226,7 +237,7 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginCompleteWakesConcurrentCancel$",
       "exit_code": 1,
-      "seconds": 2.54,
+      "seconds": 2.637,
       "accepted_negative": true,
       "output": "--- FAIL: TestWorkerLoginCompleteWakesConcurrentCancel (2.00s)\n    login_test.go:55: completed cleanup did not wake concurrent cancellation\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/machineio\t2.007s\nFAIL\n"
     },
@@ -237,9 +248,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginOwnerDeathClosesGuard$",
       "exit_code": 1,
-      "seconds": 5.238,
+      "seconds": 6.062,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginOwnerDeathClosesGuard (2.05s)\n    login_lifecycle_test.go:84: login child survived abrupt owner death\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t2.062s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginOwnerDeathClosesGuard (2.09s)\n    login_lifecycle_test.go:84: login child survived abrupt owner death\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t2.099s\nFAIL\n"
     },
     {
       "guard": "selected_codex_directory",
@@ -248,7 +259,7 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginUsesSelectedConfiguration$",
       "exit_code": 1,
-      "seconds": 0.409,
+      "seconds": 0.571,
       "accepted_negative": true,
       "output": "--- FAIL: TestWorkerLoginUsesSelectedConfiguration (0.00s)\n    worker_login_test.go:34: login used another configuration\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/agent/codex\t0.004s\nFAIL\n"
     },
@@ -259,9 +270,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginOutputGuard$",
       "exit_code": 1,
-      "seconds": 3.157,
+      "seconds": 3.919,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginOutputGuard (0.00s)\n    login_lifecycle_test.go:198: oversized output was accepted\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.015s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginOutputGuard (0.00s)\n    login_lifecycle_test.go:198: oversized output was accepted\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.013s\nFAIL\n"
     },
     {
       "guard": "status_output_bound",
@@ -270,9 +281,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly$/status-flood$",
       "exit_code": 1,
-      "seconds": 3.311,
+      "seconds": 3.666,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly (0.04s)\n    --- FAIL: TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly/status-flood (0.04s)\n        login_capture_test.go:108: failed/unbounded status command certified login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.053s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly (0.05s)\n    --- FAIL: TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly/status-flood (0.05s)\n        login_capture_test.go:108: failed/unbounded status command certified login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.062s\nFAIL\n"
     },
     {
       "guard": "status_clean_exit",
@@ -281,9 +292,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly$/status-failed-claims$",
       "exit_code": 1,
-      "seconds": 3.157,
+      "seconds": 3.665,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly (0.05s)\n    --- FAIL: TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly/status-failed-claims (0.05s)\n        login_capture_test.go:108: failed/unbounded status command certified login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.061s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly (0.04s)\n    --- FAIL: TestWorkerLoginStatusExecutionIsBoundedAndMustExitCleanly/status-failed-claims (0.04s)\n        login_capture_test.go:108: failed/unbounded status command certified login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.056s\nFAIL\n"
     },
     {
       "guard": "descendant_cleanup",
@@ -292,9 +303,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginGuardEndsDescendantAfterCleanLeaderExit$",
       "exit_code": 1,
-      "seconds": 5.365,
+      "seconds": 5.533,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginGuardEndsDescendantAfterCleanLeaderExit (2.05s)\n    login_lifecycle_test.go:43: guard left a descendant alive after its parent exited\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t2.062s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginGuardEndsDescendantAfterCleanLeaderExit (2.05s)\n    login_lifecycle_test.go:43: guard left a descendant alive after its parent exited\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t2.066s\nFAIL\n"
     },
     {
       "guard": "configuration_metadata_match",
@@ -303,9 +314,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginMismatchedDirectoryNeverStartsCommand$",
       "exit_code": 1,
-      "seconds": 3.302,
+      "seconds": 3.557,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginMismatchedDirectoryNeverStartsCommand (0.02s)\n    login_lifecycle_test.go:183: wrong-directory outage started a command\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.035s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginMismatchedDirectoryNeverStartsCommand (0.03s)\n    login_lifecycle_test.go:183: wrong-directory outage started a command\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.045s\nFAIL\n"
     },
     {
       "guard": "owner_start",
@@ -314,9 +325,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginOwnerOutageAndPersistence$/explicit$",
       "exit_code": 1,
-      "seconds": 5.343,
+      "seconds": 3.751,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginOwnerOutageAndPersistence (0.26s)\n    --- FAIL: TestWorkerLoginOwnerOutageAndPersistence/explicit (0.26s)\n        login_relay_test.go:137: non-owner started worker login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.278s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginOwnerOutageAndPersistence (0.29s)\n    --- FAIL: TestWorkerLoginOwnerOutageAndPersistence/explicit (0.29s)\n        login_relay_test.go:150: non-owner started worker login\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.298s\nFAIL\n"
     },
     {
       "guard": "closed_outage_input",
@@ -325,9 +336,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginOwnerOutageAndPersistence$/explicit$",
       "exit_code": 1,
-      "seconds": 4.984,
+      "seconds": 3.441,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginOwnerOutageAndPersistence (0.32s)\n    --- FAIL: TestWorkerLoginOwnerOutageAndPersistence/explicit (0.32s)\n        login_relay_test.go:202: closed outage accepted input before event cleanup\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.331s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginOwnerOutageAndPersistence (0.26s)\n    --- FAIL: TestWorkerLoginOwnerOutageAndPersistence/explicit (0.26s)\n        login_relay_test.go:215: closed outage accepted input before event cleanup\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.270s\nFAIL\n"
     },
     {
       "guard": "outage_machine_match",
@@ -336,9 +347,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginClosesOnlyOriginalMachineOutage$",
       "exit_code": 1,
-      "seconds": 1.021,
+      "seconds": 1.164,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginClosesOnlyOriginalMachineOutage (0.21s)\n    worker_login_test.go:38: closed = true, want false\n    worker_login_test.go:38: closed = false, want true\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/session\t0.212s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginClosesOnlyOriginalMachineOutage (0.39s)\n    worker_login_test.go:38: closed = true, want false\n    worker_login_test.go:38: closed = false, want true\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/session\t0.397s\nFAIL\n"
     },
     {
       "guard": "stored_spec_case",
@@ -347,9 +358,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginOwnerOutageAndPersistence$/explicit$",
       "exit_code": 1,
-      "seconds": 4.799,
+      "seconds": 3.829,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginOwnerOutageAndPersistence (0.22s)\n    --- FAIL: TestWorkerLoginOwnerOutageAndPersistence/explicit (0.22s)\n        login_relay_test.go:170: relay: the agent cannot be logged in from here\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.234s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginOwnerOutageAndPersistence (0.26s)\n    --- FAIL: TestWorkerLoginOwnerOutageAndPersistence/explicit (0.26s)\n        login_relay_test.go:183: relay: the agent cannot be logged in from here\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.272s\nFAIL\n"
     },
     {
       "guard": "default_directory_match",
@@ -358,9 +369,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginOwnerOutageAndPersistence$/default$",
       "exit_code": 1,
-      "seconds": 5.079,
+      "seconds": 3.82,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginOwnerOutageAndPersistence (0.20s)\n    --- FAIL: TestWorkerLoginOwnerOutageAndPersistence/default (0.20s)\n        login_relay_test.go:170: relay: the agent cannot be logged in from here\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.214s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginOwnerOutageAndPersistence (0.33s)\n    --- FAIL: TestWorkerLoginOwnerOutageAndPersistence/default (0.33s)\n        login_relay_test.go:183: relay: the agent cannot be logged in from here\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.339s\nFAIL\n"
     },
     {
       "guard": "disconnect_during_blocked_input",
@@ -369,9 +380,9 @@
       "kind": "guard removal/reversion",
       "test": "^TestWorkerLoginDisconnectInterruptsBlockedInput$",
       "exit_code": 1,
-      "seconds": 5.294,
+      "seconds": 5.627,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginDisconnectInterruptsBlockedInput (2.04s)\n    login_lifecycle_test.go:138: disconnect did not interrupt blocked CLI input\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t2.054s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginDisconnectInterruptsBlockedInput (2.10s)\n    login_lifecycle_test.go:138: disconnect did not interrupt blocked CLI input\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t2.112s\nFAIL\n"
     },
     {
       "guard": "forbidden_persistence_instrumentation",
@@ -380,9 +391,9 @@
       "kind": "persistence instrumentation",
       "test": "^TestWorkerLoginOwnerOutageAndPersistence$/explicit$",
       "exit_code": 1,
-      "seconds": 3.546,
+      "seconds": 3.636,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginOwnerOutageAndPersistence (0.30s)\n    --- FAIL: TestWorkerLoginOwnerOutageAndPersistence/explicit (0.30s)\n        login_stream_test.go:99: login marker persisted in login-unexpected.log\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.310s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginOwnerOutageAndPersistence (0.36s)\n    --- FAIL: TestWorkerLoginOwnerOutageAndPersistence/explicit (0.36s)\n        login_stream_test.go:98: login marker persisted in login-unexpected.log\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.375s\nFAIL\n"
     },
     {
       "guard": "forbidden_process_arguments_instrumentation",
@@ -391,9 +402,20 @@
       "kind": "persistence instrumentation",
       "test": "^TestWorkerLoginFakeSurfacePersistence$",
       "exit_code": 1,
-      "seconds": 3.367,
+      "seconds": 3.86,
       "accepted_negative": true,
-      "output": "--- FAIL: TestWorkerLoginFakeSurfacePersistence (0.28s)\n    login_stream_test.go:99: login marker persisted in argv-capture.jsonl\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.295s\nFAIL\n"
+      "output": "--- FAIL: TestWorkerLoginFakeSurfacePersistence (0.78s)\n    --- FAIL: TestWorkerLoginFakeSurfacePersistence/code (0.36s)\n        login_stream_test.go:98: login marker persisted in argv-capture.jsonl\n    --- FAIL: TestWorkerLoginFakeSurfacePersistence/device (0.42s)\n        login_stream_test.go:98: login marker persisted in argv-capture.jsonl\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.793s\nFAIL\n"
+    },
+    {
+      "guard": "forbidden_device_frame_instrumentation",
+      "source": "internal/worker/login_stream.go",
+      "package": "./internal/worker",
+      "kind": "persistence instrumentation",
+      "test": "^TestWorkerLoginFakeSurfacePersistence$/device$",
+      "exit_code": 1,
+      "seconds": 3.525,
+      "accepted_negative": true,
+      "output": "--- FAIL: TestWorkerLoginFakeSurfacePersistence (0.38s)\n    --- FAIL: TestWorkerLoginFakeSurfacePersistence/device (0.38s)\n        login_stream_test.go:98: login marker persisted in login-device-frame.log\nFAIL\nFAIL\tgithub.com/yousan/hataori/internal/worker\t0.392s\nFAIL\n"
     }
   ]
 }

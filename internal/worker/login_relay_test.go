@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,16 +30,18 @@ func TestWorkerLoginOwnerOutageAndPersistence(t *testing.T) {
 		if useDefault {
 			name = "default"
 		}
-		t.Run(name, func(t *testing.T) { testWorkerLoginOwnerOutageAndPersistence(t, useDefault, false) })
+		t.Run(name, func(t *testing.T) { testWorkerLoginOwnerOutageAndPersistence(t, useDefault, false, "code") })
 	}
 }
 
 func TestWorkerLoginFakeSurfacePersistence(t *testing.T) {
-	testWorkerLoginOwnerOutageAndPersistence(t, false, true)
+	for _, mode := range []string{"code", "device"} {
+		t.Run(mode, func(t *testing.T) { testWorkerLoginOwnerOutageAndPersistence(t, false, true, mode) })
+	}
 }
 
-func testWorkerLoginOwnerOutageAndPersistence(t *testing.T, useDefault, useSurface bool) {
-	f, adapter, open, count := loginResidentDir(t, "code", useDefault)
+func testWorkerLoginOwnerOutageAndPersistence(t *testing.T, useDefault, useSurface bool, mode string) {
+	f, adapter, open, count := loginResidentDir(t, mode, useDefault)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	root := t.TempDir()
@@ -92,11 +95,21 @@ func testWorkerLoginOwnerOutageAndPersistence(t *testing.T, useDefault, useSurfa
 	var driver *fake.Driver
 	var dm surface.Conversation
 	var selected surface.MessageRef
+	var deviceRelease *net.TCPListener
 	stopSurface := func() {}
 	if useSurface {
 		adapter.extraEnv = []string{"WORKER_LOGIN_ARGV_CAPTURE=" + filepath.Join(f.root, "argv-capture.jsonl")}
+		if mode == "device" {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			deviceRelease = listener.(*net.TCPListener)
+			defer deviceRelease.Close()
+			adapter.extraEnv = append(adapter.extraEnv, "WORKER_LOGIN_DEVICE_RELEASE="+listener.Addr().String())
+		}
 		driver = fake.New()
-		lg := slog.New(slog.NewTextHandler(&diagnostic, nil))
+		lg := r.Log
 		c := &core.Core{Store: st, People: r.People, Log: lg}
 		fe := &chat.FrontEnd{Name: "chat", Instance: "fixture", Driver: driver, People: r.People, Relay: r, Log: lg, API: c.As,
 			Outbox: &chat.Outbox{Store: st, Client: "chat", Driver: driver, Log: lg}}
@@ -211,7 +224,7 @@ func testWorkerLoginOwnerOutageAndPersistence(t *testing.T, useDefault, useSurfa
 		shown := false
 		for !shown {
 			for _, call := range driver.Calls(dm) {
-				shown = shown || strings.Contains(call.Message.Text, "https://login.example.invalid/")
+				shown = shown || (strings.Contains(call.Message.Text, "https://login.example.invalid/") && (mode != "device" || strings.Contains(call.Message.Text, "marker-device")))
 			}
 			if ctx.Err() != nil {
 				t.Fatal("worker link did not reach the owner's direct message")
@@ -220,6 +233,17 @@ func testWorkerLoginOwnerOutageAndPersistence(t *testing.T, useDefault, useSurfa
 		}
 		driver.InjectWith(dm, fake.Person("someone"), "marker-secret", func(in *surface.Inbound) { in.Direct = true; in.ReplyTo = &selected })
 		driver.InjectWith(dm, fake.Person("owner"), "marker-secret", func(in *surface.Inbound) { in.Direct = true; in.ReplyTo = &selected })
+		if mode == "device" {
+			if err := r.Code(ctx, "chat:owner", "fake", outage, "marker-secret"); !errors.Is(err, relay.ErrNotWaiting) {
+				t.Fatal("device-auth attempt accepted code-back input")
+			}
+			deviceRelease.SetDeadline(time.Now().Add(2 * time.Second))
+			c, err := deviceRelease.Accept()
+			if err != nil {
+				t.Fatal("fixture device completion barrier was not established")
+			}
+			c.Close() // models completion on the device page, never CLI input
+		}
 	} else {
 		if err := r.Code(ctx, "chat:owner", "fake", outage, "marker-secret"); err != nil {
 			t.Fatal(err)
@@ -264,7 +288,7 @@ func testWorkerLoginOwnerOutageAndPersistence(t *testing.T, useDefault, useSurfa
 			}
 		}
 	}
-	if bytes.Contains(diagnostic.Bytes(), []byte("marker-secret")) || bytes.Contains(diagnostic.Bytes(), []byte("https://login.example.invalid/")) {
+	if loginMarkerIn(diagnostic.Bytes(), 0) {
 		t.Fatal("diagnostic contains login material")
 	}
 	assertLoginMarkerAbsent(t, root)

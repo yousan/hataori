@@ -17,17 +17,17 @@
     "internal/session/worker_login.go": "fa902fcb83161fb76e35661b6911eeffbb008d6f3d84085cd74f56240e48b945",
     "internal/session/worker_login_test.go": "03fe0104a8ee3e9c71a94953656ddc538680fc5e429610c7aa87255b07d9b0fd",
     "internal/worker/login_attempt.go": "c8db0ea0e8dc4810cf1da3872b56f8628ee82d1690b553aa744fdd9ce390e153",
-    "internal/worker/login_attempt_test.go": "6c5210f7503281552e7e4b77322951b8de2c371bdbaba60c5b3b454f79abd39a",
+    "internal/worker/login_attempt_test.go": "a7c7ecfe3293a902f49552e8226454939b82810d3016564a461b5d328b1e1bbc",
     "internal/worker/login_capture_test.go": "83b342ef95be2493b0756e7f57788c900b796195abb745c6f389d885af2809a8",
     "internal/worker/login_command.go": "6785487ab9375c38c74a22331eb9c3a6c1382edc5312f0e6d045cdd2ac9ba5aa",
     "internal/worker/login_guard.go": "7a540f6f911727cf5b295bd266cdbb4e69c033ac3f1ca2b2b784fd9c01b5ed4f",
     "internal/worker/login_lifecycle_test.go": "c81debaa4967aa73b9b431d1f5316ed855c1ac4019c6609d1f2e93f8a712e16e",
-    "internal/worker/login_relay_test.go": "6792532d41b970676db2380e79f4f1edbb7f1acc67dbbcb82af8c897f3c3fb84",
+    "internal/worker/login_relay_test.go": "d3234f47296d82b1ca10f8b3ee416feeb6b0b9263de8e6b5928db66b95c16b6f",
     "internal/worker/login_stream.go": "2827e06a720e82cc4dc7bd498492c2e375880e8f65387412cc74280337871baf",
-    "internal/worker/login_stream_test.go": "5ab94aa9752abf3c2e2ff19f68e671880209ad90248e82d619065979e6cdbe33",
+    "internal/worker/login_stream_test.go": "2477ca0cb6f4bfafbbc81674a8877bf63229d5f2caf009bd49dbebbe37f04c4d",
     "internal/worker/resident.go": "340e92cf496e56cc488bbce2ceaceea6783401f099c0a9a460bb0900b54f2326",
     "internal/worker/server.go": "fa12ee2ff9d7c2ebeb7b18c5576d1ffd74b7d6b07eb9db35419687c523d1f2df",
-    "internal/worker/testdata/login_negative.py": "d24f8f657baf5bed172dcaeb3e1838f30e946ea7b80f387a078bf523ad7eb4f6",
+    "internal/worker/testdata/login_negative.py": "5ca59a30fb96daf5fd2bb0f7c34fb59c5a06f260f07653a55c658ac82e8a69c8",
     "internal/workerproto/login.go": "a2f5f337984c6f688eb09741f7c6c43e544d33a2b9d3c504676f8ad5c8de8643",
     "internal/workerproto/login_test.go": "2d8f8a3f0d105a5b72a306676303fbb87dccba4bef3e2606f30df73915a7f097"
   },
@@ -52,7 +52,7 @@
         "-timeout=90s"
       ],
       "exit_code": 0,
-      "output": "ok  \tgithub.com/yousan/hataori/cmd/hataori\t0.206s\nok  \tgithub.com/yousan/hataori/internal/chat\t5.498s\nok  \tgithub.com/yousan/hataori/internal/worker\t4.109s\nok  \tgithub.com/yousan/hataori/internal/session\t0.397s\nok  \tgithub.com/yousan/hataori/internal/workerproto\t0.029s\nok  \tgithub.com/yousan/hataori/internal/agent/codex\t0.004s\nok  \tgithub.com/yousan/hataori/internal/relay\t0.258s\nok  \tgithub.com/yousan/hataori/internal/machineio\t0.005s\n"
+      "output": "ok  \tgithub.com/yousan/hataori/cmd/hataori\t0.251s\nok  \tgithub.com/yousan/hataori/internal/chat\t6.323s\nok  \tgithub.com/yousan/hataori/internal/worker\t4.680s\nok  \tgithub.com/yousan/hataori/internal/session\t0.421s\nok  \tgithub.com/yousan/hataori/internal/workerproto\t0.029s\nok  \tgithub.com/yousan/hataori/internal/agent/codex\t0.004s\nok  \tgithub.com/yousan/hataori/internal/relay\t0.296s\nok  \tgithub.com/yousan/hataori/internal/machineio\t0.008s\n"
     },
     {
       "command": [
@@ -71,7 +71,7 @@
         "-timeout=90s"
       ],
       "exit_code": 0,
-      "output": "ok  \tgithub.com/yousan/hataori/cmd/hataori\t2.451s\nok  \tgithub.com/yousan/hataori/internal/chat\t12.864s\nok  \tgithub.com/yousan/hataori/internal/worker\t9.674s\nok  \tgithub.com/yousan/hataori/internal/machineio\t1.022s\n"
+      "output": "ok  \tgithub.com/yousan/hataori/cmd/hataori\t2.136s\nok  \tgithub.com/yousan/hataori/internal/chat\t14.172s\nok  \tgithub.com/yousan/hataori/internal/worker\t16.181s\nok  \tgithub.com/yousan/hataori/internal/machineio\t1.024s\n"
     },
     {
       "command": [

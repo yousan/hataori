@@ -11,6 +11,10 @@ import time
 
 ROOT = Path(__file__).resolve().parents[3]
 CASES = [
+    ("encoded_fixture_marker_scan", "internal/worker/login_stream_test.go",
+     "if depth >= 8 {", "if depth >= 0 {",
+     "./internal/worker", "^TestWorkerLoginMarkerScanFindsEncodedWirePayloads$",
+     "encoded worker login payload escaped marker scan"),
     ("daemon_pinned_transport_wiring", "cmd/hataori/daemon.go",
      "lr.Workers[key] = relay.WorkerLoginEndpoint{Binding: remote.Binding, Open: remote.Open}",
      "_ = key\n\t\t_ = remote",
@@ -150,6 +154,11 @@ CASES = [
      "launch.Argv = append(launch.Argv, \"marker-secret\")\n\targv := append(append([]string{}, guard...), launch.Argv...)",
      "./internal/worker", "^TestWorkerLoginFakeSurfacePersistence$",
      "login marker persisted in argv-capture.jsonl"),
+    ("forbidden_device_frame_instrumentation", "internal/worker/login_stream.go",
+     'm.Body, _ = json.Marshal(workerproto.LoginStream{Attempt: attempt.Attempt, State: "data", Data: payload})',
+     'm.Body, _ = json.Marshal(workerproto.LoginStream{Attempt: attempt.Attempt, State: "data", Data: payload})\n\t\t\tif d.ShowCode != "" {\n\t\t\t\tsaved, _ := workerproto.Encode(m)\n\t\t\t\tr.root.WriteFile("state/worker/login-device-frame.log", saved, 0600)\n\t\t\t}',
+     "./internal/worker", "^TestWorkerLoginFakeSurfacePersistence$/device$",
+     "login marker persisted in login-device-frame.log"),
 ]
 
 
