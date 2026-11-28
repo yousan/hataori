@@ -80,7 +80,7 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 		return nil // seen before
 	}
 	if in.Kind == AgentEvent && in.Agent.Kind == agent.Limits {
-		return recordLimits(ctx, tx, sessionID, agentName, in.Agent)
+		return m.recordLimits(ctx, tx, sessionID, agentName, in.Agent)
 	}
 
 	snap := Snapshot{State: control.State(state), Aside: aside.Valid}
@@ -140,6 +140,16 @@ func (m *Machine) ApplyTx(ctx context.Context, tx *store.Tx, sessionID int64, in
 	}
 	at := clock()
 	now := at.UnixMilli()
+	if in.Kind == Exit || in.Kind == Close || (in.Kind == AgentEvent && in.Agent.Kind == agent.SessionEnded) {
+		if _, err := tx.ExecContext(ctx, `UPDATE deferred_sends SET state='failed',reason='the original worker ended before input acknowledgement; no new receiver was used',updated_at=? WHERE session=? AND state IN ('accepted','handoff')`, now, sessionID); err != nil {
+			return err
+		}
+	}
+	if in.Kind == AgentEvent {
+		if err := acknowledgeDeferred(ctx, tx, sessionID, in.Agent, now); err != nil {
+			return err
+		}
+	}
 
 	if !inputFailure {
 		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET state = ?, updated_at = ? WHERE id = ?`,
@@ -288,12 +298,20 @@ func recordUsage(ctx context.Context, tx *store.Tx, thread, turn int64, u agent.
 // recordLimits keeps an agent's remaining usage, unless a report made
 // later, by another of its sessions, is kept already. It belongs to no turn
 // and changes no state, so it writes no event.
-func recordLimits(ctx context.Context, tx *store.Tx, sessionID int64, agentName string, e agent.Event) error {
+func (m *Machine) recordLimits(ctx context.Context, tx *store.Tx, sessionID int64, agentName string, e agent.Event) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET last_seq = ? WHERE id = ?`, e.Seq, sessionID); err != nil {
 		return err
 	}
 	if e.Limits == nil {
 		return nil
+	}
+	login, err := m.login(ctx, tx, agentName, sessionID)
+	if err != nil {
+		return err
+	}
+	var machine string
+	if err := tx.QueryRowContext(ctx, `SELECT t.machine FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.id = ?`, sessionID).Scan(&machine); err != nil {
+		return err
 	}
 	l := *e.Limits
 	ws := []control.LimitWindow{}
@@ -309,10 +327,10 @@ func recordLimits(ctx context.Context, tx *store.Tx, sessionID int64, agentName 
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_limits (agent, at, every, windows) VALUES (?, ?, ?, ?)
-		ON CONFLICT (agent) DO UPDATE SET at = excluded.at, every = excluded.every, windows = excluded.windows
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_limits (machine, agent, config_dir, at, every, windows) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (machine, agent, config_dir) DO UPDATE SET at = excluded.at, every = excluded.every, windows = excluded.windows
 		WHERE excluded.at >= agent_limits.at`,
-		agentName, l.At.UnixMilli(), l.Every.Milliseconds(), string(b)); err != nil {
+		machine, agentName, login.Dir, l.At.UnixMilli(), l.Every.Milliseconds(), string(b)); err != nil {
 		return fmt.Errorf("session: limits: %w", err)
 	}
 	return nil

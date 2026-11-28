@@ -1,0 +1,1 @@
+usage: paste-buffer [-dpr] [-s separator] [-b buffer-name] [-t target-pane]

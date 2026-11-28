@@ -1,0 +1,1 @@
+{"kind":"reply","id":"request-stop","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"stop","key":"key-stop","body":{"operation":"stop","key":"key-stop","request_hash":"70708843963226bdd115efd534f72bc9ef5b8d8c73a3a55e798fe8af8d2fe940","state":"pending"}}

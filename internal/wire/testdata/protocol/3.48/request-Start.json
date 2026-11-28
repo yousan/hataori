@@ -1,0 +1,1 @@
+{"id":1,"op":"Start","args":{"machine":"build","key":"M0789","scope":"C0123","thread":"","agent":"codex","repo":"https://example.com/repo.git","input":{"text":"Fix the build."},"model":"opus","effort":"high","research":true}}

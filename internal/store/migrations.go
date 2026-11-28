@@ -785,6 +785,11 @@ var migrations = []Migration{
 	{Name: "pending_inputs.written_text", Up: execAll(
 		`ALTER TABLE pending_inputs ADD COLUMN written_text TEXT`,
 	)},
+	machineMigration,
+	sessionIOMigration,
+	placementMigration,
+	awayMigration,
+	deferredMigration,
 }
 
 func execAll(stmts ...string) func(context.Context, *sql.Tx) error {

@@ -396,6 +396,7 @@ func TestParseTrigger(t *testing.T) {
 		want order
 	}{
 		{"!go repo:u p", true, order{Repo: "u", Prompt: "p"}},
+		{"!go machine:build repo:u p", true, order{Machine: "build", Repo: "u", Prompt: "p"}},
 		{"  !go repo:u\r\nline one\nline two", true, order{Repo: "u", Prompt: "line one\nline two"}},
 		{"!go p repo:u", true, order{Prompt: "p repo:u"}},
 		{"!going repo:u p", false, order{}},

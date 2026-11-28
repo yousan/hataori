@@ -39,12 +39,22 @@ import (
 	"github.com/yousan/hataori/internal/holder"
 	"github.com/yousan/hataori/internal/holder/tmux"
 	"github.com/yousan/hataori/internal/host"
+	"github.com/yousan/hataori/internal/machineio"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 )
 
 // Runner runs the sessions of one instance. It implements core.Runner.
 type Runner struct {
+	Deferred          *core.DeferredInputs
+	RevalidateInitial func(context.Context, *store.Tx, int64) error
+	RevalidatePending func(context.Context, int64, int64) error
+	AwayEnabled       bool
+	AwayGrace         time.Duration
+	Admit             func(context.Context, int64) error
+	RevalidateLaunch  func(context.Context, int64) (bool, error)
+	resumeLocks       sync.Map
+
 	// heldMu, by state directory, serialises the start, the stop and the
 	// letting go of a held window (startHeld, endHeld); heldSeen is the
 	// last time a held window was seen running, so that tmux is not asked
@@ -57,6 +67,12 @@ type Runner struct {
 	Host     host.Command             // how to run `hataori host`
 	Root     string                   // the instance root
 	Log      *slog.Logger
+	// IO resolves only a remotely placed session's durable machine/run. Local
+	// sessions use the existing holder and a Local session I/O implementation.
+	IO            func(context.Context, int64) (machineio.Session, error)
+	Remotes       map[string]RemoteMachine
+	cleanupCancel context.CancelFunc
+	cleanupDone   chan struct{}
 
 	Instructions   string        // appended to every agent's own
 	StartTimeout   time.Duration // for the agent to report its start; 60s when zero
@@ -123,18 +139,23 @@ var _ core.Runner = (*Runner)(nil)
 
 // live is a session the runner follows.
 type live struct {
-	id      int64
-	dir     string
-	adapter agent.Adapter
-	spec    agent.Spec
-	codec   agent.Codec
-	client  *host.Client // to the session host: the relay of hook calls, and the first sign that it answers
-	started time.Time
-	ready   bool  // the session left creating; no start check any more
-	resend  bool  // after a reconnect: send a first input that was not confirmed
-	pending bool  // after a reconnect: hand over pending input once the logs are read
-	held    bool  // lv.mu is held from follow until the loop's first step has handed over the pending input
-	upTo    int64 // the last pending input there was at the reconnect; later ones are handed over by their call
+	deferredBlocked  bool
+	deferredDrain    bool // verified ended receiver: commit final evidence, never perform effects
+	deferredProgress bool // current committed batch has ordinary I/O before any absent first attempt
+	catchingUp       bool
+	catchupToken     string
+	id               int64
+	dir              string
+	adapter          agent.Adapter
+	spec             agent.Spec
+	codec            agent.Codec
+	client           *host.Client // to the session host: the relay of hook calls, and the first sign that it answers
+	started          time.Time
+	ready            bool  // the session left creating; no start check any more
+	resend           bool  // after a reconnect: send a first input that was not confirmed
+	pending          bool  // after a reconnect: hand over pending input once the logs are read
+	held             bool  // lv.mu is held from follow until the loop's first step has handed over the pending input
+	upTo             int64 // the last pending input there was at the reconnect; later ones are handed over by their call
 	// drain is until when the agent, its session asleep, is still read
 	// before it is stopped: an agent may record a turn's last usage after
 	// the turn's end (agent.Event.Late). Zero: not asleep by hataori's hand.
@@ -155,13 +176,20 @@ type live struct {
 	// that window, and nothing ends the window's process.
 	taken *takenIn
 
-	mu     sync.Mutex // the codec, the offsets and the actions, one at a time
-	seq    uint64
-	offset int64            // in events.ndjson
-	start  int64            // where the current agent's lines begin in events.ndjson
-	files  map[string]int64 // followed files and their offsets
-	stop   chan struct{}
-	done   chan struct{}
+	answerPending int64      // pending answer whose effect is being journaled, under mu
+	mu            sync.Mutex // the codec, the offsets and the actions, one at a time
+	seq           uint64
+	offset        int64            // in events.ndjson
+	start         int64            // where the current agent's lines begin in events.ndjson
+	files         map[string]int64 // followed files and their offsets
+	stop          chan struct{}
+	done          chan struct{}
+	io            machineio.Session
+	sources       map[string]machineio.Source
+	readErr       error
+	warmPending   bool
+	remote        bool
+	replayReplies []agent.HookReply
 }
 
 // StateDir is a session's state directory.
@@ -212,7 +240,7 @@ func (r *Runner) background(ctx context.Context, tx *store.Tx, id int64) (n int,
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
-	if err == nil && outcome == session.Failure && time.Since(time.UnixMilli(updated)) >= r.backgroundWait() {
+	if err == nil && outcome == session.Failure && r.activeAge(ctx, tx, id, time.UnixMilli(updated)) >= r.backgroundWait() {
 		n = 0
 	}
 	return n, reason == session.ReasonInterrupted && by != "", err
@@ -282,7 +310,22 @@ func (r *Runner) confinement(ctx context.Context, id int64) (control.ThreadID, s
 
 // Start starts the agent of a new session through a session host. The
 // first input is sent once the agent reports that it is ready.
-func (r *Runner) Start(ctx context.Context, l core.Launch) error {
+func (r *Runner) Start(ctx context.Context, l core.Launch) (result error) {
+	if r.Admit != nil {
+		if err := r.endPriorPlacements(ctx, l.Session); err != nil {
+			return err
+		}
+		if err := r.Admit(ctx, l.Session); err != nil {
+			return err
+		}
+	}
+	defer func() {
+		if result != nil {
+			r.startedMu.Lock()
+			delete(r.started, l.Session)
+			r.startedMu.Unlock()
+		}
+	}()
 	// Once per session in this process: replace may start a session that
 	// Recover finds to launch as well, when a follower of Reconnect
 	// replaces one while Recover runs (#508).
@@ -296,8 +339,17 @@ func (r *Runner) Start(ctx context.Context, l core.Launch) error {
 	}
 	spec := agent.Spec{Dir: l.Dir, StateDir: StateDir(r.Root, l.Session), Model: l.Model, Effort: l.Effort,
 		Instructions: r.Instructions, Approvals: agent.AllowAll}
-	first := firstInput{Principal: l.Principal, From: l.From, Key: l.Key, Text: l.Input.Text, Context: l.Context, Link: l.Input.Link,
+	first := firstInput{AcceptedOperation: cmp.Or(l.AcceptedOperation, control.OpStart), Principal: l.Principal, From: l.From, Key: l.Key, Text: l.Input.Text, Context: l.Context, Link: l.Input.Link,
 		Before: l.Input.Before, After: l.Input.After, Via: l.Input.Via, NoInput: l.NoInput}
+	if remote, err := r.isRemote(ctx, l.Session); err != nil {
+		return err
+	} else if remote {
+		spec, err := r.launchRemote(ctx, l.Session, l.Agent, spec, first)
+		if err != nil {
+			return err
+		}
+		return r.follow(l.Session, ad, spec, fresh)
+	}
 	spec, err := r.launch(ctx, l.Session, l.Agent, ad, spec, first)
 	if err != nil {
 		return err
@@ -440,6 +492,11 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		string(sb), string(fb), model, effort, first.Context, first.Context, id); err != nil {
 		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
+	if r.Admit != nil {
+		if err := r.Admit(ctx, id); err != nil {
+			return agent.Spec{}, err
+		}
+	}
 	r.at("before host start")
 	hs := holder.Spec{Argv: launch.Argv, Env: launch.Env, Terminal: launch.Terminal, Dir: spec.Dir, Cols: r.Cols, Rows: r.Rows}
 	if before == 2 {
@@ -459,7 +516,7 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 		return agent.Spec{}, err
 	}
 	r.at("after host start")
-	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET host_pid = ?, launch = 0 WHERE id = ?`, w.Process, id); err != nil {
+	if _, err := r.Store.DB.ExecContext(ctx, `UPDATE sessions SET host_pid = ?, launch = 0, io_error=CASE WHEN io_error IN (?,?) THEN '' ELSE io_error END WHERE id = ?`, w.Process, core.ErrPlacementWait.Error(), core.PlacementCanceledReason, id); err != nil {
 		return agent.Spec{}, fmt.Errorf("runner: %w", err)
 	}
 	return spec, nil
@@ -541,6 +598,13 @@ func (r *Runner) window(dir string) holder.Window { return r.own().Window(dir) }
 
 // alive is what the holder says of the session whose state directory is dir.
 func (r *Runner) alive(dir string) holder.Liveness {
+	if remote, ok, err := r.remoteDir(dir); ok {
+		if err != nil {
+			return holder.Liveness{State: holder.Unknown}
+		}
+		l, _ := remote.Alive(context.Background())
+		return l
+	}
 	if w, ok := heldOf(dir); ok {
 		l, _ := r.tmuxHolder().Alive(context.Background(), w)
 		if l.State == holder.Unknown {
@@ -575,6 +639,12 @@ func (r *Runner) polled(dir string) holder.Liveness {
 // stop stops the agent of the session whose state directory is dir. A held
 // window is let go as well (endHeld).
 func (r *Runner) stop(dir string, interrupt, terminate time.Duration) (holder.StopResult, error) {
+	if remote, ok, err := r.remoteDir(dir); ok {
+		if err != nil {
+			return holder.StopResult{}, err
+		}
+		return remote.End(context.Background(), "end-"+remote.Target.Run, interrupt, terminate)
+	}
 	if w, ok := heldOf(dir); ok {
 		ctx := context.Background()
 		unlock := r.heldLock(dir)
@@ -615,7 +685,19 @@ func (r *Runner) Resume(ctx context.Context, id int64, f core.FirstInput) error 
 // Wake starts the agent of an asleep session again, resuming its
 // conversation, and gives it no input: the session becomes idle.
 func (r *Runner) Wake(ctx context.Context, id int64, principal control.Principal) error {
-	return r.resume(ctx, id, firstInput{Principal: principal, Wake: true, NoInput: true})
+	first := firstInput{AcceptedOperation: control.OpAttach, Principal: principal, Wake: true, NoInput: true}
+	var raw string
+	if err := r.Store.DB.QueryRowContext(ctx, `SELECT first_input FROM sessions WHERE id=?`, id).Scan(&raw); err != nil {
+		return err
+	}
+	var accepted firstInput
+	if err := json.Unmarshal([]byte(raw), &accepted); err != nil {
+		return err
+	}
+	if accepted.Wake && accepted.NoInput {
+		first.From, first.Via = accepted.From, accepted.Via
+	}
+	return r.resume(ctx, id, first)
 }
 
 // hostEndWait bounds how long a wake waits for the host of the session's
@@ -700,6 +782,14 @@ func (r *Runner) endEarlier(ctx context.Context, id int64, dir string) error {
 		case <-stopped:
 			return nil
 		case <-deadline:
+			r.at("earlier stop deadline")
+			// Both may be ready: an elapsed deadline does not undo a
+			// confirmed end and a stop that has already returned.
+			select {
+			case <-stopped:
+				return nil
+			default:
+			}
 		case <-ctx.Done():
 		}
 	}
@@ -713,6 +803,32 @@ func (r *Runner) endEarlier(ctx context.Context, id int64, dir string) error {
 }
 
 func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
+	if err := r.deferredResume(ctx, id, first, nil); err != nil {
+		return err
+	}
+	lock, _ := r.resumeLocks.LoadOrStore(id, &sync.Mutex{})
+	mu := lock.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+	if r.Admit != nil {
+		var launch int
+		if err := r.Store.DB.QueryRowContext(ctx, `SELECT launch FROM sessions WHERE id=?`, id).Scan(&launch); err != nil {
+			return err
+		}
+		if launch == 0 {
+			return nil
+		}
+	}
+	if r.Admit != nil {
+		if err := r.Admit(ctx, id); err != nil {
+			return err
+		}
+	}
+	if remote, err := r.isRemote(ctx, id); err != nil {
+		return err
+	} else if remote {
+		return r.resumeRemote(ctx, id, first)
+	}
 	// The agent that was put to sleep must be gone, and read to its end,
 	// before another starts in the same state directory.
 	r.mu.Lock()
@@ -810,6 +926,9 @@ func (r *Runner) resume(ctx context.Context, id int64, first firstInput) error {
 	// take-in stored it; the options the person started it with are not
 	// known, and are not reused.
 	spec.TakenIn = false // resumed, it is launched by hataori's own host
+	if err := r.deferredResume(ctx, id, first, &resumeID); err != nil {
+		return err
+	}
 	spec, err := r.launch(ctx, id, s.Agent, ad, spec, first)
 	if err != nil {
 		return err
@@ -826,7 +945,7 @@ func (r *Runner) skipRest(ctx context.Context, id int64, dir string) error {
 	}
 	return r.Store.Update(ctx, func(tx *store.Tx) error {
 		n := end(filepath.Join(dir, host.EventsFile))
-		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET log_offset = ?, log_start = ? WHERE id = ?`, n, n, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET log_offset = ?, log_start = ?, screen_offset=0 WHERE id = ?`, n, n, id); err != nil {
 			return err
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT path FROM session_files WHERE session_id = ?`, id)
@@ -862,9 +981,15 @@ func (r *Runner) skipRest(ctx context.Context, id int64, dir string) error {
 // sleep, has its agent stopped. One launched with another config, and idle,
 // is put to sleep.
 func (r *Runner) Reconnect(ctx context.Context) error {
+	if err := r.observeMachines(ctx); err != nil {
+		return err
+	}
+	r.startRemoteCleanup()
 	if err := r.stopSleepers(ctx); err != nil {
 		return err
 	}
+	// Only completed launches (zero) can reconnect. A canceled placement
+	// intent keeps a distinct durable phase, including across later restarts.
 	rows, err := r.Store.DB.QueryContext(ctx, `SELECT id, spec FROM sessions
 		WHERE state IN ('creating', 'idle', 'running', 'waiting') AND spec != '' AND launch = 0`)
 	if err != nil {
@@ -885,6 +1010,15 @@ func (r *Runner) Reconnect(ctx context.Context) error {
 	}
 	rows.Close()
 	for _, x := range found {
+		if r.RevalidateLaunch != nil {
+			allowed, err := r.RevalidateLaunch(ctx, x.id)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				continue
+			}
+		}
 		var s storedSpec
 		if err := json.Unmarshal([]byte(x.spec), &s); err != nil {
 			r.Log.Error("session spec unreadable", "session", x.id, "err", err)
@@ -933,6 +1067,14 @@ func (r *Runner) stopSleepers(ctx context.Context) error {
 	}
 	rows.Close()
 	for _, id := range ids {
+		remote, err := r.isRemote(ctx, id)
+		if err != nil {
+			return err
+		}
+		if remote {
+			r.cleanupRemoteSleeper(ctx, id)
+			continue
+		}
 		dir := StateDir(r.Root, id)
 		if t, ok := takenOf(dir); ok {
 			// A window taken in whose release or close the daemon did not
@@ -971,14 +1113,22 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 	resumed := m == reconnect
 	lv := &live{id: id, dir: spec.StateDir, adapter: ad, codec: ad.NewCodec(spec), spec: spec,
 		files: map[string]int64{}, stop: make(chan struct{}), done: make(chan struct{}), started: time.Now()}
-	if t, ok := takenOf(spec.StateDir); ok {
-		lv.taken = &t
+	if err := r.openIO(lv); err != nil {
+		return err
+	}
+	if !lv.remote {
+		if t, ok := takenOf(lv.dir); ok {
+			lv.taken = &t
+		}
 	}
 	var created int64
-	err := r.Store.DB.QueryRow(`SELECT last_seq, log_offset, log_start, created_at FROM sessions WHERE id = ?`, id).
-		Scan(&lv.seq, &lv.offset, &lv.start, &created)
+	err := r.Store.DB.QueryRow(`SELECT last_seq, log_offset, log_start, created_at, screen_offset FROM sessions WHERE id = ?`, id).
+		Scan(&lv.seq, &lv.offset, &lv.start, &created, &lv.seenTo)
 	if err != nil {
 		return fmt.Errorf("runner: session %d: %w", id, err)
+	}
+	if m != reconnect {
+		lv.seenTo = 0
 	}
 	if err := r.compare(lv); err != nil {
 		return err
@@ -1003,30 +1153,29 @@ func (r *Runner) follow(id int64, ad agent.Adapter, spec agent.Spec, m mode) err
 		rows.Close()
 	}
 	var replies []agent.HookReply
-	if resumed {
+	if resumed && r.beginCatchup(lv) {
 		replies = r.warm(lv)
-		// Before any new line is read: input written before the restart,
-		// so that the report of it, if it comes, is known for what it is.
-		r.handOverWritten(lv)
-	}
-	if c, err := host.Dial(lv.dir); err == nil {
-		lv.client = c
-	}
-	if resumed && lv.client != nil {
-		// Replies decided before the daemon died and not sent: send those
-		// whose call still waits. The host refuses the others anyway.
-		waiting, _ := lv.client.Waiting()
-		open := map[string]bool{}
-		for _, w := range waiting {
-			open[w.ID] = true
-		}
-		var again agent.Actions
-		for _, rep := range replies {
-			if open[rep.Call] {
-				again.Reply = append(again.Reply, rep)
+		if lv.remote && !lv.catchingUp && lv.readErr == nil {
+			if err := r.reconcileMachineActions(lv); err != nil {
+				r.pauseIO(lv, err)
+				lv.warmPending = true
 			}
 		}
-		r.act(lv, again)
+		// Before any new line is read: input written before the restart,
+		// so that the report of it, if it comes, is known for what it is.
+		if lv.readErr == nil {
+			r.handOverWritten(lv)
+		}
+	}
+	if !lv.remote {
+		if c, err := host.Dial(lv.dir); err == nil {
+			lv.client = c
+		}
+	}
+	if resumed && (lv.client != nil || lv.remote) && lv.readErr == nil {
+		// Replies decided before the daemon died and not sent: send those
+		// whose call still waits. The host refuses the others anyway.
+		lv.replayReplies = replies
 	}
 	if !resumed || lv.taken != nil && r.creating(id) {
 		// A take-in is ready once its codec is opened: one the daemon died
@@ -1092,7 +1241,7 @@ func (r *Runner) handOverPending(lv *live) {
 			var in control.Input
 			if err = json.Unmarshal([]byte(x.data), &in); err == nil {
 				err = r.handOver(lv, x.id, false, func() (agent.Actions, error) {
-					return lv.codec.Input(agent.Input{ID: strconv.FormatInt(x.id, 10), Text: x.earlier + in.Text})
+					return r.codecInput(lv, agent.Input{ID: strconv.FormatInt(x.id, 10), Text: x.earlier + in.Text})
 				})
 			}
 		}
@@ -1110,10 +1259,10 @@ func (r *Runner) handOverWritten(lv *live) {
 	r.Store.DB.QueryRow(`SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi)
 	var f firstInput
 	if fi != "" && json.Unmarshal([]byte(fi), &f) == nil && f.Sent && f.Written {
-		r.do(lv, r.inputActions(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true, WrittenText: f.WrittenText, Earlier: !f.Current}))
+		r.restoreWrittenInput(lv, agent.Input{ID: firstInputID, Text: f.Context + f.Input().ForAgent(), Written: true, WrittenAt: r.writtenClock(lv, f.WrittenAt), WrittenText: f.WrittenText, Earlier: !f.Current})
 		lv.resend = false
 	}
-	rows, err := r.Store.DB.Query(`SELECT id, data, context, written, written_text FROM pending_inputs
+	rows, err := r.Store.DB.Query(`SELECT id, data, context, written, written_text, written_at FROM pending_inputs
 		WHERE session_id = ? AND request = '' AND written != 0 ORDER BY id`, lv.id)
 	if err != nil {
 		r.Log.Error("written input", "session", lv.id, "err", err)
@@ -1121,26 +1270,27 @@ func (r *Runner) handOverWritten(lv *live) {
 	}
 	var ins []agent.Input
 	for rows.Next() {
-		var id, written int64
+		var id, written, writtenAt int64
 		var data, earlier string
 		var writtenText *string
 		var in control.Input
-		if rows.Scan(&id, &data, &earlier, &written, &writtenText) == nil && json.Unmarshal([]byte(data), &in) == nil {
+		if rows.Scan(&id, &data, &earlier, &written, &writtenText, &writtenAt) == nil && json.Unmarshal([]byte(data), &in) == nil {
 			// One that a runner from before agent.Input.Earlier wrote, maybe
 			// to this agent, also one that it wrote to an agent before and
 			// marked stale; this runner removes those at a launch (newAgent).
-			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true, WrittenText: writtenText, Earlier: written != writtenNow})
+			ins = append(ins, agent.Input{ID: strconv.FormatInt(id, 10), Text: earlier + in.Text, Written: true, WrittenAt: time.UnixMilli(writtenAt), WrittenText: writtenText, Earlier: written != writtenNow})
 		}
 	}
 	rows.Close()
 	for _, in := range ins {
-		r.do(lv, r.inputActions(lv, in))
+		in.WrittenAt = r.writtenClock(lv, in.WrittenAt.UnixMilli())
+		r.restoreWrittenInput(lv, in)
 	}
 }
 
 // inputActions is what the codec makes of in; an error is logged.
 func (r *Runner) inputActions(lv *live, in agent.Input) agent.Actions {
-	a, err := lv.codec.Input(in)
+	a, err := r.codecInput(lv, in)
 	if err != nil {
 		r.Log.Error("input", "session", lv.id, "input", in.ID, "err", err)
 	}
@@ -1164,46 +1314,55 @@ const writtenNow = 2
 
 func (r *Runner) setWritten(lv *live, ids []string, written bool, text map[string]string) error {
 	err := r.Store.Update(context.Background(), func(tx *store.Tx) error {
-		ctx := context.Background()
-		for _, id := range ids {
-			var writtenText *string
-			if t, ok := text[id]; written && ok {
-				writtenText = &t
-			}
-			if id == firstInputID {
-				var fi string
-				if err := tx.QueryRowContext(ctx, `SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi); err != nil {
-					return err
-				}
-				var f firstInput
-				if fi == "" || json.Unmarshal([]byte(fi), &f) != nil {
-					continue
-				}
-				f.Written, f.Current, f.WrittenText = written, written, writtenText
-				b, _ := json.Marshal(f)
-				if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(b), lv.id); err != nil {
-					return err
-				}
-				continue
-			}
-			row, err := strconv.ParseInt(id, 10, 64)
-			if err != nil {
-				continue // not one of ours
-			}
-			mark := 0
-			if written {
-				mark = writtenNow
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ?, written_text = ? WHERE id = ? AND session_id = ?`, mark, writtenText, row, lv.id); err != nil {
-				return err
-			}
-		}
-		return nil
+		return r.setWrittenTx(context.Background(), tx, lv, ids, written, text)
 	})
 	if err != nil {
 		r.Log.Error("marking input written", "session", lv.id, "err", err)
 	}
 	return err
+}
+
+func (r *Runner) setWrittenTx(ctx context.Context, tx *store.Tx, lv *live, ids []string, written bool, text map[string]string) error {
+	for _, id := range ids {
+		var writtenText *string
+		if t, ok := text[id]; written && ok {
+			writtenText = &t
+		}
+		if id == firstInputID {
+			var fi string
+			if err := tx.QueryRowContext(ctx, `SELECT first_input FROM sessions WHERE id = ?`, lv.id).Scan(&fi); err != nil {
+				return err
+			}
+			var f firstInput
+			if fi == "" || json.Unmarshal([]byte(fi), &f) != nil {
+				continue
+			}
+			f.Written, f.Current, f.WrittenText = written, written, writtenText
+			if written && f.WrittenAt == 0 {
+				f.WrittenAt = time.Now().UnixMilli()
+			}
+			if !written {
+				f.WrittenAt = 0
+			}
+			b, _ := json.Marshal(f)
+			if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ? WHERE id = ?`, string(b), lv.id); err != nil {
+				return err
+			}
+			continue
+		}
+		row, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			continue // not one of ours
+		}
+		mark := 0
+		if written {
+			mark = writtenNow
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET written = ?, written_text = ?, written_at=CASE WHEN ?=0 THEN 0 WHEN written_at=0 THEN ? ELSE written_at END WHERE id = ? AND session_id = ?`, mark, writtenText, mark, time.Now().UnixMilli(), row, lv.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // handOver carries out what the codec makes of one pending input or
@@ -1214,8 +1373,63 @@ func (r *Runner) setWritten(lv *live, ids []string, written bool, text map[strin
 // host has taken it. One the codec refuses is removed, and its error
 // returned. lv.mu is held.
 func (r *Runner) handOver(lv *live, pending int64, answer bool, f func() (agent.Actions, error)) error {
+	if r.RevalidatePending != nil {
+		if err := r.RevalidatePending(context.Background(), lv.id, pending); err != nil {
+			data, _ := json.Marshal(map[string]any{"action": "pending input", "state": "refused", "reason": "authorization or scope changed; queued delivery was withdrawn"})
+			recordErr := r.Store.Update(context.Background(), func(tx *store.Tx) error {
+				if answer {
+					return r.refusePendingAnswerTx(context.Background(), tx, lv.id, pending, "authorization or scope changed; queued answer was withdrawn")
+				}
+				var id control.ThreadID
+				if e := tx.QueryRowContext(context.Background(), `SELECT thread_id FROM sessions WHERE id=?`, lv.id).Scan(&id); e != nil {
+					return e
+				}
+				if !answer {
+					var seq uint64
+					if e := tx.QueryRowContext(context.Background(), `SELECT last_seq+1 FROM sessions WHERE id=?`, lv.id).Scan(&seq); e != nil {
+						return e
+					}
+					if e := r.Machine.ApplyTx(context.Background(), tx, lv.id, session.Input{Kind: session.AgentEvent, Agent: agent.Event{Kind: agent.TurnEnded, Seq: seq, Input: strconv.FormatInt(pending, 10), Status: agent.Failed, Reason: agent.NotDelivered}}); e != nil {
+						return e
+					}
+				}
+				_, e := tx.Append(context.Background(), control.Event{Thread: id, Kind: "machine_action", Data: data})
+				return e
+			})
+			if recordErr != nil {
+				return errors.Join(err, recordErr)
+			}
+			r.Store.DB.QueryRow(`SELECT last_seq FROM sessions WHERE id=?`, lv.id).Scan(&lv.seq)
+			r.dropPending(pending)
+			return err
+		}
+	}
+	if r.Deferred != nil {
+		// A later accepted input can emit an action while an older deferred
+		// receipt is pending. If that action is fenced and reconstructed,
+		// retain this row in the recovery horizon, including held answers.
+		lv.upTo = max(lv.upTo, pending)
+	}
+	if lv.deferredBlocked {
+		// Do not give an unwritten later row to a codec that could hold it
+		// without emitting an action. Recovery will hand that durable row
+		// over once, after reconciling the original receiver receipt.
+		lv.warmPending, lv.pending = true, true
+		return core.ErrMachineUnchecked
+	}
 	a, err := f()
+	if err != nil && answer {
+		recordErr := r.refusePendingAnswer(lv.id, pending)
+		if recordErr == nil {
+			recordErr = r.Store.DB.QueryRow(`SELECT last_seq FROM sessions WHERE id=?`, lv.id).Scan(&lv.seq)
+		}
+		return errors.Join(err, recordErr)
+	}
 	if err == nil {
+		if answer {
+			lv.answerPending = pending
+			defer func() { lv.answerPending = 0 }()
+		}
 		if err = r.do(lv, a); err != nil && !answer && a.KeysFailed != nil {
 			return nil
 		}
@@ -1237,7 +1451,7 @@ func (r *Runner) dropPending(pending int64) {
 // saveRead stores how far a step read, and the ranges it read after the
 // session's earlier ones, in the transaction that stores its events.
 func saveRead(ctx context.Context, tx *store.Tx, session int64, b batch) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET log_offset = ? WHERE id = ?`, b.offset, session); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET log_offset = ?,screen_offset=? WHERE id = ?`, b.offset, b.screenOffset, session); err != nil {
 		return err
 	}
 	for p, o := range b.files {
@@ -1263,6 +1477,9 @@ func saveRead(ctx context.Context, tx *store.Tx, session int64, b batch) error {
 			session, n, rd.path, rd.start, rd.end); err != nil {
 			return err
 		}
+		if err := saveProof(ctx, tx, session, n, rd); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1277,56 +1494,13 @@ func saveRead(ctx context.Context, tx *store.Tx, session int64, b batch) error {
 // It returns the replies to hook calls it produced: one that was never sent
 // because the daemon died first still has its call waiting at the host.
 func (r *Runner) warm(lv *live) []agent.HookReply {
-	starts, reads, err := r.storedReads(lv)
+	replies, err := r.warmIO(lv)
 	if err != nil {
-		// Without the ranges the order is not known; the lines are still
-		// given, from where the current agent's begin if that is known, in
-		// the order used before ranges were stored.
-		r.Log.Error("warm: stored reads", "session", lv.id, "err", err)
-		reads = nil
+		r.pauseIO(lv, err)
+		lv.warmPending = true
+		return nil
 	}
-	logPath := filepath.Join(lv.dir, host.EventsFile)
-	data := map[string][]byte{}
-	content := func(p string) []byte {
-		if b, ok := data[p]; ok {
-			return b
-		}
-		b, _ := os.ReadFile(p)
-		data[p] = b
-		return b
-	}
-	// Where each source's stored ranges begin; what is before is replayed
-	// as it was before ranges were stored.
-	first := map[string]int64{}
-	for _, rd := range reads {
-		if _, ok := first[rd.path]; !ok {
-			first[rd.path] = rd.start
-		}
-	}
-	upTo := func(p string, end int64) int64 {
-		if f, ok := first[p]; ok && f < end {
-			return f
-		}
-		return end
-	}
-	var replies []agent.HookReply
-	give := func(src func([]byte) agent.Source, b []byte, from, to int64) {
-		for _, l := range lines(b, from, to) {
-			replies = append(replies, lv.codec.Decode(src(l), l).Reply...)
-		}
-	}
-	file := func([]byte) agent.Source { return agent.File }
-	give(source, content(logPath), lv.start, upTo("", lv.offset))
-	for p, off := range lv.files {
-		give(file, content(p), starts[p], upTo(p, off))
-	}
-	for _, rd := range reads {
-		if rd.path == "" {
-			give(source, content(logPath), rd.start, rd.end)
-		} else {
-			give(file, content(rd.path), rd.start, rd.end)
-		}
-	}
+	r.pauseIO(lv, nil)
 	return replies
 }
 
@@ -1349,7 +1523,7 @@ func (r *Runner) storedReads(lv *live) (map[string]int64, []readRange, error) {
 		starts[p] = s
 	}
 	rows.Close()
-	rows, err = r.Store.DB.Query(`SELECT path, start, end FROM session_reads WHERE session_id = ? ORDER BY n`, lv.id)
+	rows, err = r.Store.DB.Query(`SELECT r.path, r.start, r.end, coalesce(p.digest, ''), coalesce(p.handle, ''), coalesce(p.generation, '') FROM session_reads r LEFT JOIN session_read_proofs p ON p.session_id=r.session_id AND p.n=r.n WHERE r.session_id = ? ORDER BY r.n`, lv.id)
 	if err != nil {
 		return starts, nil, err // the starts still hold without the ranges
 	}
@@ -1357,10 +1531,14 @@ func (r *Runner) storedReads(lv *live) (map[string]int64, []readRange, error) {
 	var out []readRange
 	for rows.Next() {
 		var rd readRange
-		if err := rows.Scan(&rd.path, &rd.start, &rd.end); err != nil {
+		if err := rows.Scan(&rd.path, &rd.start, &rd.end, &rd.digest, &rd.source.Handle, &rd.source.Generation); err != nil {
 			return starts, nil, err
 		}
+		rd.source.Name = rd.path
 		limit, ok := lv.offset, rd.path == ""
+		if rd.path == "@screen" {
+			limit, ok = int64(lv.seenTo), true
+		}
 		if !ok {
 			limit, ok = lv.files[rd.path]
 		}
@@ -1416,8 +1594,14 @@ func complete(b []byte, from int64) int64 {
 func (r *Runner) Close() {
 	r.mu.Lock()
 	lives := r.live
+	cancel, done := r.cleanupCancel, r.cleanupDone
+	r.cleanupCancel, r.cleanupDone = nil, nil
 	r.live = nil
 	r.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		<-done
+	}
 	for _, lv := range lives {
 		close(lv.stop)
 		<-lv.done
@@ -1474,10 +1658,13 @@ func (r *Runner) loop(lv *live) {
 			r.mu.Unlock()
 			return
 		}
-		if time.Since(lastTick) >= time.Second {
+		if time.Since(lastTick) >= time.Second && lv.readErr == nil {
+			if !r.sessionChecked(lv.id) || lv.catchingUp {
+				continue
+			}
 			lastTick = time.Now()
 			lv.mu.Lock()
-			r.do(lv, lv.codec.Tick(time.Now()))
+			r.do(lv, r.tickCodec(lv))
 			lv.mu.Unlock()
 			r.checkIdle(lv)
 		}
@@ -1490,11 +1677,14 @@ func (r *Runner) loop(lv *live) {
 
 // batch is what one read of the logs produced.
 type batch struct {
-	events  []agent.Event
-	actions []agent.Actions
-	offset  int64
-	files   map[string]int64
-	reads   []readRange // what was given to the codec, in order
+	deferredFailure *deferredFailure // receipt failure and input cleanup commit atomically
+	events          []agent.Event
+	actions         []agent.Actions
+	offset          int64
+	files           map[string]int64
+	reads           []readRange // what was given to the codec, in order
+	err             error
+	screenOffset    uint64
 }
 
 // readRange is complete lines of the host's log (path "") or of a followed
@@ -1504,6 +1694,8 @@ type batch struct {
 type readRange struct {
 	path       string
 	start, end int64
+	source     machineio.Source
+	digest     string
 }
 
 // step reads what is new, commits it, and carries out the codec's actions.
@@ -1522,12 +1714,58 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 			lv.ended = true
 		}
 	}()
+	if !r.beginCatchup(lv) {
+		return true
+	}
 	if lv.asleep {
 		return !r.polled(lv.dir).Ended()
 	}
+	if lv.warmPending {
+		lv.codec = lv.adapter.NewCodec(lv.spec)
+		lv.replayReplies = r.warm(lv)
+		if lv.readErr != nil {
+			if r.confirmedGone(lv) {
+				r.exit(lv)
+				r.finishSessionCatchup(lv)
+				return false
+			}
+			return true
+		}
+		if lv.remote && !lv.catchingUp {
+			if err := r.reconcileMachineActions(lv); err != nil {
+				r.pauseIO(lv, err)
+				return true
+			}
+		}
+		lv.warmPending = false
+		lv.resend = true
+		r.handOverWritten(lv)
+	}
+	if ready, err := r.beforeDeferredRead(lv); err != nil || !ready {
+		if err != nil {
+			r.Log.Warn("deferred receiver probe waits", "session", lv.id, "err", err)
+		}
+		return true
+	}
 	exited := r.polled(lv.dir).Ended() // looked at before reading, so nothing written before the exit is missed
 	b := r.read(lv)
+	if b.err != nil {
+		if r.confirmedGone(lv) {
+			r.exit(lv)
+			r.finishSessionCatchup(lv)
+			return false
+		}
+		r.pauseIO(lv, b.err)
+		r.noteRemoteReadFailure(lv)
+		lv.warmPending = true
+		return true
+	}
 	r.watchScreen(lv, &b)
+	if b.err != nil {
+		r.pauseIO(lv, b.err)
+		lv.warmPending = true
+		return true
+	}
 	first, err := r.commit(lv, b)
 	if err != nil {
 		// The codec has read lines whose results were not stored: build it
@@ -1546,8 +1784,22 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 		return true
 	}
 	lv.offset = b.offset
+	lv.seenTo = b.screenOffset
+	r.pauseIO(lv, nil)
 	for p, o := range b.files {
 		lv.files[p] = o
+	}
+	if lv.deferredDrain {
+		// Final native ACKs were committed above. No actions, replies or
+		// first/pending inputs may run against this ended receiver.
+		if len(b.events) != 0 {
+			return true
+		}
+		if err := r.exit(lv); err != nil {
+			return true // retain the drain/follower until terminal state is durable
+		}
+		r.finishSessionCatchup(lv)
+		return false
 	}
 	for _, e := range b.events {
 		if e.Kind == agent.SessionEnded && lv.taken != nil && e.Reason != agent.WrongSession && e.Reason != clearReason {
@@ -1565,11 +1817,36 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 			go r.stop(lv.dir, time.Second, 2*time.Second)
 		}
 	}
-	for _, a := range b.actions {
-		r.act(lv, a)
+	if lv.catchingUp {
+		if err := r.reconcileMachineActions(lv); err != nil {
+			r.pauseIO(lv, err)
+			return true
+		}
+		if exited {
+			r.exit(lv)
+			r.finishSessionCatchup(lv)
+			return false
+		}
+		for _, a := range b.actions {
+			lv.replayReplies = append(lv.replayReplies, a.Reply...)
+		}
+		if !r.finishSessionCatchup(lv) {
+			return true
+		}
+		// Catch-up did not hand a first/pending input over. Reconsider those
+		// only in a fresh read step after every owned session is reconciled.
+		lv.pending = true
+		r.Store.DB.QueryRow(`SELECT coalesce(max(id),0) FROM pending_inputs WHERE session_id=?`, lv.id).Scan(&lv.upTo)
+		return true
+	}
+	if !r.runReadActions(lv, b.actions) {
+		return true
+	}
+	if len(lv.replayReplies) > 0 {
+		r.replayReplies(lv)
 	}
 	if first != nil {
-		a, err := lv.codec.Input(agent.Input{ID: firstInputID, Text: first.Context + first.Input().ForAgent()})
+		a, err := r.codecInput(lv, agent.Input{ID: firstInputID, Text: first.Context + first.Input().ForAgent()})
 		if err != nil {
 			r.Log.Error("first input", "session", lv.id, "err", err)
 		}
@@ -1585,7 +1862,7 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 		r.exit(lv)
 		return false
 	}
-	if lv.failed && lv.client == nil {
+	if lv.failed && lv.client == nil && !lv.remote {
 		return false // never had a host: nothing more will come
 	}
 	r.checkStart(lv)
@@ -1598,7 +1875,7 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 				lv.late = true
 			}
 		}
-		if lv.late || !time.Now().Before(lv.drain) {
+		if lv.late || r.activeAge(context.Background(), r.Store.DB, lv.id, lv.drain.Add(-r.usageDrain())) >= r.usageDrain() {
 			lv.asleep = true
 			go r.stop(lv.dir, time.Second, 2*time.Second)
 		}
@@ -1615,7 +1892,7 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 // the files and decoded after them, so that this holds for what is written
 // meanwhile too.
 func (r *Runner) read(lv *live) batch {
-	b := batch{offset: lv.offset, files: map[string]int64{}}
+	b := batch{offset: lv.offset, screenOffset: lv.seenTo, files: map[string]int64{}}
 	for p, off := range lv.files {
 		b.files[p] = off
 	}
@@ -1623,12 +1900,16 @@ func (r *Runner) read(lv *live) batch {
 		for i := 0; i < len(b.files)+1; i++ { // a followed file may name another
 			found := false
 			for p, off := range b.files {
-				ls, end := newLines(p, off)
+				ls, end, proof, err := r.readLines(lv, p, off)
+				if err != nil {
+					b.err = err
+					return
+				}
 				if end == off {
 					continue
 				}
 				found = true
-				b.reads = append(b.reads, readRange{path: p, start: off, end: end})
+				b.reads = append(b.reads, proof)
 				for _, l := range ls {
 					r.decode(lv, &b, agent.File, l)
 				}
@@ -1639,10 +1920,17 @@ func (r *Runner) read(lv *live) batch {
 			}
 		}
 	}
-	calls, end := newLines(filepath.Join(lv.dir, host.EventsFile), lv.offset)
+	calls, end, proof, err := r.readLines(lv, "", lv.offset)
+	if err != nil {
+		b.err = err
+		return b
+	}
 	readFiles()
+	if b.err != nil {
+		return b
+	}
 	if end > lv.offset {
-		b.reads = append(b.reads, readRange{start: lv.offset, end: end})
+		b.reads = append(b.reads, proof)
 		for _, l := range calls {
 			r.decode(lv, &b, source(l), l)
 		}
@@ -1682,12 +1970,16 @@ func (r *Runner) watchScreen(lv *live, b *batch) {
 	if !lv.screen {
 		return
 	}
+	if lv.remote {
+		r.watchRemoteScreen(lv, b)
+		return
+	}
 	since := func(from uint64) ([]byte, uint64) { return r.own().Since(r.window(lv.dir), from) }
 	if _, ok := heldOf(lv.dir); ok {
 		since = func(from uint64) ([]byte, uint64) { return heldScreen(lv.dir, from) }
 	}
 	data, next := since(lv.seenTo)
-	lv.seenTo = next
+	b.screenOffset = next
 	if len(data) > 0 {
 		r.decode(lv, b, agent.Screen, data)
 	}
@@ -1737,7 +2029,31 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		ctx := context.Background()
 		seq = lv.seq
 		first, rep, slept = nil, nil, false
-		for _, e := range b.events {
+		if f := b.deferredFailure; f != nil {
+			input, bound, err := r.Deferred.CodecSlot(ctx, tx, lv.id, f.codecID)
+			if err != nil {
+				return err
+			}
+			if bound {
+				if err := r.Deferred.FailTx(ctx, tx, lv.id, input, f.reason); err != nil {
+					return err
+				}
+			}
+		}
+
+		noReplacement := lv.deferredDrain
+		if r.Deferred != nil && !lv.deferredDrain && cannotResume(b.events) {
+			bound, e := r.Deferred.PreventReplacementTx(ctx, tx, lv.id)
+			noReplacement = noReplacement || bound
+			if e != nil {
+				return e
+			}
+		}
+		applied, err := r.deferredEvents(ctx, tx, lv.id, b.events)
+		if err != nil {
+			return err
+		}
+		for _, e := range applied {
 			seq++
 			e.Seq = seq
 			if err := r.Machine.ApplyTx(ctx, tx, lv.id, session.Input{Kind: session.AgentEvent, Agent: e}); err != nil {
@@ -1754,7 +2070,7 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		// in the transaction that stores its failure, so a daemon that stops
 		// after it still replaces it once (#527). A window taken in is not:
 		// its agent ending means the window closed.
-		if lv.taken == nil && cannotResume(b.events) {
+		if lv.taken == nil && cannotResume(b.events) && !noReplacement {
 			var err error
 			if rep, err = r.replaceTx(ctx, tx, lv); err != nil {
 				return fmt.Errorf("replacing a session that cannot resume: %w", err)
@@ -1767,14 +2083,29 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		if err := saveRead(ctx, tx, lv.id, rb); err != nil {
 			return err
 		}
-		if err := r.firstInputStep(ctx, tx, lv, b, &first); err != nil {
+		appliedBatch := b
+		appliedBatch.events = applied
+		if lv.deferredDrain {
+			// Clear only reported inputs; do not accept a new first input
+			// while draining an ended original receiver.
+			if err := clearReported(ctx, tx, lv.id, applied); err != nil {
+				return err
+			}
+		} else {
+			if err := r.firstInputStep(ctx, tx, lv, appliedBatch, &first); err != nil {
+				return err
+			}
+		}
+		if err := r.endAside(ctx, tx, lv, b, &slept); err != nil {
 			return err
 		}
-		return r.endAside(ctx, tx, lv, b, &slept)
+		return tx.QueryRowContext(ctx, `SELECT last_seq FROM sessions WHERE id=?`, lv.id).Scan(&seq)
 	})
 	if err == nil {
 		lv.seq = seq
-		lv.resend = false
+		if !lv.catchingUp {
+			lv.resend = false
+		}
 		if slept {
 			r.Log.Info("the conversation of one input ended with its turn; the session sleeps", "session", lv.id)
 			lv.drain = time.Now().Add(r.usageDrain())
@@ -1805,6 +2136,18 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 	if err := json.Unmarshal([]byte(fi), &f); err != nil {
 		return err
 	}
+	if lv.catchingUp && !(f.Sent && (reported(b.events, firstInputID) || notDelivered(b.events, firstInputID))) {
+		return nil
+	}
+	willHandOver := !f.NoInput && !f.Written && ((!f.Sent && control.State(state) == control.Idle) || (f.Sent && lv.resend && !reported(b.events, firstInputID) && !notDelivered(b.events, firstInputID)))
+	if willHandOver && r.RevalidateInitial != nil {
+		if err := r.RevalidateInitial(ctx, tx, lv.id); err != nil {
+			if errors.Is(err, core.ErrForbidden) {
+				return nil
+			}
+			return err
+		}
+	}
 	switch {
 	case f.NoInput && (control.State(state) == control.Idle || control.State(state) == control.Running || control.State(state) == control.Waiting):
 		// Woken with nothing to say: ready is all it waited for, and a turn
@@ -1824,6 +2167,9 @@ func (r *Runner) firstInputStep(ctx context.Context, tx *store.Tx, lv *live, b b
 			return err
 		}
 		f.Sent = true
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id=? AND ended_at IS NULL`, lv.id).Scan(&f.TurnID); err != nil {
+			return err
+		}
 		*first = &f
 	case f.Sent && reported(b.events, firstInputID):
 		// The agent reported the turn: delivered, and with it what the
@@ -1935,7 +2281,7 @@ const firstInputID = "first"
 // report and will not: it never did, or the input was stopped before it was
 // written.
 func unreported(e agent.Event) bool {
-	return e.Kind == agent.TurnEnded && (e.Reason == agent.NotDelivered || e.Reason == agent.NotTaken || e.Status == agent.Interrupted)
+	return e.Kind == agent.TurnEnded && !e.RetainInput && (e.Reason == agent.NotDelivered || e.Reason == agent.NotTaken || e.Status == agent.Interrupted)
 }
 
 // notDelivered reports whether a turn among evs ended so for the input id.
@@ -1960,7 +2306,7 @@ func (r *Runner) do(lv *live, a agent.Actions) error {
 		lv.screen = false
 	}
 	if len(a.Events) > 0 {
-		b := batch{offset: lv.offset, files: map[string]int64{}}
+		b := batch{offset: lv.offset, screenOffset: lv.seenTo, files: map[string]int64{}}
 		for p, o := range lv.files {
 			b.files[p] = o
 		}
@@ -1988,18 +2334,24 @@ func (r *Runner) do(lv *live, a agent.Actions) error {
 // act hands input to the agent through its holder and answers waiting hook
 // calls. It returns the first error, which it has logged.
 func (r *Runner) act(lv *live, a agent.Actions) error {
+	if lv.deferredBlocked && (len(a.Keys) > 0 || len(a.Write) > 0 || len(a.Reply) > 0) {
+		r.holdDeferredActions(lv, []agent.Actions{a})
+		return core.ErrMachineUnchecked
+	}
+	if handled, err := r.actDeferred(lv, a); handled {
+		return err
+	}
 	if len(a.Keys) == 0 && len(a.Write) == 0 && len(a.Reply) == 0 {
 		return nil
 	}
 	// failed tells the codec that its keys were not handed over.
 	failed := func(nothing bool) {
-		if a.KeysFailed == nil {
-			return
-		}
-		if nothing && len(a.Inputs) > 0 {
+		if nothing && len(a.Inputs) > 0 && (lv.remote || a.KeysFailed != nil) {
 			r.unmarkWritten(lv, a.Inputs)
 		}
-		a.KeysFailed(nothing)
+		if a.KeysFailed != nil {
+			a.KeysFailed(nothing)
+		}
 	}
 	if len(a.Inputs) > 0 {
 		if err := r.markWritten(lv, a.Inputs, a.InputText); err != nil {
@@ -2014,6 +2366,9 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 		r.at("input marked")
 	}
 	defer r.at("input written")
+	if lv.remote {
+		return r.actRemote(lv, a, failed)
+	}
 	if lv.client == nil {
 		c, err := host.Dial(lv.dir)
 		if err != nil {
@@ -2063,7 +2418,7 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 }
 
 // exit records that the agent's process ended.
-func (r *Runner) exit(lv *live) {
+func (r *Runner) exit(lv *live) error {
 	if lv.taken != nil {
 		// The relay host ended: nothing points at the window any more.
 		if err := r.letGo(context.Background(), lv.id, lv.dir, *lv.taken, nil); err != nil {
@@ -2093,7 +2448,9 @@ func (r *Runner) exit(lv *live) {
 	}
 	if err := r.Machine.Apply(context.Background(), lv.id, in); err != nil && !errors.Is(err, session.ErrRefused) {
 		r.Log.Error("exit", "session", lv.id, "err", err)
+		return err
 	}
+	return nil
 }
 
 // checkIdle puts the session to sleep when it has been idle for the idle
@@ -2102,14 +2459,17 @@ func (r *Runner) exit(lv *live) {
 func (r *Runner) checkIdle(lv *live) {
 	lv.mu.Lock()
 	defer lv.mu.Unlock()
-	if lv.asleep || lv.failed || lv.taken != nil { // a window taken in runs as its person keeps it
+	if !r.sessionChecked(lv.id) || lv.catchingUp || lv.asleep || lv.failed || lv.taken != nil { // a window taken in runs as its person keeps it
 		return
 	}
 	ctx := context.Background()
 	var state string
 	var updated int64
 	if err := r.Store.DB.QueryRowContext(ctx, `SELECT state, updated_at FROM sessions WHERE id = ?`, lv.id).Scan(&state, &updated); err != nil ||
-		control.State(state) != control.Idle || time.Since(time.UnixMilli(updated)) < r.idlePeriod() {
+		control.State(state) != control.Idle || r.activeAge(ctx, r.Store.DB, lv.id, time.UnixMilli(updated)) < r.idlePeriod() {
+		return
+	}
+	if blocked, err := r.deferredSleepBlocked(lv); blocked || err != nil {
 		return
 	}
 	if r.attached(lv) {
@@ -2123,7 +2483,7 @@ func (r *Runner) checkIdle(lv *live) {
 		if err := tx.QueryRowContext(ctx, `SELECT state, updated_at FROM sessions WHERE id = ?`, lv.id).Scan(&state, &updated); err != nil {
 			return err
 		}
-		if control.State(state) != control.Idle || time.Since(time.UnixMilli(updated)) < r.idlePeriod() {
+		if control.State(state) != control.Idle || r.activeAge(ctx, tx, lv.id, time.UnixMilli(updated)) < r.idlePeriod() {
 			return nil
 		}
 		var open int
@@ -2149,6 +2509,7 @@ func (r *Runner) checkIdle(lv *live) {
 	}
 	if slept {
 		lv.asleep = true
+		r.at("before idle stop")
 		go r.stop(lv.dir, time.Second, 2*time.Second)
 	}
 }
@@ -2179,7 +2540,13 @@ func (r *Runner) Sleep(ctx context.Context, thread control.ThreadID) (bool, erro
 // sleep is Sleep of lv, with lv.mu held.
 func (r *Runner) sleep(ctx context.Context, lv *live) (bool, error) {
 	id := lv.id
-	if lv.asleep || lv.failed || lv.taken != nil || r.attached(lv) {
+	if lv.asleep || lv.failed || lv.taken != nil {
+		return false, nil
+	}
+	if blocked, err := r.deferredSleepBlocked(lv); blocked || err != nil {
+		return false, err
+	}
+	if r.attached(lv) {
 		return false, nil
 	}
 	slept := false
@@ -2234,6 +2601,14 @@ func (r *Runner) sleep(ctx context.Context, lv *live) (bool, error) {
 func (r *Runner) attached(lv *live) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+	if lv.remote {
+		remote, ok := lv.io.(*machineio.Remote)
+		if !ok {
+			return true
+		}
+		m, err := remote.Info(ctx)
+		return err != nil || m.Attached > 0 || m.DetachedMS > 0 && r.activeAge(ctx, r.Store.DB, lv.id, time.UnixMilli(m.DetachedMS)) < r.idlePeriod()
+	}
 	if w, ok := heldOf(lv.dir); ok {
 		// A person who looks at the tmux window, or types in it.
 		a, err := r.tmuxHolder().Attached(ctx, w)
@@ -2268,6 +2643,20 @@ const shutWait = 15 * time.Second
 // knows that the agent has ended. also runs in the transaction of the
 // change, before it, and not for a session that is closed already.
 func (r *Runner) Shut(ctx context.Context, id int64, reason string, also ...func(*store.Tx) error) error {
+	remote, err := r.isRemote(ctx, id)
+	if err != nil {
+		return err
+	}
+	var workerIO *machineio.Remote
+	if remote {
+		workerIO, err = r.remoteSession(ctx, id)
+		if err != nil {
+			return err
+		}
+		if _, err = workerIO.Alive(ctx); err != nil {
+			return err
+		}
+	}
 	r.mu.Lock()
 	lv := r.live[id]
 	r.mu.Unlock()
@@ -2333,6 +2722,10 @@ func (r *Runner) Shut(ctx context.Context, id int64, reason string, also ...func
 			return err
 		}
 	} else if err := apply(); err != nil {
+		return err
+	}
+	if remote {
+		_, err := workerIO.End(ctx, "end-"+workerIO.Target.Run, time.Second, 2*time.Second)
 		return err
 	}
 	dir := StateDir(r.Root, id)
@@ -2418,8 +2811,14 @@ func (r *Runner) replaceTx(ctx context.Context, tx *store.Tx, lv *live) (*replac
 	// input: not sent, not written, and in the old session's workspace. One
 	// woken with no input, as for an attach, is replaced by one started with
 	// none (#528).
-	first := firstInput{Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
-		Before: old.Before, After: old.After, Via: old.Via, Context: earlier, Dir: lv.spec.Dir, NoInput: old.NoInput}
+	dir := lv.spec.Dir
+	if lv.remote {
+		if err := tx.QueryRowContext(ctx, `SELECT workspace FROM session_machine_runs WHERE session_id=?`, lv.id).Scan(&dir); err != nil {
+			return nil, err
+		}
+	}
+	first := firstInput{AcceptedOperation: old.AcceptedOperation, Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
+		Before: old.Before, After: old.After, Via: old.Via, Context: earlier, Dir: dir, NoInput: old.NoInput}
 	fb, _ := json.Marshal(first)
 	now := time.Now().UnixMilli()
 	res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
@@ -2446,9 +2845,14 @@ func (r *Runner) launchReplacement(rep replacement) {
 	ctx := context.Background()
 	l, first := rep.l, rep.first
 	r.at("after replace")
+	l.AcceptedOperation = first.AcceptedOperation
 	l.Dir, l.Principal, l.From, l.Key, l.Context = first.Dir, first.Principal, first.From, first.Key, first.Context
 	l.Input, l.NoInput = first.Input(), first.NoInput
 	if err := r.Start(ctx, l); err != nil {
+		if errors.Is(err, core.ErrPlacementWait) || r.Admit != nil {
+			_, _ = r.Store.DB.Exec(`UPDATE sessions SET io_error=? WHERE id=?`, "waiting for room on the recorded machine", l.Session)
+			return
+		}
 		r.Log.Error("starting the new session", "session", l.Session, "err", err)
 		if err := r.Machine.Apply(ctx, l.Session, session.Input{Kind: session.Exit, Reason: "start: " + err.Error()}); err != nil {
 			r.Log.Error("recording a failed start", "session", l.Session, "err", err)
@@ -2463,7 +2867,7 @@ const KindSessionReplaced control.EventKind = "session_replaced"
 // checkStart fails a session that has not reported its start in time,
 // with the end of its terminal log for a person, and stops its processes.
 func (r *Runner) checkStart(lv *live) {
-	if lv.ready || time.Since(lv.started) < r.startTimeout() {
+	if !r.sessionChecked(lv.id) || lv.catchingUp || lv.ready || r.activeAge(context.Background(), r.Store.DB, lv.id, lv.started) < r.startTimeout() {
 		return
 	}
 	var state string
@@ -2495,6 +2899,15 @@ func (r *Runner) checkStart(lv *live) {
 func (r *Runner) Deliver(ctx context.Context, id, pending int64, in control.Input) error {
 	lv, err := r.get(id)
 	if err != nil {
+		if r.Deferred != nil {
+			_, bound, e := r.Deferred.Input(ctx, id, strconv.FormatInt(pending, 10))
+			if e != nil {
+				return e
+			}
+			if bound {
+				return err
+			}
+		}
 		r.dropPending(pending)
 		return err
 	}
@@ -2504,11 +2917,16 @@ func (r *Runner) Deliver(ctx context.Context, id, pending int64, in control.Inpu
 	if lv.ended {
 		return nil
 	}
+	if r.AwayEnabled {
+		if err := r.dispatchAllowed(lv); err != nil {
+			return err
+		}
+	}
 	if current, err := r.pendingCurrent(ctx, id, pending, ""); err != nil || !current {
 		return err
 	}
 	return r.handOver(lv, pending, false, func() (agent.Actions, error) {
-		return lv.codec.Input(agent.Input{ID: strconv.FormatInt(pending, 10), Text: in.Text})
+		return r.codecInput(lv, agent.Input{ID: strconv.FormatInt(pending, 10), Text: in.Text})
 	})
 }
 
@@ -2524,6 +2942,11 @@ func (r *Runner) Answer(ctx context.Context, id, pending int64, req string, ans 
 	defer lv.mu.Unlock()
 	if lv.ended {
 		return nil
+	}
+	if r.AwayEnabled {
+		if err := r.dispatchAllowed(lv); err != nil {
+			return err
+		}
 	}
 	if current, err := r.pendingCurrent(ctx, id, pending, req); err != nil || !current {
 		return err
@@ -2599,6 +3022,12 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stop
 	// none starts (a Send starts one only when none is open). Once it has
 	// ended the watch is over, even when the next turn has started.
 	lv.mu.Lock()
+	if r.AwayEnabled {
+		if err := r.dispatchAllowed(lv); err != nil {
+			lv.mu.Unlock()
+			return err
+		}
+	}
 	var turn int64
 	r.Store.DB.QueryRow(`SELECT coalesce(max(id), 0) FROM turns WHERE session_id = ? AND ended_at IS NULL`, id).Scan(&turn)
 	if named != 0 && named != turn {
@@ -2618,7 +3047,7 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stop
 	a := lv.codec.Interrupt()
 	err = r.do(lv, a)
 	var no *holder.NotSent
-	if a.NotInterrupted || errors.As(err, &no) && no.Refused {
+	if a.NotInterrupted || errors.As(err, &no) && no.Refused || errors.Is(err, core.ErrMachineUnchecked) {
 		if names {
 			// Its end, whatever it is, is not this Stop's.
 			if _, err := r.Store.DB.Exec(`UPDATE turns SET stopped_by = '' WHERE id = ?`, turn); err != nil {
@@ -2626,8 +3055,14 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stop
 			}
 		}
 		lv.mu.Unlock()
+		if errors.Is(err, core.ErrMachineUnchecked) {
+			return err
+		}
 		if err != nil {
 			return fmt.Errorf("runner: session %d: %w: %w", id, control.ErrNotInterrupted, err)
+		}
+		if a.InterruptReason != "" {
+			return fmt.Errorf("runner: session %d: %s: %w", id, a.InterruptReason, control.ErrNotInterrupted)
 		}
 		return fmt.Errorf("runner: session %d: %w", id, control.ErrNotInterrupted)
 	}
@@ -2636,8 +3071,13 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stop
 		return nil // no turn runs: nothing to stop later
 	}
 	go func() {
-		deadline := time.Now().Add(r.interruptGrace())
-		for time.Now().Before(deadline) {
+		began := time.Now()
+		for !r.sessionChecked(id) || r.activeAge(context.Background(), r.Store.DB, id, began) < r.interruptGrace() {
+			select {
+			case <-lv.stop:
+				return
+			default:
+			}
 			r.at("interrupt watch")
 			var state string
 			if r.Store.DB.QueryRow(`SELECT state FROM sessions WHERE id = ?`, id).Scan(&state) == nil &&
@@ -2658,6 +3098,9 @@ func (r *Runner) Interrupt(ctx context.Context, id, named int64, by session.Stop
 		// than stopHold; the stop goes on without it.
 		lv.mu.Lock()
 		defer lv.mu.Unlock()
+		if !r.sessionChecked(id) {
+			return
+		}
 		var state string
 		if r.Store.DB.QueryRow(`SELECT state FROM sessions WHERE id = ?`, id).Scan(&state) == nil &&
 			control.State(state) != control.Running {

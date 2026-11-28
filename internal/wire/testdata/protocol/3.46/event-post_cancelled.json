@@ -1,0 +1,1 @@
+{"id":1,"event":{"pos":42,"thread":7,"scope":"C0123","time":"2026-01-02T03:04:05.678Z","kind":"post_cancelled","data":{"edit":true,"event":41,"failed":true,"link":{"channel":"C0123","client":"discord","thread":"T0456"},"part":0,"plugin":"secret-scan","reason":"it did not answer within 5s"}}}

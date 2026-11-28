@@ -54,6 +54,7 @@ func (a *api) Trust(ctx context.Context, id control.ThreadID, blocked int64, fil
 	}
 	defer a.c.locks.lock(threadLock(id))()
 	var l Launch
+	var waits bool
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		sid, state, err := a.c.current(ctx, tx, id)
 		if err != nil {
@@ -77,7 +78,7 @@ func (a *api) Trust(ctx context.Context, id control.ThreadID, blocked int64, fil
 				return err
 			}
 		}
-		if l, err = a.c.again(ctx, tx, id, scope, sid, now, ReasonTrusted); err != nil {
+		if l, waits, err = a.c.again(ctx, tx, id, scope, sid, now, ReasonTrusted); err != nil {
 			return err
 		}
 		return a.startChosen(ctx, tx, id, scope, sid, pos, control.StartTrusted, l.Session, now)
@@ -86,11 +87,15 @@ func (a *api) Trust(ctx context.Context, id control.ThreadID, blocked int64, fil
 		return err
 	}
 	a.c.Log.Info("files trusted", "thread", int64(id), "scope", scope, "files", files, "principal", string(a.caller.Principal))
-	return a.c.startAgain(ctx, l)
+	return a.c.startAgain(ctx, l, waits)
 }
 
-// startAgain hands the runner the session again inserted.
-func (c *Core) startAgain(ctx context.Context, l Launch) error {
+// startAgain hands over the retry, or tells GiveWaiting to give it a place.
+func (c *Core) startAgain(ctx context.Context, l Launch, waits bool) error {
+	if waits {
+		c.places.tell()
+		return nil
+	}
 	if err := c.Runner.Start(ctx, l); err != nil {
 		if ferr := c.Machine.Apply(ctx, l.Session, session.Input{Kind: session.Exit, Reason: "start: " + err.Error()}); ferr != nil {
 			c.Log.Error("recording a failed start", "session", l.Session, "err", ferr)
@@ -116,6 +121,7 @@ func (a *api) StartWithoutSettings(ctx context.Context, id control.ThreadID, blo
 	}
 	defer a.c.locks.lock(threadLock(id))()
 	var l Launch
+	var waits bool
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		sid, state, err := a.c.current(ctx, tx, id)
 		if err != nil {
@@ -132,7 +138,7 @@ func (a *api) StartWithoutSettings(ctx context.Context, id control.ThreadID, blo
 			return err
 		}
 		now := a.c.now()
-		if l, err = a.c.again(ctx, tx, id, scope, sid, now, ReasonWithoutSettings); err != nil {
+		if l, waits, err = a.c.again(ctx, tx, id, scope, sid, now, ReasonWithoutSettings); err != nil {
 			return err
 		}
 		return a.startChosen(ctx, tx, id, scope, sid, pos, control.StartWithoutSettings, l.Session, now)
@@ -141,7 +147,7 @@ func (a *api) StartWithoutSettings(ctx context.Context, id control.ThreadID, blo
 		return err
 	}
 	a.c.Log.Info("thread started without its repository's settings", "thread", int64(id), "scope", scope, "principal", string(a.caller.Principal))
-	return a.c.startAgain(ctx, l)
+	return a.c.startAgain(ctx, l, waits)
 }
 
 // EarlierRunner is a Runner that tells a thread's earlier conversation, as
@@ -297,29 +303,29 @@ func (a *api) failedStart(ctx context.Context, t control.ThreadInfo) (*control.F
 
 // again inserts a new session for thread id, whose session sid failed at
 // its start, with sid's agent, model, effort and first input, in the same
-// workspace, and returns its launch. Like any started session it is marked
-// for launch, so that a daemon that dies before the runner has it starts
-// it at its next start (Recover).
-func (c *Core) again(ctx context.Context, tx *store.Tx, id control.ThreadID, scope string, sid int64, at time.Time, reason string) (Launch, error) {
+// workspace. A conversation waits for a place as at its first start; otherwise
+// the session is marked for launch so Recover can hand it over after a crash.
+func (c *Core) again(ctx context.Context, tx *store.Tx, id control.ThreadID, scope string, sid int64, at time.Time, reason string) (Launch, bool, error) {
 	l := Launch{Thread: id}
 	var fi string
 	if err := tx.QueryRowContext(ctx, `SELECT agent, model, effort, first_input FROM sessions WHERE id = ?`, sid).
 		Scan(&l.Agent, &l.Model, &l.Effort, &fi); err != nil {
-		return l, err
+		return l, false, err
 	}
 	var old FirstInput
 	if fi != "" {
 		json.Unmarshal([]byte(fi), &old)
 	}
 	var workspace sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT workspace, confined FROM threads WHERE id = ?`, int64(id)).Scan(&workspace, &l.Confined); err != nil {
-		return l, err
+	var kind control.ThreadKind
+	if err := tx.QueryRowContext(ctx, `SELECT workspace, confined, kind FROM threads WHERE id = ?`, int64(id)).Scan(&workspace, &l.Confined, &kind); err != nil {
+		return l, false, err
 	}
 	dir := old.Dir
 	if dir == "" {
 		dir = workspace.String
 	}
-	first := FirstInput{Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
+	first := FirstInput{AcceptedOperation: old.AcceptedOperation, Principal: old.Principal, From: old.From, Key: old.Key, Text: old.Text, Link: old.Link,
 		Before: old.Before, After: old.After, Via: old.Via, Context: old.Context, Dir: dir, NoInput: old.NoInput}
 	if old.Wake {
 		// A woken session's agent would have resumed the conversation; the
@@ -333,27 +339,46 @@ func (c *Core) again(ctx context.Context, tx *store.Tx, id control.ThreadID, sco
 			first.Context = earlier
 		}
 	}
+	waits := false
+	if kind == control.KindConversation && !first.NoInput {
+		var err error
+		if waits, err = c.noPlace(ctx, tx, scope); err != nil {
+			return l, false, err
+		}
+	}
+	state, launch := control.Creating, 1
+	kept := first
+	if waits {
+		state, launch = control.Asleep, 0
+		first = FirstInput{Dir: dir}
+	}
 	fb, _ := json.Marshal(first)
 	now := at.UnixMilli()
 	res, err := tx.ExecContext(ctx, `INSERT INTO sessions (thread_id, agent, state, model, effort, first_input, launch, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`, int64(id), l.Agent, string(control.Creating), l.Model, l.Effort, string(fb), now, now)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, int64(id), l.Agent, string(state), l.Model, l.Effort, string(fb), launch, now, now)
 	if err != nil {
-		return l, err
+		return l, false, err
 	}
 	if l.Session, err = res.LastInsertId(); err != nil {
-		return l, err
+		return l, false, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE threads SET state = ?, updated_at = ? WHERE id = ?`,
-		string(control.Creating), now, int64(id)); err != nil {
-		return l, err
+		string(state), now, int64(id)); err != nil {
+		return l, false, err
 	}
 	data, _ := json.Marshal(map[string]any{"session": sid, "new_session": l.Session, "reason": reason})
 	if _, err := tx.Append(ctx, control.Event{Thread: id, Scope: scope, Time: at, Kind: "session_replaced", Data: data}); err != nil {
-		return l, err
+		return l, false, err
 	}
+	if waits {
+		if err := keepRetry(ctx, tx, id, kept); err != nil {
+			return l, false, err
+		}
+	}
+	l.AcceptedOperation = first.AcceptedOperation
 	l.Dir, l.Principal, l.From, l.Key, l.Context, l.NoInput = first.Dir, first.Principal, first.From, first.Key, first.Context, first.NoInput
 	l.Input = control.Input{Text: first.Text, Link: first.Link, Before: first.Before, After: first.After, Via: first.Via}
-	return l, nil
+	return l, waits, nil
 }
 
 func (a *api) Trusts(ctx context.Context) ([]control.TrustedFile, error) {

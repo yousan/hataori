@@ -77,12 +77,32 @@ type LoginStep struct {
 	Refused   string // the command rejected a code, with its text
 }
 
+// WorkerAdapters can build a worker-local adapter without ambient pass_env
+// additions. Probes and launches retain only the adapter's fixed user/login
+// environment. A resident refuses adapters without this contract.
+// Explicit adapter-owned configuration is still local operator authority.
+type WorkerAdapters interface {
+	ForWorker() Adapter
+}
+
+// FollowSources identifies files actually named by one line from this
+// session's agent. The resident calls it on its own retained output, never on
+// a path supplied by the main. It grants only read handles for this run.
+// Implementations do no I/O and use the same captured format as their codec.
+type FollowSources interface {
+	FollowSources(Source, []byte) []string
+}
+
 // Health is the result of Probe.
 type Health struct {
 	Installed bool
 	LoggedIn  bool
-	Version   string
-	Detail    string // why not, when either is false
+	// Unknown means the probe could not establish installation/login state.
+	// Installed may still be true when only the login check was inconclusive.
+	// It never means logged out, and cannot authorize new work.
+	Unknown bool
+	Version string
+	Detail  string // why not, when either is false
 }
 
 // Launch is everything the session host needs to start an agent.
@@ -156,6 +176,27 @@ type Codec interface {
 	Tick(now time.Time) Actions
 }
 
+// InputRefuser releases a codec's attempted inputs when the machine proves
+// that their encoded actions cannot be sent. Remote codecs implement it so a
+// transport limit fails those inputs visibly without waiting for a response
+// that can never arrive, or ending an unrelated running turn.
+type InputRefuser interface {
+	RefuseInput(ids []string, reason Reason) Actions
+}
+
+// ClockedTicker separates paused main delivery deadlines from a worker hook's
+// wall-clock expiry. Other codecs use Tick with the active clock alone.
+type ClockedTicker interface {
+	TickClocks(active, wall time.Time) Actions
+}
+
+// HookReconciler withdraws requests whose original waiting host hook expired.
+// The caller supplies only a verified inventory of this session's live hooks,
+// after draining retained output. Native pipe requests do not implement it.
+type HookReconciler interface {
+	ReconcileHooks(waiting []string) Actions
+}
+
 // Actions is what the caller of a Codec does next.
 type Actions struct {
 	Events []Event // for the core
@@ -186,6 +227,8 @@ type Actions struct {
 	// that the interrupt could stop yet, such as input whose last key was not
 	// handed over: what it holds stays, and the turn is not stopped.
 	NotInterrupted bool
+	// InterruptReason explains NotInterrupted to the person who asked.
+	InterruptReason string
 	// WatchScreen, from Open only, asks for the terminal's output (Source
 	// Screen) until the codec says StopScreen: for what no hook reports,
 	// such as a start-up dialog, or whether the agent reads keys yet.
@@ -309,6 +352,13 @@ const (
 
 // Input is a user message for the agent.
 type Input struct {
+	// IdleOnly forbids delivery into an existing native turn. It is used
+	// only by explicitly deferred management input, not immediate sends.
+	IdleOnly bool
+	// Command is the exact frozen pipe action, with Written and IdleOnly.
+	// A supporting codec restores its request correlation from these bytes;
+	// it must not infer delivery from equal text or an unrelated turn.
+	Command [][]byte
 	// ID names the input for its report: the codec returns it in the
 	// TurnStarted event of the turn that reports the input. It is opaque to
 	// the codec, and may be empty.
@@ -318,6 +368,9 @@ type Input struct {
 	// restarted, and its report has not been read. The codec records it as
 	// written and waiting for its report, and never writes its text again.
 	Written bool
+	// WrittenAt is the original write in the same active clock as Tick.
+	// Zero preserves compatibility with an older runner without a timestamp.
+	WrittenAt time.Time
 	// WrittenText, with Written, is the text the codec recorded when the
 	// input was written. nil means that no text was recorded, rather than
 	// that an empty text was written.
@@ -360,6 +413,8 @@ const (
 	Limits
 	// InputTaken reports an input taken into an already running turn.
 	InputTaken
+	// InputWaiting reports a delayed terminal handoff without ending a turn.
+	InputWaiting
 )
 
 // Starter says who started a turn.
@@ -390,6 +445,7 @@ const (
 	Limit          Reason = "limit"
 	Login          Reason = "login"
 	APIError       Reason = "api_error"
+	Unavailable    Reason = "unavailable" // provider rejects access; not a quota reset or a login flow
 	Crashed        Reason = "crashed"
 	BlockedAtStart Reason = "blocked at start"
 	NotDelivered   Reason = "not delivered"            // input the agent never reported receiving
@@ -408,11 +464,16 @@ type Event struct {
 	Model     string // SessionReady: the model the agent reports
 	Effort    string // SessionReady: the effort the agent reports
 
-	Text  string // Text: the text; Unknown: the line; SessionEnded before the session was ready: what a person may read about why; TurnStarted by ByTerminal: the prompt typed, when the agent reports it
+	Text  string // Text: the text; Unknown: the line; SessionEnded before the session was ready: what a person may read about why; TurnStarted by ByTerminal: the prompt typed, when the agent reports it; TurnEnded with Failed: the provider's explanation
 	Final bool   // Text: the turn's final answer
 
 	StartedBy Starter // TurnStarted
-	Input     string  // TurnStarted, InputTaken: the Input.ID of the input this turn reports; TurnEnded with NotDelivered or NotTaken: of the input never reported; TurnEnded with Interrupted: of the input that is not written any more; "" when none or not known
+	Input     string  // InputWaiting: the delayed input; TurnStarted, InputTaken: the Input.ID of the input this turn reports; TurnEnded with NotDelivered or NotTaken: of the input never reported; TurnEnded with Interrupted: of the input that is not written any more; "" when none or not known
+
+	// RetainInput, on TurnEnded, keeps Input pending for a later report even
+	// though the turn failed. Its text may still be in the terminal editor;
+	// reconnecting must preserve the codec's protection against appending to it.
+	RetainInput bool
 
 	Tool string // ToolStarted, ToolEnded: the tool's name or label; SubagentStarted, SubagentEnded: the subagent's name or type
 	ID   string // ToolStarted, ToolEnded, SubagentStarted, SubagentEnded: pairs start and end
@@ -429,9 +490,9 @@ type Event struct {
 	Caption string
 
 	Status     EndStatus // TurnEnded
-	Reason     Reason    // TurnEnded when failed; SessionEnded: why, as the agent says or CannotResume, WrongSession, BlockedAtStart
-	Background int       // TurnEnded: background tasks still running, whatever the Status: what the agent listed, or the last count corrected by what it reported since
-	// Subagents are, for TurnEnded, the subagents among the Background tasks,
+	Reason     Reason    // InputWaiting: why it waits; TurnEnded when failed; SessionEnded: why, as the agent says or CannotResume, WrongSession, BlockedAtStart
+	Background int       // TurnEnded, Request: background tasks still running, whatever the Status: what the agent listed, or the last count corrected by what it reported since
+	// Subagents are, for TurnEnded and Request, the subagents among the Background tasks,
 	// by the ids of their SubagentStarted.
 	Subagents []string
 	// Trust is, for SessionEnded with BlockedAtStart, every file a start-up
@@ -453,7 +514,8 @@ type Event struct {
 
 // LimitReport is what a Limits event reports. At is when the agent gave
 // the value, which a codec takes from the line it read, not from a clock;
-// Every is how often the adapter's sessions report it while they run.
+// Every is the expected interval for a fresh observation; without one,
+// consumers show the report as stale after that interval.
 type LimitReport struct {
 	At      time.Time
 	Every   time.Duration

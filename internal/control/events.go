@@ -37,16 +37,19 @@ func text(name string, t FieldType) Field {
 // of its data. docs/protocol.md describes the same, field by field, and a
 // test keeps the two equal. The store refuses an event that does not match.
 var EventKinds = map[EventKind][]Field{
-	"approval_asked": {req("request", String), req("action", String), req("target", Integer), req("turn", Integer), text("reason", String), opt("principal", String), opt("from", String)},
+	"machine_availability": {req("machine", String), req("state", String), req("since", Integer), req("reason", String)},
+	"machine_action":       {req("action", String), req("state", String), req("reason", String)},
+	"placement":            {req("machine", String), req("pending", Boolean), req("reason", String)},
+	"approval_asked":       {req("request", String), req("action", String), req("target", Integer), req("turn", Integer), text("reason", String), opt("principal", String), opt("from", String)},
 	"approval_answered": {req("request", String), req("allow", Boolean), req("outcome", String), req("target", Integer), opt("principal", String), opt("from", String), opt("link", Object),
 		opt("via", String)},
 	// proposal_made: a caller with Propose proposed a send or a start
 	// (Caller.Propose), in the thread it asks in. proposal_answered: a
 	// person decided it, and what came of it. Since 3.26.
-	"proposal_made": {req("request", String), req("number", Integer), req("action", String), opt("target", Integer),
+	"proposal_made": {opt("deferred", Integer), req("request", String), req("number", Integer), req("action", String), opt("target", Integer),
 		opt("question", String), opt("repo", String), opt("agent", String), opt("model", String), opt("effort", String),
-		text("text", String), opt("principal", String), opt("from", String), opt("research", Boolean)},
-	"proposal_answered": {req("request", String), req("number", Integer), req("action", String), req("allow", Boolean),
+		text("text", String), opt("principal", String), opt("from", String), opt("research", Boolean), opt("machine", String)},
+	"proposal_answered": {opt("deferred", Integer), req("request", String), req("number", Integer), req("action", String), req("allow", Boolean),
 		req("outcome", String), opt("target", Integer), opt("reason", String), opt("principal", String), opt("from", String),
 		opt("link", Object), opt("via", String)},
 	// thread_created: kind is the thread's ThreadKind. Since 3.38.
@@ -59,7 +62,7 @@ var EventKinds = map[EventKind][]Field{
 	// turn_ended: subagents are the ids of those of its background tasks that
 	// are subagents. Since 3.37.
 	"turn_ended": {req("session", Integer), req("turn", Integer), req("by", String), opt("principal", String), opt("from", String),
-		req("outcome", String), opt("reason", String), req("background", Integer), opt("subagents", Array)},
+		req("outcome", String), opt("reason", String), text("detail", String), req("background", Integer), opt("subagents", Array)},
 	// The chat front end's (#352): a row of its outbox was posted, or a
 	// plugin's message_sending handler cancelled it.
 	"post_sent": {req("link", Object), req("event", Integer), req("part", Integer), req("message", String), text("text", String)},
@@ -72,6 +75,8 @@ var EventKinds = map[EventKind][]Field{
 		opt("link", Object), text("before", String), text("after", String), opt("via", String)},
 	// input_failed: an accepted input never reached the agent, independently
 	// of any turn that happens to run. Since 3.42.
+	// input_waiting: a terminal handoff is delayed. Since 3.43.
+	"input_waiting": {req("session", Integer), req("input", String), req("reason", String)},
 	"input_failed": {req("session", Integer), req("input", String), req("reason", String), text("text", String),
 		opt("key", String), opt("principal", String), opt("from", String), opt("link", Object), opt("via", String)},
 	"answer": {req("session", Integer), req("turn", Integer), text("text", String), opt("principal", String), opt("from", String),

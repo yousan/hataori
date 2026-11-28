@@ -172,7 +172,7 @@ func TestApprovedProposalThatFails(t *testing.T) {
 }
 
 // An agent that cannot leave the project's settings out is not started for
-// a research thread: it fails, and the supervisor is told.
+// a research thread: the call refuses before any worker artifact is made.
 func TestResearchThreadOfAnAgentThatKeepsTheSettings(t *testing.T) {
 	wt := newWakeTest(t, budget(0, 0, 0), autonomy("act"), func(cfg map[string]any) {
 		ads := cfg["adapters"].(map[string]any)
@@ -182,11 +182,20 @@ func TestResearchThreadOfAnAgentThatKeepsTheSettings(t *testing.T) {
 	})
 	stop, owner, sv := wt.start(t)
 	defer stop()
-	sendAndRead(t, owner, sv.ID, "q1", startsA(wt.repo, "reply looked it up", true))
-	id := wt.newest(t, 1)
-	wt.failed(t, id)
-	if got := wt.woken(t, owner, sv.ID, 1); !strings.Contains(got[0], "cannot start without the repository's settings") {
-		t.Fatalf("the wake:\n%s", got[0])
+	var before int
+	if err := wt.db.QueryRow(`SELECT count(*) FROM threads`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	got := sendAndRead(t, owner, sv.ID, "q1", startsA(wt.repo, "reply looked it up", true))
+	if !strings.Contains(got, "settings-free research is unsupported") {
+		t.Fatalf("start refusal: %s", got)
+	}
+	var after int
+	if err := wt.db.QueryRow(`SELECT count(*) FROM threads`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatal("unsupported research created a worker thread")
 	}
 }
 

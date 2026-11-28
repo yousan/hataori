@@ -1,0 +1,1 @@
+{"kind":"request","id":"request-remake_workspace","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"remake_workspace","key":"key-remake_workspace","body":{"workspace":"workspace-A"}}

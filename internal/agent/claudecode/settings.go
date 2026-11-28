@@ -39,6 +39,12 @@ type hookMatcher struct {
 // reads the waiting one.
 func (a *Adapter) settings(spec agent.Spec) ([]byte, error) {
 	hooks := a.hooks(shellQuote(a.hataori)+" hook", "")
+	statusDir := spec.Dir
+	if spec.NoProjectSettings {
+		// --settings overrides --setting-sources. Do not reintroduce a
+		// project's statusline command into a settings-free launch.
+		statusDir = ""
+	}
 	// The user's own vim mode would make Escape leave insert mode instead
 	// of stopping the turn; settings given with --settings take precedence
 	// over the user's global choice, so the session runs in normal mode.
@@ -48,7 +54,7 @@ func (a *Adapter) settings(spec agent.Spec) ([]byte, error) {
 	// that directory, where a status line often runs git. It gets hataori's
 	// status line alone, which reads only its input.
 	return json.MarshalIndent(map[string]any{"hooks": hooks, "editorMode": "normal",
-		"statusLine": a.statusLineSetting(spec.Dir, spec.StateDir, spec.Confine == nil)}, "", "  ")
+		"statusLine": a.statusLineSetting(statusDir, spec.StateDir, spec.Confine == nil)}, "", "  ")
 }
 
 // hooks registers plain, a hook command, for every event the codec reads;

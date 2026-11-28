@@ -62,11 +62,14 @@ const Instructions = "Tools of this channel's supervisor, its development manage
 
 // The tools, in the order tools/list gives them.
 const (
-	ToolList      = "list_threads"
-	ToolRead      = "read_thread"
-	ToolSend      = "send_to_thread"
-	ToolInterrupt = "interrupt_thread"
-	ToolStart     = "start_thread"
+	ToolList           = "list_threads"
+	ToolRead           = "read_thread"
+	ToolSend           = "send_to_thread"
+	ToolDefer          = "defer_to_thread"
+	ToolDeferred       = "inspect_deferred_send"
+	ToolCancelDeferred = "cancel_deferred_send"
+	ToolInterrupt      = "interrupt_thread"
+	ToolStart          = "start_thread"
 
 	// The forge's reads (design, section 7.1), since protocol 3.27.
 	ToolIssues = "list_issues"
@@ -161,6 +164,8 @@ var (
 // withheldNote is what the forge tools' descriptions say of withheld text.
 const withheldNote = " Text by an author without write access to the repository is withheld, unless this channel trusts them; the answer names the author."
 
+const researchCapabilityNote = ". Available only when the loaded configuration reports settings-free research support for the selected ordinary-worker adapter; otherwise refused before a worker is created. Confined supervisor support does not establish this capability"
+
 // tools is what tools/list returns.
 var tools = []tool{
 	{ToolList, "List the threads of this channel: number, state, title, who started it, and the last line of output. " +
@@ -171,15 +176,20 @@ var tools = []tool{
 	{ToolSend, "Send a message to a thread of this channel. A thread that is running a turn refuses it with \"busy\"; " +
 		"its turn's end is told you as any, in a wake. A thread waiting on a question takes the message as the answer. Under the autonomy propose it is a proposal that a person approves first; under watch it is refused.",
 		object(map[string]any{"number": number, "text": map[string]any{"type": "string", "description": "the message"}}, "number", "text")},
+
+	{ToolDefer, "Explicitly queue one instruction for the same existing worker at a future idle boundary. Never interrupts or answers a question. Requires a capable owned pipe host; unsupported workers refuse before queue creation. Uses one send budget now, including a proposal under propose. Queued is not delivered. Reuse exactly the same key, number and text after a lost reply; changed payload is refused. Watch refuses.", object(map[string]any{"number": number, "key": map[string]any{"type": "string", "description": "stable retry key, at most 128 bytes"}, "text": map[string]any{"type": "string", "description": "instruction, at most 16 KiB"}}, "number", "key", "text")},
+	{ToolDeferred, "Inspect a durable deferred instruction by its receipt number; includes terminal refusal/failure/cancellation. Only delivered confirms the bound agent input acknowledgement, not model obedience.", object(map[string]any{"number": number}, "number")},
+	{ToolCancelDeferred, "Cancel a deferred instruction before its frozen handoff. A handoff or delivered receipt is too late to cancel; this never interrupts or recalls input. Cancellation does not refund send budget.", object(map[string]any{"number": number}, "number")},
 	{ToolInterrupt, "Ask a person in this channel to approve interrupting a thread that is running a turn. This returns at once and interrupts nothing by itself. Once approved, the thread's turn is stopped and it gets the reason as a message from the supervisor. A thread not running is refused with not busy; send instead.", object(map[string]any{"number": number, "reason": map[string]any{"type": "string", "description": "the reason to give the thread"}}, "number", "reason")},
 	{ToolStart, "Start a new thread in this channel, with its own workspace cloned from one of the channel's repositories: to do work, or to look something up that your tools do not show. Under the autonomy propose it is a proposal that a person approves first; under watch it is refused.",
 		object(map[string]any{
-			"repo":   map[string]any{"type": "string", "description": "the repository to clone"},
-			"text":   map[string]any{"type": "string", "description": "the first message; its first line becomes the title"},
-			"model":  map[string]any{"type": "string", "description": "the model; leave out for the channel's default"},
-			"effort": map[string]any{"type": "string", "description": "the effort; leave out for the channel's default", "enum": control.Efforts},
+			"repo":    map[string]any{"type": "string", "description": "the repository to clone"},
+			"machine": map[string]any{"type": "string", "description": "optional configured eligible machine key; refuses without fallback"},
+			"text":    map[string]any{"type": "string", "description": "the first message; its first line becomes the title"},
+			"model":   map[string]any{"type": "string", "description": "the model; leave out for the channel's default"},
+			"effort":  map[string]any{"type": "string", "description": "the effort; leave out for the channel's default", "enum": control.Efforts},
 			"research": map[string]any{"type": "boolean", "description": "true for a thread that only reads, to look something up: it starts without the repository's own settings and hooks, so that no dialog about them blocks it; " +
-				"never for a thread that changes anything"},
+				"never for a thread that changes anything" + researchCapabilityNote},
 		}, "repo", "text")},
 	{ToolIssues, "List the issues of one of this channel's repositories on its forge, read only: number, state, title, author, labels, assignees, last change." + withheldNote,
 		object(map[string]any{"repo": forgeRepo, "state": listState}, "repo")},
@@ -220,6 +230,7 @@ var tools = []tool{
 			"old": map[string]any{"type": "string", "description": "the passage to replace, exactly as it is in the file, long enough to be there only once"},
 			"new": map[string]any{"type": "string", "description": "what stands there instead; empty to take the passage out"},
 		}, "path", "old", "new")},
+	workTool,
 }
 
 // Serve answers MCP requests read from r, one JSON-RPC message per line,
@@ -327,16 +338,21 @@ func (m *MCP) connect() (control.API, error) {
 // call runs one tool and returns its answer, or an error whose text names
 // the reason for the model.
 func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (string, error) {
+	if name == ToolWork {
+		return m.work(ctx, raw)
+	}
 	var a struct {
-		Number *int64 `json:"number"`
-		Text   string `json:"text"`
-		Reason string `json:"reason"`
-		Repo   string `json:"repo"`
-		Model  string `json:"model"`
-		Effort string `json:"effort"`
-		State  string `json:"state"`
-		Ref    string `json:"ref"`
-		Commit string `json:"commit"`
+		Number  *int64 `json:"number"`
+		Key     string `json:"key"`
+		Text    string `json:"text"`
+		Reason  string `json:"reason"`
+		Repo    string `json:"repo"`
+		Machine string `json:"machine"`
+		Model   string `json:"model"`
+		Effort  string `json:"effort"`
+		State   string `json:"state"`
+		Ref     string `json:"ref"`
+		Commit  string `json:"commit"`
 
 		Minutes *int64 `json:"minutes"`
 		At      string `json:"at"`
@@ -354,7 +370,7 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 	}
 	read, isForge := forgeReads[name]
 	switch name {
-	case ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolRemind, ToolCancelRemind:
+	case ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolRemind, ToolCancelRemind, ToolDefer, ToolDeferred, ToolCancelDeferred:
 	default:
 		if !isForge {
 			return "", fmt.Errorf("no tool %q", name)
@@ -384,7 +400,28 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 		}
 		return cut(forgeText(ans, r), ForgeMax), nil
 	}
+
 	switch name {
+	case ToolDefer, ToolDeferred, ToolCancelDeferred:
+		if a.Number == nil || *a.Number <= 0 {
+			return "", errors.New("bad arguments: number is required")
+		}
+		r := control.DeferredSendRequest{Action: "inspect", Number: *a.Number}
+		if name == ToolDefer {
+			if a.Key == "" || len(a.Key) > 128 || strings.TrimSpace(a.Text) == "" || len(a.Text) > 16*1024 {
+				return "", errors.New("bad arguments: stable key and text are required (128-byte key, 16 KiB text maximum)")
+			}
+			r = control.DeferredSendRequest{Action: "queue", Target: control.ThreadID(*a.Number), Key: a.Key, Text: a.Text}
+		}
+		if name == ToolCancelDeferred {
+			r.Action = "cancel"
+		}
+		got, e := api.DeferredSend(ctx, r)
+		if e != nil {
+			return "", reason(e)
+		}
+		out, e := json.Marshal(got)
+		return string(out), e
 	case ToolList:
 		if a.State != "" && a.State != listOpen && a.State != listAll {
 			return "", errors.New("bad arguments: state is open or all")
@@ -436,7 +473,7 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 		if a.Repo == "" || strings.TrimSpace(a.Text) == "" {
 			return "", errors.New("bad arguments: repo and text are required")
 		}
-		id, err := api.Start(ctx, control.StartRequest{Key: newKey(), Scope: m.Scope, Repo: a.Repo,
+		id, err := api.Start(ctx, control.StartRequest{Machine: a.Machine, Key: newKey(), Scope: m.Scope, Repo: a.Repo,
 			Input: control.Input{Text: a.Text}, Model: a.Model, Effort: a.Effort, Research: a.Research})
 		if p := proposed(err); p != nil {
 			return fmt.Sprintf("Proposed as proposal %d: nothing is started until a person in this channel approves it in your thread. "+

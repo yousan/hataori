@@ -1,0 +1,18 @@
+[
+  {
+    "mutation": "direct-catalog",
+    "failed_without_fix": true
+  },
+  {
+    "mutation": "literal-input",
+    "failed_without_fix": true
+  },
+  {
+    "mutation": "warm-handshake",
+    "failed_without_fix": true
+  },
+  {
+    "mutation": "supervisor-selection",
+    "failed_without_fix": true
+  }
+]
