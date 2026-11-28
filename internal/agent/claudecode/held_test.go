@@ -225,7 +225,8 @@ func TestOlderPasteIsNotSubmittedAfterARestart(t *testing.T) {
 		now = quiet(t, c, now, 2*DefaultInputTimeout, "after the next input")
 		a = decodeFile(t, c, "12", held+"12-UserPromptSubmit.json")
 		decodeFile(t, c, "13", held+"13-Stop.json")
-		if tc.own {
+		// #916's captured BEL removal identifies that legacy paste too.
+		if tc.own || tc.text == "\a"+heldText {
 			// The box was submitted: input is pasted again.
 			if summary(a) != "turn(caller)" || a.Events[0].Input != "in-7" {
 				t.Fatalf("%q: its prompt: %s", tc.text, summary(a))

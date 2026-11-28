@@ -1,0 +1,1491 @@
+[
+ {
+  "session": "resume",
+  "case": "nul",
+  "text": "Say resume nul a\u0000b ok",
+  "pasted": "Say resume nul a\u0000b ok",
+  "first_prompts": [
+   "Say resume nul ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume nul ab ok"
+  ],
+  "after": "Say after resume nul please",
+  "following_prompts": [
+   "Say after resume nul please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000263",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume nul ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000264",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume nul please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "bell",
+  "text": "Say resume bell a\u0007b ok",
+  "pasted": "Say resume bell a\u0007b ok",
+  "first_prompts": [
+   "Say resume bell ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume bell ab ok"
+  ],
+  "after": "Say after resume bell please",
+  "following_prompts": [
+   "Say after resume bell please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000265",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume bell ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000266",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume bell please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "backspace",
+  "text": "Say resume backspace a\bb ok",
+  "pasted": "Say resume backspace a\bb ok",
+  "first_prompts": [
+   "Say resume backspace ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume backspace ab ok"
+  ],
+  "after": "Say after resume backspace please",
+  "following_prompts": [
+   "Say after resume backspace please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000267",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume backspace ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000268",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume backspace please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "vertical_tab",
+  "text": "Say resume vertical_tab a\u000bb ok",
+  "pasted": "Say resume vertical_tab a\u000bb ok",
+  "first_prompts": [
+   "Say resume vertical_tab a\nb ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume vertical_tab a\nb ok"
+  ],
+  "after": "Say after resume vertical_tab please",
+  "following_prompts": [
+   "Say after resume vertical_tab please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000269",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume vertical_tab a\nb ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000270",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume vertical_tab please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "form_feed",
+  "text": "Say resume form_feed a\fb ok",
+  "pasted": "Say resume form_feed a\fb ok",
+  "first_prompts": [
+   "Say resume form_feed a\nb ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume form_feed a\nb ok"
+  ],
+  "after": "Say after resume form_feed please",
+  "following_prompts": [
+   "Say after resume form_feed please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000271",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume form_feed a\nb ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000272",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume form_feed please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "delete",
+  "text": "Say resume delete ab ok",
+  "pasted": "Say resume delete ab ok",
+  "first_prompts": [
+   "Say resume delete ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume delete ab ok"
+  ],
+  "after": "Say after resume delete please",
+  "following_prompts": [
+   "Say after resume delete please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000273",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume delete ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000274",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume delete please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "next_line",
+  "text": "Say resume next_line ab ok",
+  "pasted": "Say resume next_line ab ok",
+  "first_prompts": [
+   "Say resume next_line a\nb ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume next_line a\nb ok"
+  ],
+  "after": "Say after resume next_line please",
+  "following_prompts": [
+   "Say after resume next_line please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000275",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume next_line a\nb ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000276",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume next_line please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "soft_hyphen",
+  "text": "Say resume soft_hyphen a­b ok",
+  "pasted": "Say resume soft_hyphen a­b ok",
+  "first_prompts": [
+   "Say resume soft_hyphen ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume soft_hyphen ab ok"
+  ],
+  "after": "Say after resume soft_hyphen please",
+  "following_prompts": [
+   "Say after resume soft_hyphen please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000277",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume soft_hyphen ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000278",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume soft_hyphen please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "arabic_mark",
+  "text": "Say resume arabic_mark a؜b ok",
+  "pasted": "Say resume arabic_mark a؜b ok",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "Say resume arabic_mark ab ok"
+  ],
+  "after": "Say after resume arabic_mark please",
+  "following_prompts": [
+   "Say after resume arabic_mark please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000279",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume arabic_mark ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000280",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume arabic_mark please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "zero_width_space",
+  "text": "Say resume zero_width_space a​b ok",
+  "pasted": "Say resume zero_width_space a​b ok",
+  "first_prompts": [
+   "Say resume zero_width_space ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume zero_width_space ab ok"
+  ],
+  "after": "Say after resume zero_width_space please",
+  "following_prompts": [
+   "Say after resume zero_width_space please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000281",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume zero_width_space ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000282",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume zero_width_space please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "non_joiner",
+  "text": "Say resume non_joiner a‌b ok",
+  "pasted": "Say resume non_joiner a‌b ok",
+  "first_prompts": [
+   "Say resume non_joiner ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume non_joiner ab ok"
+  ],
+  "after": "Say after resume non_joiner please",
+  "following_prompts": [
+   "Say after resume non_joiner please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000283",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume non_joiner ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000284",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume non_joiner please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "joiner",
+  "text": "Say resume joiner a‍b ok",
+  "pasted": "Say resume joiner a‍b ok",
+  "first_prompts": [
+   "Say resume joiner ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume joiner ab ok"
+  ],
+  "after": "Say after resume joiner please",
+  "following_prompts": [
+   "Say after resume joiner please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000285",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume joiner ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000286",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume joiner please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "left_mark",
+  "text": "Say resume left_mark a‎b ok",
+  "pasted": "Say resume left_mark a‎b ok",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "Say resume left_mark ab ok"
+  ],
+  "after": "Say after resume left_mark please",
+  "following_prompts": [
+   "Say after resume left_mark please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000287",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume left_mark ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000288",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume left_mark please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "right_mark",
+  "text": "Say resume right_mark a‏b ok",
+  "pasted": "Say resume right_mark a‏b ok",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "Say resume right_mark ab ok"
+  ],
+  "after": "Say after resume right_mark please",
+  "following_prompts": [
+   "Say after resume right_mark please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000289",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume right_mark ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000290",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume right_mark please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "left_embedding",
+  "text": "Say resume left_embedding a‪b ok",
+  "pasted": "Say resume left_embedding a‪b ok",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "Say resume left_embedding ab ok"
+  ],
+  "after": "Say after resume left_embedding please",
+  "following_prompts": [
+   "Say after resume left_embedding please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000291",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume left_embedding ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000292",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume left_embedding please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "right_embedding",
+  "text": "Say resume right_embedding a‫b ok",
+  "pasted": "Say resume right_embedding a‫b ok",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "Say resume right_embedding ab ok"
+  ],
+  "after": "Say after resume right_embedding please",
+  "following_prompts": [
+   "Say after resume right_embedding please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000293",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume right_embedding ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000294",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume right_embedding please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "pop_direction",
+  "text": "Say resume pop_direction a‬b ok",
+  "pasted": "Say resume pop_direction a‬b ok",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "Say resume pop_direction ab ok"
+  ],
+  "after": "Say after resume pop_direction please",
+  "following_prompts": [
+   "Say after resume pop_direction please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000295",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume pop_direction ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000296",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume pop_direction please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "left_override",
+  "text": "Say resume left_override a‭b ok",
+  "pasted": "Say resume left_override a‭b ok",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "Say resume left_override ab ok"
+  ],
+  "after": "Say after resume left_override please",
+  "following_prompts": [
+   "Say after resume left_override please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000297",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume left_override ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000298",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume left_override please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "right_override",
+  "text": "Say resume right_override a‮b ok",
+  "pasted": "Say resume right_override a‮b ok",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "Say resume right_override ab ok"
+  ],
+  "after": "Say after resume right_override please",
+  "following_prompts": [
+   "Say after resume right_override please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000299",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume right_override ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000300",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume right_override please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "word_joiner",
+  "text": "Say resume word_joiner a⁠b ok",
+  "pasted": "Say resume word_joiner a⁠b ok",
+  "first_prompts": [
+   "Say resume word_joiner ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume word_joiner ab ok"
+  ],
+  "after": "Say after resume word_joiner please",
+  "following_prompts": [
+   "Say after resume word_joiner please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000301",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume word_joiner ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000302",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume word_joiner please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "left_isolate",
+  "text": "Say resume left_isolate a⁦b ok",
+  "pasted": "Say resume left_isolate a⁦b ok",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "Say resume left_isolate ab ok"
+  ],
+  "after": "Say after resume left_isolate please",
+  "following_prompts": [
+   "Say after resume left_isolate please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000303",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume left_isolate ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000304",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume left_isolate please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "right_isolate",
+  "text": "Say resume right_isolate a⁧b ok",
+  "pasted": "Say resume right_isolate a⁧b ok",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "Say resume right_isolate ab ok"
+  ],
+  "after": "Say after resume right_isolate please",
+  "following_prompts": [
+   "Say after resume right_isolate please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000305",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume right_isolate ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000306",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume right_isolate please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "first_isolate",
+  "text": "Say resume first_isolate a⁨b ok",
+  "pasted": "Say resume first_isolate a⁨b ok",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "Say resume first_isolate ab ok"
+  ],
+  "after": "Say after resume first_isolate please",
+  "following_prompts": [
+   "Say after resume first_isolate please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000307",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume first_isolate ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000308",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume first_isolate please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "pop_isolate",
+  "text": "Say resume pop_isolate a⁩b ok",
+  "pasted": "Say resume pop_isolate a⁩b ok",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "Say resume pop_isolate ab ok"
+  ],
+  "after": "Say after resume pop_isolate please",
+  "following_prompts": [
+   "Say after resume pop_isolate please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000309",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume pop_isolate ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000310",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume pop_isolate please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "bom",
+  "text": "Say resume bom a﻿b ok",
+  "pasted": "Say resume bom a﻿b ok",
+  "first_prompts": [
+   "Say resume bom ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume bom ab ok"
+  ],
+  "after": "Say after resume bom please",
+  "following_prompts": [
+   "Say after resume bom please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000311",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume bom ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000312",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume bom please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "text_selector",
+  "text": "Say resume text_selector a︎b ok",
+  "pasted": "Say resume text_selector a︎b ok",
+  "first_prompts": [
+   "Say resume text_selector ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume text_selector ab ok"
+  ],
+  "after": "Say after resume text_selector please",
+  "following_prompts": [
+   "Say after resume text_selector please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000313",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume text_selector ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000314",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume text_selector please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "emoji_selector",
+  "text": "Say resume emoji_selector a️b ok",
+  "pasted": "Say resume emoji_selector a️b ok",
+  "first_prompts": [
+   "Say resume emoji_selector ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume emoji_selector ab ok"
+  ],
+  "after": "Say after resume emoji_selector please",
+  "following_prompts": [
+   "Say after resume emoji_selector please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000315",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume emoji_selector ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000316",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume emoji_selector please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "color_sequence",
+  "text": "Say resume color_sequence a\u001b[31mb ok",
+  "pasted": "Say resume color_sequence a\u001b[31mb ok",
+  "first_prompts": [
+   "Say resume color_sequence ab ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume color_sequence ab ok"
+  ],
+  "after": "Say after resume color_sequence please",
+  "following_prompts": [
+   "Say after resume color_sequence please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000317",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume color_sequence ab ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000318",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume color_sequence please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "tab",
+  "text": "Say resume tab a\tb ok",
+  "pasted": "Say resume tab a\tb ok",
+  "first_prompts": [
+   "Say resume tab a    b ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume tab a    b ok"
+  ],
+  "after": "Say after resume tab please",
+  "following_prompts": [
+   "Say after resume tab please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000319",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume tab a    b ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000320",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume tab please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "crlf",
+  "text": "Say resume crlf a\r\nb ok",
+  "pasted": "Say resume crlf a\r\nb ok",
+  "first_prompts": [
+   "Say resume crlf a\nb ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume crlf a\nb ok"
+  ],
+  "after": "Say after resume crlf please",
+  "following_prompts": [
+   "Say after resume crlf please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000321",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume crlf a\nb ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000322",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume crlf please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "emoji_joiner",
+  "text": "Say resume emoji_joiner a👩‍💻b ok",
+  "pasted": "Say resume emoji_joiner a👩‍💻b ok",
+  "first_prompts": [
+   "Say resume emoji_joiner a👩‍💻b ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume emoji_joiner a👩‍💻b ok"
+  ],
+  "after": "Say after resume emoji_joiner please",
+  "following_prompts": [
+   "Say after resume emoji_joiner please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000323",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume emoji_joiner a👩‍💻b ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000324",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume emoji_joiner please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "emoji_heart",
+  "text": "Say resume emoji_heart a❤️b ok",
+  "pasted": "Say resume emoji_heart a❤️b ok",
+  "first_prompts": [
+   "Say resume emoji_heart a❤️b ok"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say resume emoji_heart a❤️b ok"
+  ],
+  "after": "Say after resume emoji_heart please",
+  "following_prompts": [
+   "Say after resume emoji_heart please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000325",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say resume emoji_heart a❤️b ok"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000326",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume emoji_heart please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "same_plain",
+  "text": "Say same resume please",
+  "pasted": "Say same resume please",
+  "first_prompts": [
+   "Say same resume please"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say same resume please"
+  ],
+  "after": "Say after resume same_plain please",
+  "following_prompts": [
+   "Say after resume same_plain please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000327",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say same resume please"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000328",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume same_plain please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "same_invisible",
+  "text": "Say same resume​ please",
+  "pasted": "Say same resume​ please",
+  "first_prompts": [
+   "Say same resume please"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say same resume please"
+  ],
+  "after": "Say after resume same_invisible please",
+  "following_prompts": [
+   "Say after resume same_invisible please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000329",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say same resume please"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000330",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume same_invisible please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "same_again",
+  "text": "Say same resume please",
+  "pasted": "Say same resume please",
+  "first_prompts": [
+   "Say same resume please"
+  ],
+  "confirmed": false,
+  "prompts": [
+   "Say same resume please"
+  ],
+  "after": "Say after resume same_again please",
+  "following_prompts": [
+   "Say after resume same_again please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000331",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say same resume please"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000332",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume same_again please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "leading_zero_width_space",
+  "text": "​!printf 'invisible-resume\\n'",
+  "pasted": "​!printf 'invisible-resume\\n'",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "!printf 'invisible-resume\\n'"
+  ],
+  "after": "Say after resume leading_zero_width_space please",
+  "following_prompts": [
+   "Say after resume leading_zero_width_space please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000333",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "!printf 'invisible-resume\\n'"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000334",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume leading_zero_width_space please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "leading_vertical_tab",
+  "text": "\u000b!printf 'invisible-resume\\n'",
+  "pasted": "\u000b!printf 'invisible-resume\\n'",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "\n!printf 'invisible-resume\\n'"
+  ],
+  "after": "Say after resume leading_vertical_tab please",
+  "following_prompts": [
+   "Say after resume leading_vertical_tab please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000335",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "\n!printf 'invisible-resume\\n'"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000336",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume leading_vertical_tab please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "leading_emoji_selector",
+  "text": "️!printf 'invisible-resume\\n'",
+  "pasted": "️!printf 'invisible-resume\\n'",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "!printf 'invisible-resume\\n'"
+  ],
+  "after": "Say after resume leading_emoji_selector please",
+  "following_prompts": [
+   "Say after resume leading_emoji_selector please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000337",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "!printf 'invisible-resume\\n'"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000338",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume leading_emoji_selector please"
+   }
+  ]
+ },
+ {
+  "session": "resume",
+  "case": "leading_bom",
+  "text": "﻿!printf 'invisible-resume\\n'",
+  "pasted": "﻿!printf 'invisible-resume\\n'",
+  "first_prompts": [],
+  "confirmed": true,
+  "prompts": [
+   "!printf 'invisible-resume\\n'"
+  ],
+  "after": "Say after resume leading_bom please",
+  "following_prompts": [
+   "Say after resume leading_bom please"
+  ],
+  "reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000339",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "!printf 'invisible-resume\\n'"
+   }
+  ],
+  "following_reports": [
+   {
+    "session_id": "00000000-0000-4000-8000-000000000262",
+    "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000262.jsonl",
+    "cwd": "/tmp/capture-work/cwd",
+    "prompt_id": "00000000-0000-4000-8000-000000000340",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say after resume leading_bom please"
+   }
+  ]
+ }
+]

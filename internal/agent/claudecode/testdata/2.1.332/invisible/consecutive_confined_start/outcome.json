@@ -1,0 +1,18 @@
+{
+ "session": "start",
+ "text": "Say start right_override a‮b ok",
+ "pasted": "Say start right_override a‮b ok",
+ "first_reports": [],
+ "after": "Say following start please",
+ "reports": [
+  {
+   "session_id": "00000000-0000-4000-8000-000000000158",
+   "transcript_path": "/tmp/capture-work/config/projects/-tmp-capture-work-cwd/00000000-0000-4000-8000-000000000158.jsonl",
+   "cwd": "/tmp/capture-work/cwd",
+   "prompt_id": "00000000-0000-4000-8000-000000000160",
+   "permission_mode": "default",
+   "hook_event_name": "UserPromptSubmit",
+   "prompt": "Say start right_override ab okSay following start please"
+  }
+ ]
+}
