@@ -166,6 +166,7 @@ func TestDesktopHostedFixture(t *testing.T) {
 	}
 	emit("ready", map[string]any{"binding": binding, "thread": id})
 	turnStarted := false
+	var heldUntil time.Time
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024), 1024)
 	for scanner.Scan() {
@@ -175,6 +176,9 @@ func TestDesktopHostedFixture(t *testing.T) {
 				t.Fatal("duplicate fixture turn")
 			}
 			turnStarted = true
+			// The fake tool cannot finish 20s before its input was sent. Retain
+			// that conservative bound across Select/join/readiness, too.
+			heldUntil = time.Now().Add(20 * time.Second)
 			r.driver.Inject(thread, fakesurface.Webhook(e2eHook), "tool wait 20s\nreply survived desktop daemon replacement")
 			eventually(t, "held fake-agent turn", 10*time.Second, func() bool { return len(r.events(t, "tool_started", thread)) == 1 })
 			emit("turn", nil)
@@ -189,6 +193,9 @@ func TestDesktopHostedFixture(t *testing.T) {
 			}
 			activeVersion = two.Version
 			ready()
+			if !time.Now().Before(heldUntil) || len(r.events(t, "tool_ended", thread)) != 0 || len(r.events(t, "turn_ended", thread)) != 1 {
+				t.Fatal("replacement became ready after the held turn could finish")
+			}
 			if err := state.CheckHosts(context.Background()); err != nil {
 				t.Fatal(err)
 			}
