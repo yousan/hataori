@@ -1,0 +1,122 @@
+{
+  "sequence": 34,
+  "elapsed_seconds": 15.315977,
+  "source": "http",
+  "request_started_seconds": 15.051162,
+  "request": {
+    "method": "conversations.replies",
+    "body": {
+      "channel": "C0000000003",
+      "limit": 2,
+      "oldest": "1000000000.011803",
+      "include_all_metadata": true,
+      "ts": "1000000002.485449",
+      "cursor": "opaque-17"
+    }
+  },
+  "status": 200,
+  "headers": {
+    "x-slack-req-id": "eb4316e144c17572f9c1ceb260adc696",
+    "content-type": "application/json; charset=utf-8",
+    "x-accepted-oauth-scopes": "channels:history,groups:history,mpim:history,im:history,read",
+    "x-oauth-scopes": "channels:history,channels:read,groups:history,groups:read,im:history,im:read,metadata.message:read,users:read,chat:write,files:write,im:write,reactions:write,incoming-webhook"
+  },
+  "body": {
+    "ok": true,
+    "messages": [
+      {
+        "user": "U0000000017",
+        "type": "message",
+        "ts": "1000000002.485449",
+        "bot_id": "B0000000002",
+        "app_id": "A0000000001",
+        "text": "[hataori test] format scenarios root",
+        "team": "T0000000015",
+        "bot_profile": {
+          "id": "B0000000002",
+          "deleted": false,
+          "name": "name-3",
+          "updated": 999998692,
+          "app_id": "A0000000001",
+          "user_id": "U0000000017",
+          "icons": {
+            "image_36": "https://example.invalid/redacted-url-2",
+            "image_48": "https://example.invalid/redacted-url-3",
+            "image_72": "https://example.invalid/redacted-url-4"
+          },
+          "team_id": "T0000000015"
+        },
+        "thread_ts": "1000000002.485449",
+        "reply_count": 4,
+        "reply_users_count": 1,
+        "latest_reply": "1000000013.552179",
+        "reply_users": [
+          "U0000000017"
+        ],
+        "is_locked": false,
+        "subscribed": false,
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "opaque-18",
+            "elements": [
+              {
+                "type": "rich_text_section",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "[hataori test] format scenarios root"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "user": "U0000000017",
+        "type": "message",
+        "ts": "1000000013.552179",
+        "bot_id": "B0000000002",
+        "app_id": "A0000000001",
+        "text": "[hataori test] thread buttons fallback",
+        "team": "T0000000015",
+        "bot_profile": {
+          "id": "B0000000002",
+          "deleted": false,
+          "name": "name-3",
+          "updated": 999998692,
+          "app_id": "A0000000001",
+          "user_id": "U0000000017",
+          "icons": {
+            "image_36": "https://example.invalid/redacted-url-2",
+            "image_48": "https://example.invalid/redacted-url-3",
+            "image_72": "https://example.invalid/redacted-url-4"
+          },
+          "team_id": "T0000000015"
+        },
+        "thread_ts": "1000000002.485449",
+        "parent_user_id": "U0000000017",
+        "blocks": [
+          {
+            "type": "actions",
+            "block_id": "opaque-10",
+            "elements": [
+              {
+                "type": "button",
+                "action_id": "capture_format",
+                "text": {
+                  "type": "plain_text",
+                  "text": "Test button",
+                  "emoji": true
+                },
+                "value": "name-3"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "has_more": false
+  }
+}

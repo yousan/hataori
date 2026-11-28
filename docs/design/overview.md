@@ -11,7 +11,7 @@ How to read it:
 - Claims about the agent CLIs were checked on 2026-11-12 against Claude Code 2.1.322 and codex-cli 0.163.0 on Linux, by driving the real programs, and the supervisor's confinement (section 7.1) on 2026-11-18 against Claude Code 2.1.327 and codex-cli 0.163.0. Appendix B lists each check.
 - Section 3 first recommended `claude -p`. The maintainer decided against it; sections 3.4 and 3.5 describe the path chosen instead, and the earlier checks stay in the document as the record.
 - OpenClaw facts (section 7.3) come from its documentation for version 2026.10.6, read on 2026-11-12.
-- Slack and Microsoft Teams facts in section 8, and the source notes in Appendix B's Codex rows, come from documentation and source code read on 2026-11-18 (Appendix B); they were not run.
+- Slack and Microsoft Teams facts in section 8, and the source notes in Appendix B's Codex rows, come from documentation and source code read on 2026-11-18 (Appendix B). Partial Slack wire captures on 2026-11-28 are recorded under `internal/surface/slack/testdata/`; the Go Slack SDK, person scenarios and interactive acknowledgment deadline remain unverified.
 - The tmux facts behind typing into a host pane (section 7.2) were checked on 2026-11-19 against tmux 3.4 on Linux (Appendix B). The SSH and browser facts there (OpenSSH's connection sharing and forwarding, `localhost` as a secure origin, cookies shared across ports) were not run or read again for it, and count as **(unverified)** until the issues that use them check them.
 - The facts behind terminal holders and taking in sessions people started (sections 4.3 and 4.8) were checked on 2026-11-19 against Claude Code 2.1.328 and tmux 3.4 on Linux, with a throwaway configuration directory and no login (Appendix B). cmux and iTerm2 run only on macOS: their facts come from their documentation, read the same day, and are **(unverified)**.
 - Anything marked **(unverified)** was not checked by running it.
@@ -1308,13 +1308,15 @@ The order below was decided by the maintainer (section 10): Codex, people in cha
 
 **Slack.** After the supervisor and before plugins (#337; section 10). Go has no official Slack SDK (official ones are for Java, JavaScript, Python and Deno). The adapter uses `github.com/slack-go/slack` (BSD-2-Clause, actively released; v0.36.0 on 2026-11-14), which Slack lists among community-developed tools, and its `socketmode` package. It covers Socket Mode, Block Kit buttons, `chat.update` (`UpdateMessageContext`), thread replies (`MsgOptionTS`) and the current file upload flow (`UploadFileContext`). Socket Mode needs no inbound endpoint. Catch-up (`Since`) reads `conversations.replies`, which allows 50+ requests per minute (Tier 3) for an app installed as an internal (customer-built) app and for a Marketplace app; a commercially distributed app outside the Marketplace gets 1 request per minute and 15 messages per request, which is too little for catch-up. hataori is therefore installed as an internal app in each workspace. `chat.update` is also Tier 3, so progress-line edits are paced. These facts come from Slack's documentation and the library's source (Appendix B, "Documentation read on 2026-11-18"); the library was not run.
 
-Where Slack differs from what the driver interface assumes (Appendix B, "Documentation read on 2026-11-19"; nothing was run):
+Where Slack differs from what the driver interface assumes (Appendix B, "Documentation read on 2026-11-19"; partial wire observations in the [Slack capture ledger](../../internal/surface/slack/testdata/README.md)):
 
 - A thread is the replies to one message, named by that message's `ts` (`thread_ts`). A thread that hataori opens without a trigger message, as for a `Start` through the control API, starts from a message that hataori posts in the channel.
 - Custom slash commands "cannot, however, be invoked in message threads"; only Slack's built-in ones and Giphy's can. Their acknowledgment over HTTP must arrive within 3000 ms.
 - `chat.postMessage` takes no key that makes a post safe to repeat. It takes `metadata`, an event type and a payload that every member of the workspace can read, and `conversations.replies` returns it with `include_all_metadata`. `slack-go/slack` v0.36.0 has `MsgOptionMetadata`, and `IncludeAllMetadata` on both reads.
 - Text in `text` is Slack's own format; the `markdown` block (`NewMarkdownBlock`) renders standard Markdown, tables and code blocks included, with at most 12,000 characters across a message's markdown blocks. The documentation recommends at most 4,000 characters in `text` and cuts it after 40,000.
 - An incoming webhook posts only into the channel it was made for, and into a thread with `thread_ts`, under the name and icon of the app it belongs to.
+- In the 2026-11-28 private-channel captures, incoming webhook events from both apps carry `subtype=bot_message` and `bot_id`, without `app_id` or `user`. The test app's own webhook has a different `bot_id` from its Web API posts. A single Web API bot ID therefore does not identify every own-app post; the driver's identity design must account for this before accepting webhook input. These observations do not change the policy about who may call hataori.
+- Five-second and missing `events_api` acknowledgments caused retries approximately 3 and 66 seconds after the initial delivery, in 90-second observation windows. The three-second interactive Socket Mode deadline remains **(unverified)**: no delayed button press or operator UI result has been captured yet. The Go library was not used for these wire recordings.
 
 **Microsoft Teams.** Microsoft's bot SDKs are C#, TypeScript and Python; the older Bot Framework SDK is archived. There is nothing for Go, so the adapter is written against the HTTP protocol. By hand (from Microsoft's documentation, Appendix B, "Documentation read on 2026-11-18"; nothing was run):
 
@@ -3709,7 +3711,7 @@ Section 7.1, "Conversations in any chat thread". Besides the phase criterion, it
 ### Slack
 
 - [ ] Phase 1's criteria for start, continue, questions, restart and catch-up pass on Slack.
-- [ ] Each Socket Mode envelope, including a button press, is acknowledged with its `envelope_id` within 3 seconds while the work continues. (3 seconds is Slack's deadline for acknowledging an interaction over HTTP; that Socket Mode has the same deadline is **(unverified)**.)
+- [ ] Each Socket Mode envelope, including a button press, is acknowledged with its `envelope_id` within 3 seconds while the work continues. (3 seconds is Slack's deadline for acknowledging an interaction over HTTP; that Socket Mode has the same interactive deadline remains **(unverified)**. The 2026-11-28 wire captures show retries after late or missing event ACKs; a delayed button press and its UI result are still missing. See the [capture ledger](../../internal/surface/slack/testdata/README.md).)
 
 ### Microsoft Teams
 

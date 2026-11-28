@@ -1,0 +1,27 @@
+{
+  "sequence": 3,
+  "elapsed_seconds": 0.5309,
+  "source": "http",
+  "request_started_seconds": 0.254985,
+  "request": {
+    "method": "conversations.open",
+    "body": {
+      "users": "U0000000013"
+    }
+  },
+  "status": 200,
+  "headers": {
+    "x-slack-req-id": "06aeab4ad73d758b39ff5cbd47ed42f4",
+    "content-type": "application/json; charset=utf-8",
+    "x-accepted-oauth-scopes": "channels:write,groups:write,mpim:write,im:write,post",
+    "x-oauth-scopes": "channels:history,channels:read,groups:history,groups:read,im:history,im:read,metadata.message:read,users:read,chat:write,files:write,im:write,reactions:write,incoming-webhook"
+  },
+  "body": {
+    "ok": true,
+    "no_op": true,
+    "already_open": true,
+    "channel": {
+      "id": "D0000000007"
+    }
+  }
+}

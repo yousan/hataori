@@ -1,0 +1,78 @@
+{
+  "sequence": 11,
+  "elapsed_seconds": 69.910709,
+  "source": "socket-receive",
+  "ack_policy": "late",
+  "received_seconds": 69.910632,
+  "body": {
+    "envelope_id": "00000000-0000-0000-0000-000000000003",
+    "payload": {
+      "token": "redacted-credential",
+      "team_id": "T0000000008",
+      "context_team_id": "T0000000008",
+      "context_enterprise_id": null,
+      "api_app_id": "A0000000001",
+      "event": {
+        "type": "message",
+        "user": "U0000000010",
+        "ts": "1000000000.331749",
+        "bot_id": "B0000000002",
+        "app_id": "A0000000001",
+        "text": "[hataori test] bot ACK late",
+        "team": "T0000000008",
+        "bot_profile": {
+          "id": "B0000000002",
+          "deleted": false,
+          "name": "name-3",
+          "updated": 999998986,
+          "app_id": "A0000000001",
+          "user_id": "U0000000010",
+          "icons": {
+            "image_36": "https://example.invalid/redacted-url-2",
+            "image_48": "https://example.invalid/redacted-url-3",
+            "image_72": "https://example.invalid/redacted-url-4"
+          },
+          "team_id": "T0000000008"
+        },
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "opaque-3",
+            "elements": [
+              {
+                "type": "rich_text_section",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "[hataori test] bot ACK late"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "channel": "C0000000003",
+        "event_ts": "1000000000.331749",
+        "channel_type": "group"
+      },
+      "type": "event_callback",
+      "event_id": "Ev0000000006",
+      "event_time": 1000000000,
+      "authorizations": [
+        {
+          "enterprise_id": null,
+          "team_id": "T0000000008",
+          "user_id": "U0000000010",
+          "is_bot": true,
+          "is_enterprise_install": false
+        }
+      ],
+      "is_ext_shared_channel": false,
+      "event_context": "opaque-4"
+    },
+    "type": "events_api",
+    "accepts_response_payload": false,
+    "retry_attempt": 2,
+    "retry_reason": "timeout"
+  }
+}

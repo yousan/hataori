@@ -1,0 +1,94 @@
+{
+  "sequence": 158,
+  "elapsed_seconds": 29.038578,
+  "source": "http",
+  "request_started_seconds": 28.561719,
+  "request": {
+    "method": "files.completeUploadExternal",
+    "body": {
+      "channel_id": "C0000000004",
+      "thread_ts": "1000000002.464549",
+      "files": [
+        {
+          "id": "F0000000057",
+          "title": "name-5"
+        }
+      ]
+    }
+  },
+  "status": 200,
+  "headers": {
+    "x-slack-req-id": "e6a8cb0cf04d46ce517686d337d0aaeb",
+    "content-type": "application/json; charset=utf-8",
+    "x-accepted-oauth-scopes": "files:write",
+    "x-oauth-scopes": "channels:history,channels:read,groups:history,groups:read,im:history,im:read,metadata.message:read,users:read,chat:write,files:write,im:write,reactions:write,incoming-webhook"
+  },
+  "body": {
+    "ok": true,
+    "files": [
+      {
+        "id": "F0000000057",
+        "created": 1000000028,
+        "timestamp": 1000000028,
+        "mimetype": "text/plain",
+        "filetype": "text",
+        "pretty_type": "Plain Text",
+        "user": "U0000000060",
+        "user_team": "T0000000058",
+        "editable": true,
+        "size": 26,
+        "mode": "snippet",
+        "is_external": false,
+        "external_type": "",
+        "is_public": false,
+        "public_url_shared": false,
+        "display_as_bot": false,
+        "username": "",
+        "name": "name-5",
+        "title": "name-5",
+        "is_modified_by_ai": false,
+        "url_private": "https://example.invalid/redacted-url-5",
+        "url_private_download": "https://example.invalid/redacted-url-6",
+        "permalink": "https://example.invalid/redacted-url-7",
+        "permalink_public": "https://example.invalid/redacted-url-8",
+        "edit_link": "https://example.invalid/redacted-url-9",
+        "preview": "hataori test capture file\n",
+        "preview_highlight": "<div class=\"CodeMirror cm-s-default CodeMirrorServer\">\n<div class=\"CodeMirror-code\">\n<div><pre>hataori test capture file</pre></div>\n<div><pre></pre></div>\n</div>\n</div>\n",
+        "lines": 2,
+        "lines_more": 0,
+        "preview_is_truncated": false,
+        "comments_count": 0,
+        "is_starred": false,
+        "shares": {
+          "private": {
+            "C0000000004": [
+              {
+                "ts": "1000000028.841359",
+                "channel_name": "name-3",
+                "team_id": "T0000000058",
+                "share_user_id": "U0000000060",
+                "source": "UNKNOWN",
+                "is_silent_share": false,
+                "reply_users": [
+                  "U0000000060"
+                ],
+                "reply_users_count": 1,
+                "reply_count": 4,
+                "latest_reply": "1000000028.841359",
+                "thread_ts": "1000000002.464549"
+              }
+            ]
+          }
+        },
+        "channels": [],
+        "groups": [
+          "C0000000004"
+        ],
+        "ims": [],
+        "has_more_shares": false,
+        "has_rich_preview": false,
+        "file_access": "visible"
+      }
+    ]
+  }
+}

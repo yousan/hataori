@@ -1,0 +1,21 @@
+{
+  "sequence": 4,
+  "elapsed_seconds": 0.771585,
+  "source": "http",
+  "request_started_seconds": 0.531311,
+  "request": {
+    "method": "apps.connections.open",
+    "body": {}
+  },
+  "status": 200,
+  "headers": {
+    "x-slack-req-id": "f7b70ad09dcd5c98821851836e04cc28",
+    "content-type": "application/json; charset=utf-8",
+    "x-accepted-oauth-scopes": "connections:write",
+    "x-oauth-scopes": "connections:write"
+  },
+  "body": {
+    "ok": true,
+    "url": "REDACTED-SOCKET-URL"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "sequence": 156,
+  "elapsed_seconds": 28.114305,
+  "source": "http",
+  "request_started_seconds": 27.850263,
+  "request": {
+    "method": "files.getUploadURLExternal",
+    "body": {
+      "filename": "name-5",
+      "length": 26
+    }
+  },
+  "status": 200,
+  "headers": {
+    "x-slack-req-id": "ea928d58c4ee0012e84c1a8ad5c81bc6",
+    "content-type": "application/json; charset=utf-8",
+    "x-accepted-oauth-scopes": "files:write",
+    "x-oauth-scopes": "channels:history,channels:read,groups:history,groups:read,im:history,im:read,metadata.message:read,users:read,chat:write,files:write,im:write,reactions:write,incoming-webhook"
+  },
+  "body": {
+    "ok": true,
+    "upload_url": "redacted-credential",
+    "file_id": "F0000000057"
+  }
+}
