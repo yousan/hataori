@@ -1,6 +1,6 @@
 # Trusted coordinator and inactive activation bundle
 
-Implementation: #1103 / stacked draft #1107. This is a callable repository
+Implementation: #1103, merged #1107, and follow-up #1114. This is a callable repository
 increment, not an installation or adoption record. Parent #1102 merged as
 `86ee315d` after exact ready-head full Linux/macOS and compatibility success;
 its separate actual merged-main evidence is recorded on that PR. Parent evidence
@@ -12,18 +12,23 @@ proof, provider reviews, Pages and upgrade source remain unchanged.
 
 Build `cmd/ci-coordinator` from the reviewed immutable control revision into a
 trusted location outside candidate checkouts. The binary accepts only explicit
-commands; it has no installer, timer, signing, key-generation, rerun, cancellation,
-merge, deployment or credential-issuance command:
+commands; it has no installer, timer, signing, key-generation, rerun, cancellation, deployment or credential-issuance command.
+The separately disabled `integrate` command is restricted to the signed owner
+contract; it is not a generic PR merger:
 
 ```
 ci-coordinator bundle TRUSTED_REPOSITORY IMMUTABLE_REVISION
+ci-coordinator bootstrap-prepare AUTHORITY_DIR
+ci-coordinator bootstrap-pump AUTHORITY_DIR
 ci-coordinator bootstrap AUTHORITY_DIR
 ci-coordinator observe AUTHORITY_DIR
 ci-coordinator admission AUTHORITY_DIR --pull N
+ci-coordinator integrate AUTHORITY_DIR --pull N
 ci-coordinator pump AUTHORITY_DIR
 ci-coordinator status AUTHORITY_DIR
 ci-coordinator control-transition AUTHORITY_DIR
 ci-coordinator recover AUTHORITY_DIR --reason DIAGNOSIS
+ci-coordinator bootstrap-recover AUTHORITY_DIR --reason DIAGNOSIS
 ci-coordinator done AUTHORITY_DIR --pull N
 ci-coordinator summary AUTHORITY_DIR --run N
 ```
@@ -70,7 +75,10 @@ directory, no dispatcher secret and no signing key. Do not run this coordinator
 from candidate code or expose its credential to candidate tests. No principal,
 key, signature, token, directory or service is provisioned by this PR.
 
-`bootstrap` verifies the signed fixed full baseline and initializes once.
+`bootstrap-prepare` and `bootstrap-pump` provide the durable pre-lane first-proof
+route; `bootstrap` verifies its exact bound full baseline and initializes once.
+The [owner adapter contract](ci-owner-adapter.md) defines cold start, diagnosed
+failed-baseline recovery, the actual integration caller and provider proof limits.
 `observe` obtains fresh actual history/completion and advances debt/CAS/outbox.
 `pump` performs safe registration/credential/closure/ref preflight before marking
 uncertainty; ambiguous POSTs reconcile the unique fixed ref without blind resend.
@@ -140,7 +148,8 @@ any required compatibility version or OS job.
 
 A signed root defaults to `RoutingEnabled=false` and no `Routes`. Unadopted owners
 keep `main`; callers get no integration permission. The command does not retarget
-or merge PRs. An opted-in grant freezes PR number, head/base/ref, responsible
+PRs. `IntegrationWrite.Enabled` also defaults false; only the separately reviewed
+provider-compatible contract permits `integrate` to write the exact integration ref. An opted-in grant freezes PR number, head/base/ref, responsible
 GitHub owner identity, consent comment ID, expiry, mandatory reviewers and actual
 feedback run/tuple. The adapter verifies the actual open non-draft PR, repositories,
 base tip and an exact owner-authored consent body:
@@ -174,15 +183,31 @@ previous grant digests remain in its audit table. Expiry never silently drops a
 possibly used permit. Actual merged-and-observed history or an actual closed,
 unmerged PR resolves it; closing a changed unmerged PR retires no coverage.
 
-The owner hook calls `admission` immediately before using its exact reserved
-base/head route, then calls `observe` after actual integration. Integration
-branch writes must be confined to the compatible owner route; a JSON allowance
-is not an atomic GitHub merge operation. Competing/manual unmanaged branch writes
-are not made safe by a check-then-merge convention. Prove that caller/branch-rule
-compatibility with the existing owner before enabling routing. No existing owner
-or main PR is migrated here.
+The actual owner hook is `ci-coordinator integrate AUTHORITY_DIR --pull N`.
+It calls fresh admission, persists an exact write intent, refreshes consent,
+reviews, source ref and provider merge object, then claims uncertainty in the
+same serialized path as reservation, count/age and expiry. A raw smart-HTTP Git
+atomic transaction guards BOTH base and actual candidate branch head. Ordinary
+`git push` can omit the candidate no-op assertion, and the REST merge API's `sha`
+parameter guards only the head; neither is substituted here. The receiver must
+advertise atomic capability and return complete success for both commands.
 
-`done` checks actual merged PR/history and the durable full watermark. An uncovered
+Ref CAS does not atomically lock review revocation, consent edits, PR metadata,
+expiry or an ABA change by another writer. The compatible isolated integration
+branch and confined writer/rules contract must be proved by the responsible
+operator before enabling it. Direct pushes must not bypass an existing main or
+provider gate. Actual GitHub transaction/rules support and automatic PR merge
+recognition are live proof dependencies, not established by local Git tests.
+Unknown outcomes survive restart without resend or rollback. Only actual exact
+PR merge recognition plus immutable history confirms a receipt, after which the
+caller invokes `observe`. A closed unmerged PR retires a definitely unsent intent;
+uncertain writes cannot be retired this way. Fresh same-PR grant replacement or
+control transition can retire only definitely unsent intents while retaining audit
+and debt. No existing owner or main PR is migrated here.
+
+`done` checks actual merged PR/history, the matching admitted and confirmed write
+receipt, and the durable full watermark. A covered manual merge without that
+receipt cannot acquire integration Done. An uncovered
 merge, draft/partial feedback, expired policy or missing mandatory review cannot
 be Done. Successful integration Done is explicitly integration-only; `ReleaseAllowed`
 and `UpgradeAllowed` remain false. Current main workers still require exact full
@@ -191,14 +216,20 @@ promotion stays with #1104 and existing operator owners.
 
 ## Actual identities, permissions and proof still needed
 
-The responsible owners supply the real numeric repository, dispatcher, control
-owner and mandatory provider/authority reviewer identities; approved merged PR,
-head/control SHA, policy digest/expiry/rollback; workflow ID/path; full baseline
-run/attempt/tuple; and exact owner grants. A supplied name or successful fixture
+Public read-only API queries resolve the repository ID, workflow ID/path/active
+state, immutable source/digests, actual reviews, run/attempt/jobs and observed
+main evidence. Owners must identify which numeric accounts hold dispatcher,
+control-owner and mandatory provider/authority roles, and supply the real
+APPROVED provenance, independent signature/key custody, confined credentials,
+valid policy/rollback and exact opt-in. An already successful new-workflow run is
+not required before the first legal dispatch: its run ID is discovered by the
+pre-lane outbox, and baseline success is required only before initialization. A supplied name or successful fixture
 is not that evidence. No root is signed or accepted as live by these docs.
 
 The dispatcher needs GitHub metadata/PR-review/issue-comment read access, Actions
-write for dispatch, and Contents write only for frozen ref creation. Any GitHub
+write for dispatch, and Contents write for frozen ref creation. Opted-in
+integration writing additionally needs the explicitly confined integration/source
+assertion permissions and compatible branch rules; this does not grant main write. Any GitHub
 workflow-write scope required by registration/ref semantics is an explicit
 prerequisite to verify, not permission granted here. Runtime proof jobs themselves
 have only Contents read. Signing key custody is separate from dispatcher tokens
@@ -206,7 +237,8 @@ and candidate runners.
 
 Actual dispatch cannot yet be proved for a new workflow absent from the default
 branch's registered workflows and an independently approved compatible control,
-root, target execution closure and real baseline. Parent #1102's
+root and target execution closure. Registration is now observed on main; real
+authority and first-dispatch/baseline proof remain external dependencies. Parent #1102's
 ready/main gates cannot substitute for this new closure or owner compatibility.
 These are precise live proof prerequisites; they do not block code, deterministic
 tests or review.

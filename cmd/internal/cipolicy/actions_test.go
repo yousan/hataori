@@ -31,6 +31,7 @@ func capture(t *testing.T, name string, out any) {
 // This HTTP backend derives records from captured GitHub payloads. Explicitly
 // mutated positive variants test the adapter; they are NOT live approvals.
 type githubFixture struct {
+	gitServe                                                 func(http.ResponseWriter, *http.Request) bool
 	candidate                                                *pullRecord
 	consent                                                  any
 	candidateReviews                                         []reviewRecord
@@ -121,6 +122,9 @@ func fixture(t *testing.T) *githubFixture {
 }
 
 func (f *githubFixture) serve(w http.ResponseWriter, r *http.Request) {
+	if f.gitServe != nil && f.gitServe(w, r) {
+		return
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	p := r.URL.Path

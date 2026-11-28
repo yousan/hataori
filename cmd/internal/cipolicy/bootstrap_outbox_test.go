@@ -162,3 +162,80 @@ func TestColdBootstrapConcurrentPumpExpiryAndSkip(t *testing.T) {
 		t.Fatal("invalid baseline exists")
 	}
 }
+
+func TestColdBootstrapFailedRecoveryRetainsAuditAndClosesUnknown(t *testing.T) {
+	for _, scenario := range []string{"failed", "running", "success", "ambiguous", "wrong-owner", "new-key", "expiry"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, f, _ := coldFixture(t)
+			ctx := context.Background()
+			if _, err := s.PrepareBootstrap(ctx, f.adapter); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "ambiguous" {
+				f.mu.Lock()
+				f.lost = true
+				f.delay = true
+				f.mu.Unlock()
+			}
+			_, err := s.PumpBootstrap(ctx, f.adapter)
+			if err != nil && scenario != "ambiguous" {
+				t.Fatal(err)
+			}
+			f.mu.Lock()
+			f.run.Status = "completed"
+			f.run.Conclusion = "failure"
+			if scenario == "running" {
+				f.run.Status = "in_progress"
+				f.run.Conclusion = ""
+			}
+			if scenario == "success" {
+				f.run.Conclusion = "success"
+			}
+			f.mu.Unlock()
+			old := f.adapter.root.Bootstrap
+			f.adapter.root.Bootstrap.Sweep.ID = "diagnosed replacement proof"
+			if scenario == "wrong-owner" {
+				f.tamper = func(p string, v any) {
+					if p == "/user" {
+						v.(*Identity).ID++
+					}
+				}
+			}
+			if scenario == "new-key" {
+				f.adapter.keyDigest = Digest([]byte("other-authority-key"))
+			}
+			if scenario == "expiry" {
+				f.adapter.root.ExpiresAt = s.clock()
+			}
+			next, err := s.RecoverBootstrap(ctx, f.adapter, "Repair separately reviewed; terminal first proof diagnosed")
+			if scenario != "failed" {
+				if err == nil {
+					t.Fatal("unresolved/unauthorized proof replaced", scenario, next)
+				}
+				if f.posts != 1 {
+					t.Fatal("recovery dispatched", f.posts)
+				}
+				return
+			}
+			if err != nil || next.Status != "prepared" || next.Sweep.ID == old.Sweep.ID {
+				t.Fatal(next, err)
+			}
+			var archived int
+			if err = s.db.QueryRow("SELECT count(*) FROM bootstrap_archive").Scan(&archived); err != nil || archived != 1 {
+				t.Fatal("old proof audit missing", archived, err)
+			}
+			if f.posts != 1 {
+				t.Fatal("recovery dispatched before pump", f.posts)
+			}
+			if _, err = s.PumpBootstrap(ctx, f.adapter); err != nil {
+				t.Fatal(err)
+			}
+			if err = s.bootstrap(ctx, f.adapter); err != nil {
+				t.Fatal(err)
+			}
+			if f.posts != 2 {
+				t.Fatal("replacement dispatch count", f.posts)
+			}
+		})
+	}
+}

@@ -316,7 +316,7 @@ func TestAdmissionReservationsSerializeAndSurviveRestartExpiry(t *testing.T) {
 	}
 }
 
-func TestDoneNeedsActualIntegrationAndFullWatermark(t *testing.T) {
+func TestDoneRejectsCoveredManualMergeWithoutReceipt(t *testing.T) {
 	c, f, _ := routeFixture(t)
 	ctx := context.Background()
 	out, err := c.Execute(ctx, "done", 1107, 0)
@@ -338,15 +338,8 @@ func TestDoneNeedsActualIntegrationAndFullWatermark(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err = c.Execute(ctx, "done", 1107, 0)
-	if err != nil || !out.Route.DoneAllowed || !out.Route.Integrated || out.Route.ReleaseAllowed || out.Route.UpgradeAllowed {
-		t.Fatal(out, err)
-	}
-	now := c.store.clock().Add(2 * time.Hour)
-	c.store.clock = func() time.Time { return now }
-	f.adapter.clock = c.store.clock
-	out, err = c.Execute(ctx, "done", 1107, 0)
-	if err != nil || !out.Route.DoneAllowed {
-		t.Fatal("valid pre-merge adoption expired during full-proof queue", out, err)
+	if err == nil || out.Route == nil || out.Route.DoneAllowed {
+		t.Fatal("covered manual merge bypassed admitted write", out, err)
 	}
 }
 

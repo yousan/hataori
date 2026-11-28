@@ -102,6 +102,9 @@ func OpenStore(file string) (*Store, error) {
 			`CREATE TABLE IF NOT EXISTS admission (id INTEGER PRIMARY KEY, pull INTEGER NOT NULL, head TEXT NOT NULL, base TEXT NOT NULL, grant_digest TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('reserved','integrated','withdrawn')), expires TEXT NOT NULL)`,
 			`CREATE TABLE IF NOT EXISTS admission_grant (pull INTEGER NOT NULL, head TEXT NOT NULL, base TEXT NOT NULL, digest TEXT NOT NULL, expires TEXT NOT NULL, PRIMARY KEY(pull,head,base,digest))`,
 			`CREATE UNIQUE INDEX IF NOT EXISTS one_admission ON admission((1)) WHERE status='reserved'`,
+			`CREATE TABLE IF NOT EXISTS integration_intent (id TEXT PRIMARY KEY, pull INTEGER NOT NULL, record BLOB NOT NULL, status TEXT NOT NULL CHECK(status IN ('prepared','uncertain','confirmed','retired')), expires TEXT NOT NULL)`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS one_integration_write ON integration_intent((1)) WHERE status NOT IN ('confirmed','retired')`,
+			`CREATE TABLE IF NOT EXISTS bootstrap_archive (seal TEXT PRIMARY KEY, record BLOB NOT NULL, owner BLOB NOT NULL, reason TEXT NOT NULL, at TEXT NOT NULL)`,
 			`CREATE TABLE IF NOT EXISTS bootstrap_intent (id INTEGER PRIMARY KEY CHECK(id=1), seal TEXT NOT NULL, sweep BLOB NOT NULL, status TEXT NOT NULL CHECK(status IN ('prepared','uncertain','bound')), run INTEGER NOT NULL, attempt INTEGER NOT NULL)`,
 			`CREATE TABLE IF NOT EXISTS recovery (revision INTEGER PRIMARY KEY, owner TEXT NOT NULL, reason TEXT NOT NULL, control TEXT NOT NULL, authority TEXT NOT NULL, watermark TEXT NOT NULL, at TEXT NOT NULL)`,
 		} {
@@ -407,6 +410,16 @@ func (s *Store) SwitchControl(ctx context.Context, version int64, o Observation)
 		}
 		if snap.Version != version {
 			return ErrConflict
+		}
+		var writes int
+		if err := c.QueryRowContext(ctx, "SELECT count(*) FROM integration_intent WHERE status='uncertain'").Scan(&writes); err != nil {
+			return err
+		}
+		if writes != 0 {
+			return fmt.Errorf("integration write unresolved; control switch closed")
+		}
+		if _, err := c.ExecContext(ctx, "UPDATE integration_intent SET status='retired' WHERE status='prepared'"); err != nil {
+			return err
 		}
 		if (snap.State.Active != nil && (snap.Intent == nil || snap.Intent.Status != "prepared")) || o.key != snap.key || o.repositoryID != snap.repo || o.ref != snap.ref || o.control.selection.Report(s.clock()).FullOnly || !s.clock().Before(o.expires) || s.clock().Before(o.event.Now) || s.clock().Sub(o.event.Now) > 30*time.Second {
 			return fmt.Errorf("unsafe control transition")
