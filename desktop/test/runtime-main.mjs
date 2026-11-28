@@ -36,7 +36,8 @@ async function run() {
   const ready = awaitEvent('ready');
   child = spawn(process.env.DESKTOP_FIXTURE_BINARY, ['-test.run=^TestDesktopHostedFixture$', '-test.v', '-test.parallel=1', '-test.timeout=3m'], {
     stdio: ['pipe', 'pipe', 'pipe'], shell: false,
-    env: { ...guiEnvironment(), GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted', HATAORI_DESKTOP_HOSTED_FIXTURE: '1' },
+    env: { ...guiEnvironment(), GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted', HATAORI_DESKTOP_HOSTED_FIXTURE: '1',
+      ...Object.fromEntries(['DESKTOP_TRANSPORT_BINARY', 'DESKTOP_PROOF_NEXT_VERSION', 'DESKTOP_NEXT_FIXTURE_BINARY', 'DESKTOP_NEXT_TRANSPORT_BINARY'].map(key => [key, process.env[key]])) },
   });
   let buffer = '';
   child.stdout.setEncoding('utf8');
@@ -66,7 +67,8 @@ async function run() {
   assert.ok(csp?.includes("default-src 'self'")); assert.ok(!csp.includes('unsafe-eval'));
   assert.match(await original.text(), /\/assets\/index-[\w-]+\.js/u);
   await app.whenReady();
-  window = await createWindow(electron, transport, join(dirname(fileURLToPath(import.meta.url)), '../src/preload.cjs'));
+  const facade = { fetch: request => transport.fetch(request), socket: (...args) => transport.socket(...args), close: () => transport.close() };
+  window = await createWindow(electron, facade, join(dirname(fileURLToPath(import.meta.url)), '../src/preload.cjs'));
   const evaluate = code => window.webContents.executeJavaScript(code);
   const security = await evaluate(`({ origin:location.origin, require:typeof require, process:typeof process, buffer:typeof Buffer, bridge:Object.keys(window.hataoriNative) })`);
   assert.equal(security.origin, 'hataori-desktop://instance');
@@ -109,12 +111,21 @@ async function run() {
   })`);
   assert.equal((await attach('browser-token')).refused, 'not signed in');
   assert.equal((await attach('')).ended, 'ended'); proof('private-duplex-first-message-and-close');
-  await tell('turn', 'turn'); await tell('restart', 'restarted');
+  await tell('turn', 'turn');
+  const replacement = await tell('restart', 'restarted');
+  assert.equal(replacement.binding.Version, process.env.DESKTOP_PROOF_NEXT_VERSION);
+  assert.notEqual(replacement.binding.Version, fixture.binding.Version);
+  assert.equal(replacement.binding.Instance, fixture.binding.Instance);
+  transport.close(); transport = new NativeTransport(process.env.DESKTOP_NEXT_TRANSPORT_BINARY, replacement.binding);
   const after = await first('/api/terminal?thread=' + fixture.thread, position[1] + ':' + position[2]);
   const resumed = /id: ([0-9]+):([^\s]+)/u.exec(after); assert.ok(resumed); assert.equal(resumed[2], position[2]); assert.ok(Number(resumed[1]) >= Number(position[1]));
   await tell('finish', 'finished');
   assert.equal((await attach('')).ended, 'ended');
   proof('daemon-only-held-fake-turn-host-and-offset-reconnect');
+  proof('cross-version-staged-production-launcher-upgrade');
+  await tell('persistent-stop', 'started');
+  assert.equal((await attach('')).ended, 'ended');
+  proof('persistent-stop-survives-launcher-restart-until-explicit-start');
   transport.close(); window.destroy(); window = null;
   child.stdin.end(); await childDone;
   assert.match(childLog, /--- PASS: TestDesktopHostedFixture /u);

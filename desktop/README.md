@@ -40,10 +40,15 @@ the private native listener. It checks the existing embedded page/CSP in an
 actual sandboxed Electron window, owner fetch/streams, duplex first-message
 rules, navigation/capability refusals and a held fake turn across a daemon
 lifetime replacement with the same live host run and resumed terminal offset.
+The fixture stages two separately compiled daemon/helper versions and selects
+the second through the production launcher while the fake turn is held. The
+launcher closes and joins only its owned daemon pipe before the second starts;
+the old referenced binary remains available. This is a hosted scratch proof,
+not an interactive login/service-manager or signed-release acceptance check.
 It never runs LaunchAgent installation or a real agent/login. Versioned
 selection/checksum/schema and persistent-stop cases have separate inert file
-fixtures; the hosted daemon restart alone is not proof of cross-version or
-interactive real-Mac acceptance. `desktop/test/runtime-main.mjs` and
+fixtures. Hosted execution and interactive real-Mac acceptance remain separate
+gates. `desktop/test/runtime-main.mjs` and
 `TestDesktopHostedFixture` are hosted-only entry points; do not run them on an
 operator host. The private helper fixture's normal-suite skip is not evidence.
 Compatibility probes use the computed host endpoint and kernel peer UID, never

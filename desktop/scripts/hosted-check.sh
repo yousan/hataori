@@ -5,8 +5,11 @@ set -euo pipefail
 test "$(git rev-parse HEAD)" = "$DESKTOP_HEAD"
 printf 'Desktop exact SHA: %s\nRunner: %s / %s\n' "$DESKTOP_HEAD" "$RUNNER_OS" "$(uname -m)" >> "$GITHUB_STEP_SUMMARY"
 export DESKTOP_PROOF_VERSION="0.0.0-dev.$DESKTOP_HEAD"
+export DESKTOP_PROOF_NEXT_VERSION="0.0.1-dev.$DESKTOP_HEAD"
 export DESKTOP_FIXTURE_BINARY="$RUNNER_TEMP/desktop-fixture.test"
 export DESKTOP_TRANSPORT_BINARY="$RUNNER_TEMP/hataori-desktop-transport"
+export DESKTOP_NEXT_FIXTURE_BINARY="$RUNNER_TEMP/desktop-next-fixture.test"
+export DESKTOP_NEXT_TRANSPORT_BINARY="$RUNNER_TEMP/hataori-desktop-next-transport"
 export CGO_ENABLED=1
 # Ordinary user only. ACL inspection must be available; a skipped required
 # Darwin test is a failure, not runtime acceptance. No sudo or local services.
@@ -21,11 +24,13 @@ grep -q '^--- PASS: TestDarwinCaseInsensitiveScratch ' "$RUNNER_TEMP/desktop-sta
 printf 'PASS %s %s TestDarwinCaseInsensitiveScratch\n' "$DESKTOP_HEAD" "$RUNNER_OS" >> "$GITHUB_STEP_SUMMARY"
 go test -ldflags "-X github.com/yousan/hataori/internal/version.Version=$DESKTOP_PROOF_VERSION" -c -o "$DESKTOP_FIXTURE_BINARY" ./cmd/hataori
 go build -trimpath -ldflags "-X github.com/yousan/hataori/internal/version.Version=$DESKTOP_PROOF_VERSION" -o "$DESKTOP_TRANSPORT_BINARY" ./cmd/hataori-desktop-transport
+go test -ldflags "-X github.com/yousan/hataori/internal/version.Version=$DESKTOP_PROOF_NEXT_VERSION" -c -o "$DESKTOP_NEXT_FIXTURE_BINARY" ./cmd/hataori
+go build -trimpath -ldflags "-X github.com/yousan/hataori/internal/version.Version=$DESKTOP_PROOF_NEXT_VERSION" -o "$DESKTOP_NEXT_TRANSPORT_BINARY" ./cmd/hataori-desktop-transport
 npm ci --ignore-scripts --prefix desktop
 node desktop/node_modules/electron/install.js
 npm test --prefix desktop
 node desktop/node_modules/electron/cli.js desktop/test/runtime-main.mjs | tee "$RUNNER_TEMP/desktop-runtime.log"
-for name in existing-page-csp-and-sandbox remote-navigation-and-unexpected-capability-refused fetch-event-and-terminal-streams private-duplex-first-message-and-close daemon-only-held-fake-turn-host-and-offset-reconnect fixture-graceful-cleanup-no-pid-lookup; do
+for name in existing-page-csp-and-sandbox remote-navigation-and-unexpected-capability-refused fetch-event-and-terminal-streams private-duplex-first-message-and-close daemon-only-held-fake-turn-host-and-offset-reconnect cross-version-staged-production-launcher-upgrade persistent-stop-survives-launcher-restart-until-explicit-start fixture-graceful-cleanup-no-pid-lookup; do
   grep -q "^PASS desktop hosted $name$" "$RUNNER_TEMP/desktop-runtime.log"
   printf 'PASS %s %s %s\n' "$DESKTOP_HEAD" "$RUNNER_OS" "$name" >> "$GITHUB_STEP_SUMMARY"
 done
