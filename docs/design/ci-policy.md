@@ -38,8 +38,15 @@ feedback, never evidence of full validation or permission to merge.
 Documentation exemptions are an allowlist: non-policy root Markdown,
 `docs/`, `site/` and `LICENSE`. Policy overrides take precedence: `AGENTS.md`,
 `CLAUDE.md`, `docs/testing.md`, this policy and `.github/` remain code even
-inside an otherwise exempt path. Documentation captures under `docs/` are
-documentation; runtime/test fixtures in package trees, and embedded Markdown
+inside an otherwise exempt path. Executable documentation contracts
+`docs/protocol.md`, `docs/plugins.md` and `docs/configuration.md` also remain
+code: wire/plugin tests read their protocol, operations, fields and hook
+policies. Ready/main changes to these paths retain the full OS suites; they
+do not select the unrelated tmux matrix. The four rate-limit/statusline
+captures read by adapter tests under `docs/notes/agent-usage-limits/captures/`
+and the capture-metadata scrubber `docs/notes/codex-supervisor-1088/scrub_actual.py`
+also remain code (the shared filter names them explicitly). Other research
+captures remain documentation; runtime/test fixtures in package trees, and embedded Markdown
 such as `internal/supervisor/layer.md`, remain code regardless of extension.
 Unknown paths, dependencies and generated assets outside the documentation
 allowlist remain code. Evaluate the complete PR diff, or the entire pushed main range;

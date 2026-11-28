@@ -18,7 +18,12 @@ new runs for intermediate edits.
 
 The shared [filters](../.github/filters.yml) use the entire PR diff or pushed
 main range. Non-policy root Markdown, `docs/`, `site/` and `LICENSE` alone skip
-unrelated runtime/build jobs; policy overrides, package Markdown, fixtures,
+unrelated runtime/build jobs. Executable contracts `docs/protocol.md`,
+`docs/plugins.md` and `docs/configuration.md` retain full ready/main OS suites
+for their wire/plugin consistency tests. The four explicitly listed
+rate-limit/statusline captures and capture-metadata scrubber used by adapter
+tests also retain OS validation.
+Policy overrides, package Markdown, fixtures,
 dependencies, generated assets and unknown paths remain code. Existing
 `test`, `test-macos`, `build-macos`, `web` and `tmux` job IDs remain; a skipped
 matrix has the aggregate `tmux` check, not ten executed version checks.

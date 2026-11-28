@@ -1,13 +1,14 @@
 # With predicate-quantifier: every, a file is code when no docs exclusion
 # matches. Root-only Markdown is deliberate: package .md can be embedded
 # instructions or test fixtures. Both workflows OR policy back into code.
+# Policy also includes executable documentation contracts read by tests.
 code:
   - '!*.{md,markdown,MD,MARKDOWN}'
   - '!docs/**'
   - '!site/**'
   - '!LICENSE'
 policy:
-  - '{.github/**,AGENTS.md,CLAUDE.md,docs/testing.md,docs/design/ci-policy.md}'
+  - '{.github/**,AGENTS.md,CLAUDE.md,docs/testing.md,docs/design/ci-policy.md,docs/protocol.md,docs/plugins.md,docs/configuration.md,docs/notes/codex-supervisor-1088/scrub_actual.py,docs/notes/agent-usage-limits/captures/{codex-ratelimits-read.json,codex-poll.jsonl,claude-statusline-first.json,claude-statusline-with-rate-limits.json}}'
 # Keep the existing compatibility scope, with conservative escalation for
 # dependencies and CI/contribution policy. Unknown paths still get both OS
 # suites through code, even when they do not affect the tmux matrix.
