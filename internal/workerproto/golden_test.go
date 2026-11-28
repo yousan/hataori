@@ -87,6 +87,9 @@ func examples(t *testing.T) map[string]any {
 		"login_start":  Login{AgentConfig: agentConfig, Attempt: "attempt-A"},
 		"login_input":  LoginInput{Attempt: "attempt-A", Data: []byte("synthetic-login-input")},
 		"login_cancel": LoginAttempt{Attempt: "attempt-A"},
+		LoginStart:     Login{AgentConfig: agentConfig, Attempt: "attempt-A"},
+		LoginInputOp:   LoginInput{Attempt: "attempt-A", Data: []byte("example-code")},
+		LoginCancel:    LoginAttempt{Attempt: "attempt-A"},
 	}
 	replies := map[string]any{
 		"resolve_repository": RepositoryReference{Repository: "repo-A"},
@@ -101,6 +104,7 @@ func examples(t *testing.T) map[string]any {
 		"inspect":     Inspection{Workspace: "workspace-A", Identity: "directory-A", Clean: false, Reasons: []string{"untracked files"}},
 		"download":    FileBytes{Handle: "outgoing-A", Digest: fileDigest, Size: 3, Data: []byte("abc"), Final: true},
 		"login_start": LoginAttempt{Attempt: "attempt-A"}, "login_input": LoginAttempt{Attempt: "attempt-A"}, "login_cancel": LoginAttempt{Attempt: "attempt-A"},
+		LoginStart: LoginAttempt{Attempt: "attempt-A"}, LoginInputOp: LoginAttempt{Attempt: "attempt-A"}, LoginCancel: LoginAttempt{Attempt: "attempt-A"},
 	}
 	ex := map[string]any{
 		"hello.json":              hello(),
@@ -203,6 +207,34 @@ func examples(t *testing.T) map[string]any {
 		m := msgs["login_start"]
 		m.Kind, m.Body = "stream", raw(t, b)
 		ex["stream-login-"+state+".json"] = m
+	}
+	// These fixed wire examples are not captured provider output or runtime
+	// login evidence. Legacy opaque examples above remain a separate contract.
+	for name, d := range map[string]LoginData{
+		"link":      {Link: "https://example.invalid/login"},
+		"waiting":   {WantsCode: true},
+		"device":    {Link: "https://example.invalid/device", ShowCode: "EXAMPLE-CODE", NoCode: true},
+		"refused":   {Refused: "Example refusal.", WantsCode: true},
+		"logged-in": {Result: "logged_in"},
+		"failed":    {Result: "failed"},
+	} {
+		m := msgs[LoginStart]
+		m.Kind, m.Body = "stream", raw(t, LoginStream{Attempt: "attempt-A", State: "data", Data: raw(t, d)})
+		ex["stream-ephemeral-login-"+name+".json"] = m
+	}
+	for _, state := range []string{"complete", "cancelled", "expired"} {
+		m := msgs[LoginStart]
+		m.Kind, m.Body = "stream", raw(t, LoginStream{Attempt: "attempt-A", State: state})
+		ex["stream-ephemeral-login-"+state+".json"] = m
+	}
+	ex["hello-ephemeral-login-required.json"] = Hello{Version: Version, Binding: registration, Capabilities: allCaps(), Required: []string{LoginCapability}}
+	for name, refusal := range map[string]Refusal{
+		"version":    {Code: "unsupported_operation", Message: "operation is unavailable at the negotiated minor"},
+		"capability": {Code: "unsupported_capability", Message: "operation capability was not negotiated"},
+	} {
+		m := msgs[LoginStart]
+		m.Kind, m.Body = "refusal", raw(t, refusal)
+		ex["refusal-ephemeral-login-"+name+".json"] = m
 	}
 	return ex
 }

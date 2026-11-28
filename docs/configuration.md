@@ -714,7 +714,9 @@ support remains gated by #969.
 
 `login_relay` also controls worker login attempts; there is no additional
 operator key. Main selects the outage's configured, pinned worker transport and
-the affected session's registered agent configuration. The resident runs its
+requires negotiated worker protocol 1.4 and capability `ephemeral_login` before
+probing or starting the login. The legacy `login` capability is insufficient.
+It selects the affected session's registered agent configuration. The resident runs its
 own CLI login and final status command under the worker's OS user, in that
 configuration directory. Main never runs the worker's login locally or copies
 credentials, an account directory or its own environment to the worker.

@@ -18,7 +18,7 @@ func (r *Resident) openLogin(ctx context.Context, p *workerproto.Connection, dat
 	defer r.mu.Unlock()
 	var route workerproto.Message
 	json.Unmarshal(data, &route)
-	reply := workerproto.Message{Kind: "refusal", ID: "invalid", Binding: r.binding, Op: "login_start"}
+	reply := workerproto.Message{Kind: "refusal", ID: "invalid", Binding: r.binding, Op: "ephemeral_login_start"}
 	if workerproto.ValidID(route.ID) {
 		reply.ID = route.ID
 	}
@@ -26,11 +26,11 @@ func (r *Resident) openLogin(ctx context.Context, p *workerproto.Connection, dat
 		reply.Body, _ = json.Marshal(failure("denied", "login attempt is unavailable"))
 		return reply, workerproto.AgentConfig{}, nil
 	}
-	if p == nil || p.Hello().Binding != r.binding || r.closed || !r.ready || r.visibleRoot() != nil {
+	if p == nil || p.Hello().Binding != r.binding || !p.CanLogin() || r.closed || !r.ready || r.visibleRoot() != nil {
 		return deny()
 	}
 	m, err := p.Decode(data, nil)
-	if err != nil || m.Kind != "request" || m.Op != "login_start" {
+	if err != nil || m.Kind != "request" || m.Op != "ephemeral_login_start" {
 		return deny()
 	}
 	var b workerproto.Login
@@ -159,7 +159,7 @@ func (r *Resident) serveLogin(ctx context.Context, c net.Conn, reader *bufio.Rea
 			if err != nil || m.Kind != "request" {
 				return
 			}
-			if m.Op == "login_cancel" {
+			if m.Op == "ephemeral_login_cancel" {
 				var b workerproto.LoginAttempt
 				json.Unmarshal(m.Body, &b)
 				if b.Attempt != attempt.Attempt {
@@ -177,7 +177,7 @@ func (r *Resident) serveLogin(ctx context.Context, c net.Conn, reader *bufio.Rea
 	}()
 	for m := range requests {
 		switch m.Op {
-		case "login_input":
+		case "ephemeral_login_input":
 			var input workerproto.LoginInput
 			json.Unmarshal(m.Body, &input)
 			if input.Attempt != attempt.Attempt {
@@ -189,7 +189,7 @@ func (r *Resident) serveLogin(ctx context.Context, c net.Conn, reader *bufio.Rea
 				}
 				return
 			}
-		case "login_cancel":
+		case "ephemeral_login_cancel":
 			var cancel workerproto.LoginAttempt
 			json.Unmarshal(m.Body, &cancel)
 			if cancel.Attempt != attempt.Attempt {

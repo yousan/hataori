@@ -1,0 +1,1 @@
+{"kind":"request","id":"request-ephemeral_login_start","binding":{"main":"main-A","worker":"worker-A"},"op":"ephemeral_login_start","body":{"agent":"fake","config":"default","attempt":"attempt-A"}}

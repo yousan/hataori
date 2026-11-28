@@ -81,9 +81,13 @@ The guard, login and status helpers record their
 real process arguments; the four observations are included in the marker scan.
 This is disposable fixture evidence, not a real provider login. The negative controls
 in `notes/worker-login/negative-guards.json` record behavioral failures for
-guard removals/reversions. A separately identified persistence instrumentation
+guard removals/reversions. Separately identified persistence instrumentation
 controls write an encoded input frame or an actual device output frame into
 isolated files, or put a fixture marker into observed process arguments.
+The current inventory contains 39 behavioral guard removals/reversions and
+three persistence instrumentations. Seven removals cover the new protocol's
+minor/capability negotiation and refusal, durable-key rejection, typed payload
+validation, input limit and contract check before a configuration probe.
 The scanner checks raw markers and bounded recursive decoding of base64 tokens,
 including base64 of the entire `LoginData` JSON inside a transport frame. The
 three controls prove those forbidden writes/arguments are detected; they are
@@ -116,26 +120,31 @@ interface, including Appendix D. No new operator configuration key is proposed.
 
 ## Remaining blockers
 
-1. Coordinated worker protocol: document and version the new typed ephemeral
-   `LoginData`, choose the next compatible version/capability at integration,
-   and add new golden examples without rewriting released versions. Existing
-   protocol version/golden files are deliberately untouched in this draft.
-   No control operation/event encoding change is proposed.
-2. Disposable real-CLI successful completion/status evidence for device auth
+The narrowly released protocol contract is now worker protocol 1.4, capability
+`ephemeral_login` and operations `ephemeral_login_start`, `ephemeral_login_input`
+and `ephemeral_login_cancel`. Legacy opaque operations are preserved. The
+preflight record in `notes/worker-login/protocol-preflight.json` checks current
+main, matching local/live PR head, sole published protocol ownership and the
+unused version/name before edits. New examples and one appended checksum row
+leave all 1.0–1.3 bytes and SUMS lines unchanged. These are structural wire
+examples, not new provider captures or runtime proofs. The control protocol
+document and encodings remain unchanged.
+
+1. Disposable real-CLI successful completion/status evidence for device auth
    and code-back flows. No real code-back provider adapter is enabled here;
    the missing implementation/capture cannot be replaced by a synthetic flow.
-3. Process containment evidence for the supported CLI: the guard terminates
+2. Process containment evidence for the supported CLI: the guard terminates
    the direct child and descendants still in its group. Descendants that
    independently detach into another session/group are not contained by that
    mechanism. The fixture does not establish that the real CLI never creates
    them. This remains a runtime/containment blocker, not a general claim that
    every possible descendant is terminated.
-4. Fresh independent implementation and authority/credentials/destructive
+3. Fresh independent implementation and authority/credentials/destructive
    reviews of the integrated candidate. Earlier component re-reviews approved
    their documented boundary, not subsequent integration or whole-issue gates.
    Complete integrated authority/nonpersistence evidence must also be accepted;
    the fixture/control inventory alone is not an exhaustive-coverage claim.
-5. Final-head and exact post-merge-main Linux/macOS CI, accepted evidence,
+4. Final-head and exact post-merge-main Linux/macOS CI, accepted evidence,
    merge and issue closure. A passing intermediate CI run meets none of the
    missing runtime or ownership gates.
 
@@ -144,5 +153,8 @@ runner allocation. Intermediate draft static/build checks are development
 feedback. Full final-head Linux/macOS execution is required after the complete
 candidate is ready; draft skips never satisfy that gate and are not rerun.
 
-The four released shared files contain only scoped login changes. Protocol
-version/capability/golden files remain unedited pending separate coordination.
+The released shared files contain only scoped login changes. Only the new 1.4
+golden directory and appended SUMS row are added. Unreleased shared hunks and
+`docs/protocol.md` remain frozen. Shared integration stays #966 then #967 then
+#968; successors integrate only after the prior issue merges and their exact
+handoff review. No other PR's review gate is waived.

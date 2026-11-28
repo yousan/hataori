@@ -45,7 +45,7 @@ func StartLogin(ctx context.Context, binding workerproto.Binding, open func(cont
 			c.Close()
 		}
 	}()
-	if p == nil || p.Hello().Binding != binding {
+	if p == nil || p.Hello().Binding != binding || !p.CanLogin() {
 		return nil, ErrLoginLost
 	}
 	l := &Login{conn: c, reader: bufio.NewReaderSize(c, workerproto.MaxFrame), protocol: p, attempt: operationID(), pending: map[string]bool{}, cancelAck: make(chan struct{})}
@@ -84,7 +84,7 @@ func StartLogin(ctx context.Context, binding workerproto.Binding, open func(cont
 		return nil, ErrLoginLost
 	}
 	body, _ := json.Marshal(workerproto.Login{AgentConfig: key, Attempt: l.attempt})
-	l.request = workerproto.Message{Kind: "request", ID: operationID(), Binding: binding, Op: "login_start", Body: body}
+	l.request = workerproto.Message{Kind: "request", ID: operationID(), Binding: binding, Op: "ephemeral_login_start", Body: body}
 	b, err := workerproto.Encode(l.request)
 	if err != nil {
 		return nil, ErrLoginLost
@@ -101,7 +101,7 @@ func StartLogin(ctx context.Context, binding workerproto.Binding, open func(cont
 		return nil, ErrLoginLost
 	}
 	m, err := p.Decode(data, nil)
-	if err != nil || m.Kind != "reply" || m.ID != l.request.ID || m.Op != "login_start" {
+	if err != nil || m.Kind != "reply" || m.ID != l.request.ID || m.Op != "ephemeral_login_start" {
 		return nil, ErrLoginLost
 	}
 	var started workerproto.LoginAttempt
@@ -126,7 +126,7 @@ func (l *Login) Next() (workerproto.LoginData, error) {
 		if err != nil {
 			return workerproto.LoginData{}, ErrLoginLost
 		}
-		if m.Kind == "reply" && m.Op == "login_input" {
+		if m.Kind == "reply" && m.Op == "ephemeral_login_input" {
 			l.mu.Lock()
 			ok := l.pending[m.ID]
 			delete(l.pending, m.ID)
@@ -138,7 +138,7 @@ func (l *Login) Next() (workerproto.LoginData, error) {
 			}
 			continue
 		}
-		if m.Kind == "reply" && m.Op == "login_cancel" {
+		if m.Kind == "reply" && m.Op == "ephemeral_login_cancel" {
 			l.mu.Lock()
 			var ack workerproto.LoginAttempt
 			json.Unmarshal(m.Body, &ack)
@@ -151,7 +151,7 @@ func (l *Login) Next() (workerproto.LoginData, error) {
 			l.mu.Unlock()
 			return workerproto.LoginData{}, ErrLoginLost
 		}
-		if m.Kind != "stream" || m.Op != "login_start" || m.ID != l.request.ID {
+		if m.Kind != "stream" || m.Op != "ephemeral_login_start" || m.ID != l.request.ID {
 			return workerproto.LoginData{}, ErrLoginLost
 		}
 		var stream workerproto.LoginStream
@@ -191,7 +191,7 @@ func (l *Login) Cancel() error {
 	}
 	l.cancelID = operationID()
 	body, _ := json.Marshal(workerproto.LoginAttempt{Attempt: l.attempt})
-	m := workerproto.Message{Kind: "request", ID: l.cancelID, Binding: l.request.Binding, Op: "login_cancel", Body: body}
+	m := workerproto.Message{Kind: "request", ID: l.cancelID, Binding: l.request.Binding, Op: "ephemeral_login_cancel", Body: body}
 	if b, err := workerproto.Encode(m); err == nil {
 		l.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 		l.conn.Write(b) // partial/failed writes are never retried
@@ -214,7 +214,7 @@ func (l *Login) Code(code string) error {
 		return ErrLoginLost
 	}
 	body, _ := json.Marshal(workerproto.LoginInput{Attempt: l.attempt, Data: []byte(code)})
-	m := workerproto.Message{Kind: "request", ID: operationID(), Binding: l.request.Binding, Op: "login_input", Body: body}
+	m := workerproto.Message{Kind: "request", ID: operationID(), Binding: l.request.Binding, Op: "ephemeral_login_input", Body: body}
 	b, err := workerproto.Encode(m)
 	if err != nil {
 		return ErrLoginLost

@@ -1,0 +1,1 @@
+{"version":"1.4","binding":{"main":"main-A","worker":"worker-A"},"capabilities":["ephemeral_login","health","host","lifecycle","login","placement","receipts","replay","runner","terminal","transfer","workspace"],"required":["ephemeral_login"]}

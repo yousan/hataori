@@ -340,7 +340,11 @@ The rules:
 
 **Worker relay (#966).** Main uses the already configured, pinned worker
 transport and the original outage's machine-agent-configuration. The selected
-configuration name comes from that outage's recorded sessions, never a direct
+transport must negotiate worker protocol 1.4 and capability `ephemeral_login`
+before a configuration probe or login starts. Its `ephemeral_login_*`
+operations are separate from the preserved legacy opaque `login_*` contract;
+they carry no durable key or session target. The selected configuration name
+comes from that outage's recorded sessions, never a direct
 message or worker payload. An explicit code reply must match the channel,
 thread and message of that login or one of its follow-ups; an unknown reply
 never falls back to the sole waiting login. A bare code still requires exactly
