@@ -29,6 +29,27 @@ var (
 // Never include the matching value in failures: it might be a credential.
 func captureLeaks(data string) []string {
 	var found []string
+	var document any
+	if json.Unmarshal([]byte(data), &document) == nil {
+		var checkDomain func(any)
+		checkDomain = func(value any) {
+			switch value := value.(type) {
+			case map[string]any:
+				for key, child := range value {
+					if domain, ok := child.(string); key == "domain" && ok && domain != "" &&
+						!regexp.MustCompile(`^name-[0-9]+$`).MatchString(domain) {
+						found = append(found, "unredacted workspace domain")
+					}
+					checkDomain(child)
+				}
+			case []any:
+				for _, child := range value {
+					checkDomain(child)
+				}
+			}
+		}
+		checkDomain(document)
+	}
 	if tokenShape.MatchString(data) {
 		found = append(found, "token-shaped string")
 	}
@@ -89,6 +110,7 @@ func TestLeakShapes(t *testing.T) {
 		`<https://files.slack.com/files-pri/test|test link label>`,
 		`<https://example.invalid/redacted-url-1|https://files.slack.com/files-pri/test>`,
 		`<https://example.invalid/redacted-url-1?signature=secret|test link label>`,
+		`{"payload":{"team":{"domain":"test-workspace-domain"}}}`,
 	} {
 		if len(captureLeaks(s)) == 0 {
 			t.Error("missed leak shape")
@@ -97,6 +119,7 @@ func TestLeakShapes(t *testing.T) {
 	for _, s := range []string{
 		`U0000000001 Ev0000000002 https://example.invalid/redacted-url-1 user1@example.com`,
 		`<https://example.invalid/redacted-url-1|test link label>`,
+		`{"payload":{"team":{"domain":"name-1"}}}`,
 	} {
 		if len(captureLeaks(s)) != 0 {
 			t.Fatal("rejected placeholders")

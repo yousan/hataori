@@ -1,0 +1,19 @@
+{
+  "sequence": 5,
+  "elapsed_seconds": 1.180758,
+  "source": "socket-receive",
+  "ack_policy": "immediate",
+  "received_seconds": 1.180699,
+  "body": {
+    "type": "hello",
+    "num_connections": 1,
+    "debug_info": {
+      "host": "opaque-1",
+      "build_number": 32,
+      "approximate_connection_time": 18060
+    },
+    "connection_info": {
+      "app_id": "A0000000001"
+    }
+  }
+}

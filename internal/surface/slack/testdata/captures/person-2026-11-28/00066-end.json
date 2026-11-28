@@ -1,0 +1,12 @@
+{
+  "sequence": 66,
+  "elapsed_seconds": 515.355731,
+  "source": "run-end",
+  "socket_failure": null,
+  "created_bot_messages": [
+    {
+      "channel": "C0000000005",
+      "ts": "2795873729.527729"
+    }
+  ]
+}

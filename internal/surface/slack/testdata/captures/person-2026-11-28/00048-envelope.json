@@ -1,0 +1,62 @@
+{
+  "sequence": 48,
+  "elapsed_seconds": 255.294188,
+  "source": "socket-receive",
+  "ack_policy": "immediate",
+  "received_seconds": 255.294106,
+  "body": {
+    "envelope_id": "00000000-0000-0000-0000-000000000019",
+    "payload": {
+      "token": "redacted-credential",
+      "team_id": "T0000000022",
+      "context_team_id": "T0000000022",
+      "context_enterprise_id": null,
+      "api_app_id": "A0000000001",
+      "event": {
+        "type": "message",
+        "subtype": "bot_message",
+        "text": "[hataori test] own-channel",
+        "ts": "2795873982.096979",
+        "bot_id": "B0000000003",
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "opaque-15",
+            "elements": [
+              {
+                "type": "rich_text_section",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "[hataori test] own-channel"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "channel": "C0000000005",
+        "event_ts": "2795873982.096979",
+        "channel_type": "group"
+      },
+      "type": "event_callback",
+      "event_id": "Ev0000000021",
+      "event_time": 2795873982,
+      "authorizations": [
+        {
+          "enterprise_id": null,
+          "team_id": "T0000000022",
+          "user_id": "U0000000024",
+          "is_bot": true,
+          "is_enterprise_install": false
+        }
+      ],
+      "is_ext_shared_channel": false,
+      "event_context": "opaque-3"
+    },
+    "type": "events_api",
+    "accepts_response_payload": false,
+    "retry_attempt": 0,
+    "retry_reason": ""
+  }
+}

@@ -58,12 +58,12 @@ minutes, configurable with `--step-timeout`. Observe only its newly posted root.
 
 The scrubber maps IDs consistently per run into `<type>0000000001` through
 `<type>0000000999`, replaces UUIDs, opaque event contexts and both directions of
-pagination cursors, names, emails, all URLs and home paths. Message timestamps are
+pagination cursors, names, workspace domains, emails, all URLs and home paths. Message timestamps are
 shifted by one common integer offset per run, preserving their order and deltas.
 Runs have independent mappings; never compare their placeholder IDs/timestamps.
 Link markup and controlled test text are preserved, apart from URL/identity
 substitution. Before git, review the output and run the focused capture tests.
-The guard rejects token shapes, non-placeholder IDs, URLs, emails and home paths;
+The guard rejects token shapes, non-placeholder IDs, URLs, workspace domains, emails and home paths;
 fixture-derived tests check routing, embedded edit times and cursor correspondence.
 
 ## Scopes actually exercised
@@ -77,10 +77,10 @@ fixture-derived tests check routing, embedded edit times and cursor corresponden
 | Private-channel history / replies / message events | `groups:history`, `message.groups` subscription |
 | Metadata reads | `metadata.message:read`, `include_all_metadata=true` |
 | Open operator DM | `im:write` |
-| Future operator DM events | `im:history`, `message.im` subscription |
+| Operator DM events | `im:history`, `message.im` subscription |
 | External upload URL / completion | `files:write`; upload bytes use its temporary bearer URL |
 | Incoming webhook posts | Each app's `incoming-webhook`, bound by the operator to the test channel |
-| Future button events | Interactivity enabled, Socket Mode |
+| Button events | Interactivity enabled, Socket Mode |
 
 `channels:history`, `channels:read`, `groups:read`, `im:read` and `users:read` are
 present in the provisioned manifest but no public-channel read, channel lookup,
@@ -92,6 +92,11 @@ permission changes are outside this recorder.
 Every JSON is a real recording with substitutions, not an invented API example.
 Each directory has `00001-run.json` (date, transport version, manifest) and a final
 `*-end.json` reporting whether Socket Mode failed. No disconnect envelope arrived.
+There are **303 records across five runs**, including 66 operator-supplied
+scrubbed person-run records. Those 66 were audited again and copied byte for byte;
+their raw recordings, UI artifacts and credentials were not accessed for this
+integration. The candidate's workspace domain was already a name placeholder;
+the scrubber and leak guard now also handle that field explicitly.
 
 | Directory / files | Observed scenario |
 |---|---|
@@ -105,6 +110,11 @@ Each directory has `00001-run.json` (date, transport version, manifest) and a fi
 | `captures/formats-2026-11-28/` | Text, markdown+fallback, metadata and buttons in channel and thread; paginated reads |
 | `captures/webhooks-2026-11-28/` | Web API root, second-app channel/thread webhook posts, own-app webhook post |
 | `captures/ack-2026-11-28/` | Late and missing `events_api` ACKs, retries and actual outgoing ACK times |
+| `captures/person-2026-11-28/00009-envelope`, `00012-envelope`, `00015-envelope`, `00018-envelope` | Person text/URL/self-mention/symbols/code, generated reply, edit, delete |
+| `person-2026-11-28/00023-envelope`, `00028-envelope` | Thread broadcast with root and operator's bot DM |
+| `person-2026-11-28/00031-envelope`, `00034-envelope`, `00037-envelope`, `00051-envelope`, `00052-ack`, `00053-ack` | Two distinct presses and delayed interactive redelivery/ACKs |
+| `person-2026-11-28/00039-webhook-*` through `00050-step` | Both apps' webhook posts and matching events |
+| `person-2026-11-28/00054-envelope` through `00066-end` | Late/missing event ACK windows, retries and final `socket_failure=null` |
 
 ## Observations and open questions
 
@@ -114,8 +124,8 @@ Each directory has `00001-run.json` (date, transport version, manifest) and a fi
   from the Web API bot's. Therefore one Web API bot ID does not identify every
   own-app post, and absence of `app_id` does not imply a person. This needs to be
   accounted for in the later driver's identity design; no new allow policy is
-  implemented here. A real person and a separate bot account have not been
-  captured for comparison yet.
+  implemented here. The person run has `user` without `subtype`, `bot_id` or
+  `app_id`; a separate other-app bot account has not been captured for comparison.
 - Posting a `markdown` block and `text` returned the notification fallback in
   `text`; `blocks` held a converted `rich_text` block with the rendered markdown
   content. The original `markdown` block type was not echoed in that response.
@@ -138,14 +148,46 @@ Each directory has `00001-run.json` (date, transport version, manifest) and a fi
   `retry_reason=timeout`. With no ACK, retries arrived at **3.245 s** and
   **66.548 s**. The observation window was 90 seconds each. This supports prompt
   event ACKs, but **does not verify a three-second interactive Socket Mode
-  deadline or what a person sees**. Button delay and UI results remain unverified.
+  deadline or what a person sees**. The person run below adds one delayed-button
+  sample, not proof of that deadline.
+
+## Operator person run
+
+The supplied scrubbed candidate has 66 sequential records, **14 matched steps**
+and final `socket_failure=null`. The operator reports collector exit 0 and the
+same raw/scrubbed record count; no raw or receipt was opened to verify those
+external reports. Fixture-derived tests check every received envelope against
+the existing recorder boundary, message relationships, distinct clicks, delayed
+ACK correspondence and the two event observation windows of at least 90 seconds.
+
+The person's message `text` wraps its URL in `<...>`, the self-mention in
+`<@placeholder-user-id>`, and represents the symbols as `&amp; &lt; &gt;`, followed
+by a fenced code block. Its `rich_text` block has a link element, a user element,
+literal `& < >` text and a `rich_text_preformatted` element. The generated reply's
+edit keeps `message.ts` and includes `previous_message`; its deletion carries
+`deleted_ts` and the edited `previous_message`. The broadcast carries the same
+`thread_ts` and a `root` object. The DM is `channel_type=im` from the same operator.
+
+The two immediate button presses have different `action_ts` values. The delayed
+button is delivered again **2.963419 s** after its first receive, with the **same
+`envelope_id` and `action_ts`**. Unlike the event retry samples, those interactive
+envelopes have no `retry_attempt` or `retry_reason`. The ACK records are
+**5.001512 s** and **7.964642 s** after the first receive (using `received_seconds`,
+not the slightly later record-write time). These timings are checked against the
+scrubbed fixture; they are one run's observations, not future timing guarantees.
+
+Separately, the operator reports that the delayed button was disabled at about
+1.17 s and enabled at about 4.75 s and 7.85 s, with no error observed in the scoped
+scenario root. Page-wide notices were not captured. **No UI artifact was imported
+or independently checked**, and the UI observation clock is not established as
+the wire clock. This limited report does not establish a three-second UI deadline
+or show that no error appeared elsewhere. That design fact stays **unverified**.
 
 ## Still missing (do not mark #341 complete)
 
-- Person channel text with URL, self-mention, `&`, `<`, `>` and a code block;
-  reply/edit/delete, thread broadcast, DM, two button clicks, delayed button ACK
-  and the operator's UI observation. The `person` sequence is ready for the
-  operator to run at an agreed time; never collect another person's conversations.
+- Full interactive UI deadline evidence: one delayed-button wire sample and
+  scoped operator-reported UI observations are available; page-wide notices,
+  independently checked UI artifacts and a general deadline conclusion are not.
 - Public-channel captures: no public test channel is provisioned. Do not substitute
   an existing channel. Separate other-app bot-account evidence is also missing.
 - `ratelimited` / `Retry-After`: the bounded update run hit no limit. No fabricated

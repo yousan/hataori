@@ -1,6 +1,7 @@
 """Privacy boundaries checked against real, already-scrubbed wire recordings."""
 
 import copy
+from decimal import Decimal
 import json
 from pathlib import Path
 import tempfile
@@ -17,6 +18,85 @@ def recordings(scenario):
 
 
 class CaptureTests(unittest.TestCase):
+    def test_person_steps_and_message_shapes(self):
+        docs = recordings("person-2026-11-28")
+        self.assertEqual([d["sequence"] for d in docs], list(range(1, 67)))
+        steps = [d for d in docs if d.get("source") == "operator-step"]
+        self.assertEqual(len(steps), 14)
+        self.assertIsNone(docs[-1]["socket_failure"])
+        envelopes = {d["body"]["envelope_id"]: d["body"] for d in docs
+                     if d.get("source") == "socket-receive" and d["body"].get("envelope_id")}
+        matched = [envelopes[d["envelope_id"]] for d in steps]
+        first = matched[0]["payload"]["event"]
+        self.assertNotIn("subtype", first)
+        for key in ("bot_id", "app_id"):
+            self.assertNotIn(key, first)
+        self.assertIn("<@"+first["user"]+">", first["text"])
+        self.assertIn("<https://example.invalid/redacted-url-", first["text"])
+        self.assertIn("&amp; &lt; &gt;", first["text"])
+        self.assertIn("```code```", first["text"])
+        reply, edit, deleted, broadcast, dm = [e["payload"]["event"] for e in matched[1:6]]
+        self.assertEqual(edit["message"]["ts"], reply["ts"])
+        self.assertEqual(edit["previous_message"]["text"], reply["text"])
+        self.assertEqual(deleted["deleted_ts"], reply["ts"])
+        self.assertEqual(deleted["previous_message"]["text"], edit["message"]["text"])
+        self.assertEqual(broadcast["subtype"], "thread_broadcast")
+        self.assertEqual(broadcast["thread_ts"], reply["thread_ts"])
+        self.assertEqual(broadcast["root"]["ts"], reply["thread_ts"])
+        self.assertEqual(dm["channel_type"], "im")
+        self.assertEqual(dm["user"], first["user"])
+        bot = next(d["body"] for d in docs if d.get("request", {}).get("method") == "auth.test")
+        root = next(d["body"] for d in docs if d.get("request", {}).get("method") == "chat.postMessage")
+        r = capture.Recorder.__new__(capture.Recorder)
+        r.channel, r.dm, r.operator = root["channel"], dm["channel"], first["user"]
+        r.start = float(root["ts"])-1
+        r.cfg = {"SLACK_TEAM_ID": bot["team_id"], "SLACK_BOT_USER_ID": bot["user_id"],
+                 "SLACK_APP_ID": root["message"]["app_id"], "SLACK_OTHER_APP_ID": "A0000000999"}
+        r.expected_webhooks = {"[hataori test] "+s for s in ("other-channel", "other-thread", "own-channel")}
+        for d in docs:
+            if d.get("source") == "socket-receive":
+                self.assertTrue(r.allowed(d["body"]), d["sequence"])
+        clicks = [e["payload"]["actions"][0] for e in matched[6:9]]
+        self.assertEqual([a["action_id"] for a in clicks], ["capture_twice", "capture_twice", "capture_late"])
+        self.assertNotEqual(clicks[0]["action_ts"], clicks[1]["action_ts"])
+        self.assertGreaterEqual(Decimal(reply["ts"]), Decimal(reply["thread_ts"]))
+        # Each 90-second event observation window finishes before advancing/end.
+        for step, end in [(steps[-2], steps[-1]), (steps[-1], docs[-1])]:
+            self.assertGreaterEqual(end["elapsed_seconds"]-step["elapsed_seconds"], 90)
+
+    def test_delayed_interaction_redelivery(self):
+        docs = recordings("person-2026-11-28")
+        late = [d for d in docs if d.get("source") == "socket-receive"
+                and d["body"].get("type") == "interactive"
+                and d["body"]["payload"]["actions"][0]["action_id"] == "capture_late"]
+        self.assertEqual(len(late), 2)
+        first, second = late
+        self.assertEqual(first["body"]["envelope_id"], second["body"]["envelope_id"])
+        self.assertEqual(first["body"]["payload"]["actions"][0]["action_ts"],
+                         second["body"]["payload"]["actions"][0]["action_ts"])
+        acks = [d for d in docs if d.get("source") == "socket-send"
+                and d["envelope_id"] == first["body"]["envelope_id"]]
+        start = first["received_seconds"]
+        self.assertAlmostEqual(second["received_seconds"]-start, 2.963419, places=5)
+        self.assertEqual(len(acks), 2)
+        for ack, expected in zip(acks, (5.001512, 7.964642)):
+            self.assertAlmostEqual(ack["elapsed_seconds"]-start, expected, places=5)
+
+    def test_scrub_interactive_workspace_domain(self):
+        envelope = copy.deepcopy(next(d for d in recordings("person-2026-11-28")
+                                     if d.get("source") == "socket-receive"
+                                     and d["body"].get("type") == "interactive"))
+        # Test-only scalar substitution in a captured interactive payload.
+        envelope["body"]["payload"]["team"]["domain"] = "test-workspace-domain"
+        with tempfile.TemporaryDirectory() as tmp:
+            source, out = Path(tmp)/"source", Path(tmp)/"out"
+            source.mkdir()
+            (source/"event.json").write_text(json.dumps(envelope))
+            scrub.scrub(source, out)
+            result = json.loads((out/"event.json").read_text())
+            self.assertRegex(result["body"]["payload"]["team"]["domain"], r"^name-[0-9]+$")
+            self.assertNotIn("test-workspace-domain", json.dumps(result))
+
     def test_event_boundary(self):
         docs = recordings("bot-2026-11-28")
         envelope = next(d["body"] for d in docs if d.get("source") == "socket-receive"

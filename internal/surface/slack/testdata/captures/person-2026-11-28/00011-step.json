@@ -1,0 +1,7 @@
+{
+  "sequence": 11,
+  "elapsed_seconds": 72.54167,
+  "source": "operator-step",
+  "step": "1: channel text: [hataori test] URL https://example.invalid/redacted-url-5 mention yourself & < > ```code```",
+  "envelope_id": "00000000-0000-0000-0000-000000000002"
+}

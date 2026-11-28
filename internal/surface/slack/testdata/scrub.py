@@ -21,7 +21,7 @@ HOME = re.compile(r"(?:/home/|/Users/)[^\s<>\"\\]+")
 TIMESTAMP = re.compile(r"(?<![0-9])[0-9]{10}\.[0-9]{6}(?![0-9])")
 NAMES = {"name", "username", "real_name", "display_name", "team", "user",
          "first_name", "last_name", "real_name_normalized", "display_name_normalized",
-         "channel_name"}
+         "channel_name", "domain"}
 OPAQUE = {"block_id", "trigger_id", "cursor", "next_cursor", "event_context", "host"}
 
 

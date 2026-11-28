@@ -1,0 +1,103 @@
+{
+  "sequence": 6,
+  "elapsed_seconds": 2.559698,
+  "source": "http",
+  "request_started_seconds": 2.281515,
+  "request": {
+    "method": "chat.postMessage",
+    "body": {
+      "channel": "C0000000005",
+      "text": "[hataori test] operator scenario root; use its thread",
+      "unfurl_links": false,
+      "unfurl_media": false,
+      "blocks": [
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "capture_twice",
+              "text": {
+                "type": "plain_text",
+                "text": "Press twice"
+              },
+              "value": "name-3"
+            },
+            {
+              "type": "button",
+              "action_id": "capture_late",
+              "text": {
+                "type": "plain_text",
+                "text": "ACK after five seconds"
+              },
+              "value": "name-3"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "status": 200,
+  "headers": {
+    "x-slack-req-id": "2433cca6935356a7f8b55af0c4697c64",
+    "content-type": "application/json; charset=utf-8",
+    "x-accepted-oauth-scopes": "chat:write",
+    "x-oauth-scopes": "channels:history,channels:read,groups:history,groups:read,im:history,im:read,metadata.message:read,users:read,chat:write,files:write,im:write,reactions:write,incoming-webhook"
+  },
+  "body": {
+    "ok": true,
+    "channel": "C0000000005",
+    "ts": "2795873729.527729",
+    "message": {
+      "user": "U0000000024",
+      "type": "message",
+      "ts": "2795873729.527729",
+      "bot_id": "B0000000002",
+      "app_id": "A0000000001",
+      "text": "[hataori test] operator scenario root; use its thread",
+      "team": "T0000000022",
+      "bot_profile": {
+        "id": "B0000000002",
+        "deleted": false,
+        "name": "name-3",
+        "updated": 2795871695,
+        "app_id": "A0000000001",
+        "user_id": "U0000000024",
+        "icons": {
+          "image_36": "https://example.invalid/redacted-url-2",
+          "image_48": "https://example.invalid/redacted-url-3",
+          "image_72": "https://example.invalid/redacted-url-4"
+        },
+        "team_id": "T0000000022"
+      },
+      "blocks": [
+        {
+          "type": "actions",
+          "block_id": "opaque-2",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "capture_twice",
+              "text": {
+                "type": "plain_text",
+                "text": "Press twice",
+                "emoji": true
+              },
+              "value": "name-3"
+            },
+            {
+              "type": "button",
+              "action_id": "capture_late",
+              "text": {
+                "type": "plain_text",
+                "text": "ACK after five seconds",
+                "emoji": true
+              },
+              "value": "name-3"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

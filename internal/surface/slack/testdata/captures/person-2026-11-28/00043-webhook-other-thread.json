@@ -1,0 +1,18 @@
+{
+  "sequence": 43,
+  "elapsed_seconds": 254.695009,
+  "source": "http",
+  "request_started_seconds": 254.365565,
+  "request": {
+    "method": "incoming-webhook",
+    "body": {
+      "text": "[hataori test] other-thread",
+      "thread_ts": "2795873729.527729"
+    }
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "text/html"
+  },
+  "body": "ok"
+}

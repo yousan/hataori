@@ -1,0 +1,106 @@
+{
+  "sequence": 51,
+  "elapsed_seconds": 256.830884,
+  "source": "socket-receive",
+  "ack_policy": "late",
+  "received_seconds": 256.830805,
+  "body": {
+    "envelope_id": "00000000-0000-0000-0000-000000000016",
+    "payload": {
+      "type": "block_actions",
+      "user": {
+        "id": "U0000000023",
+        "username": "name-4",
+        "name": "name-4",
+        "team_id": "T0000000022"
+      },
+      "api_app_id": "A0000000001",
+      "token": "redacted-credential",
+      "container": {
+        "type": "message",
+        "message_ts": "2795873729.527729",
+        "channel_id": "C0000000005",
+        "is_ephemeral": false,
+        "thread_ts": "2795873729.527729"
+      },
+      "trigger_id": "opaque-12",
+      "team": {
+        "id": "T0000000022",
+        "domain": "name-1"
+      },
+      "enterprise": null,
+      "is_enterprise_install": false,
+      "channel": {
+        "id": "C0000000005",
+        "name": "name-5"
+      },
+      "message": {
+        "user": "U0000000024",
+        "type": "message",
+        "ts": "2795873729.527729",
+        "bot_id": "B0000000002",
+        "app_id": "A0000000001",
+        "text": "[hataori test] operator scenario root; use its thread",
+        "team": "T0000000022",
+        "thread_ts": "2795873729.527729",
+        "reply_count": 1,
+        "reply_users_count": 1,
+        "latest_reply": "2795873909.267269",
+        "reply_users": [
+          "U0000000023"
+        ],
+        "is_locked": false,
+        "subscribed": true,
+        "last_read": "2795873909.267269",
+        "blocks": [
+          {
+            "type": "actions",
+            "block_id": "opaque-2",
+            "elements": [
+              {
+                "type": "button",
+                "action_id": "capture_twice",
+                "text": {
+                  "type": "plain_text",
+                  "text": "Press twice",
+                  "emoji": true
+                },
+                "value": "name-3"
+              },
+              {
+                "type": "button",
+                "action_id": "capture_late",
+                "text": {
+                  "type": "plain_text",
+                  "text": "ACK after five seconds",
+                  "emoji": true
+                },
+                "value": "name-3"
+              }
+            ]
+          }
+        ]
+      },
+      "state": {
+        "values": {}
+      },
+      "response_url": "redacted-credential",
+      "actions": [
+        {
+          "type": "button",
+          "block_id": "opaque-2",
+          "action_id": "capture_late",
+          "text": {
+            "type": "plain_text",
+            "text": "ACK after five seconds",
+            "emoji": true
+          },
+          "value": "name-3",
+          "action_ts": "2795873980.333897"
+        }
+      ]
+    },
+    "type": "interactive",
+    "accepts_response_payload": false
+  }
+}
