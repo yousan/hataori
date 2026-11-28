@@ -223,6 +223,7 @@ var tools = []tool{
 			"old": map[string]any{"type": "string", "description": "the passage to replace, exactly as it is in the file, long enough to be there only once"},
 			"new": map[string]any{"type": "string", "description": "what stands there instead; empty to take the passage out"},
 		}, "path", "old", "new")},
+	workTool,
 }
 
 // Serve answers MCP requests read from r, one JSON-RPC message per line,
@@ -330,6 +331,9 @@ func (m *MCP) connect() (control.API, error) {
 // call runs one tool and returns its answer, or an error whose text names
 // the reason for the model.
 func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (string, error) {
+	if name == ToolWork {
+		return m.work(ctx, raw)
+	}
 	var a struct {
 		Number  *int64 `json:"number"`
 		Text    string `json:"text"`

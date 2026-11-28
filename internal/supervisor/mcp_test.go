@@ -118,14 +118,19 @@ func TestClaudeCodeToolsList(t *testing.T) {
 				t.Fatalf("the instructions changed since the capture:\n%v\n%v", got, was)
 			}
 		case "tools/list":
-			current := []string{ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolIssues, ToolIssue, ToolPulls, ToolPull, ToolChecks, ToolDeployed, ToolRemind, ToolCancelRemind, ToolFiles, ToolFile, ToolWrite, ToolEdit}
+			current := []string{ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolIssues, ToolIssue, ToolPulls, ToolPull, ToolChecks, ToolDeployed, ToolRemind, ToolCancelRemind, ToolFiles, ToolFile, ToolWrite, ToolEdit, ToolWork}
 			if names := toolNames(t, r["result"]); !slices.Equal(names, current) {
 				t.Fatalf("tools/list gives %v, want the current tools %v", names, current)
 			}
 			// Keep the external capture immutable. Placement adds one optional
 			// property; research adds an explicit capability qualification. All
 			// other captured fields still match, including the original wording.
+			var capturedTools []any
 			for _, tool := range r["result"].(map[string]any)["tools"].([]any) {
+				if tool.(map[string]any)["name"] == ToolWork {
+					continue // additive tool; preserve the external capture
+				}
+				capturedTools = append(capturedTools, tool)
 				x := tool.(map[string]any)
 				if x["name"] == ToolStart {
 					props := x["inputSchema"].(map[string]any)["properties"].(map[string]any)
@@ -142,6 +147,7 @@ func TestClaudeCodeToolsList(t *testing.T) {
 					research["description"] = strings.TrimSuffix(description, researchCapabilityNote)
 				}
 			}
+			r["result"].(map[string]any)["tools"] = capturedTools
 			a, _ := json.Marshal(r["result"])
 			b, _ := json.Marshal(want[string(id)]["result"])
 			if !bytes.Equal(a, b) {
@@ -166,6 +172,9 @@ func TestClaudeCodeToolsList(t *testing.T) {
 	}
 	var prefixed []string
 	for _, x := range tools {
+		if x.Name == ToolWork {
+			continue // not present in the historical capture
+		}
 		prefixed = append(prefixed, "mcp__hataori__"+x.Name)
 	}
 	slices.Sort(prefixed)

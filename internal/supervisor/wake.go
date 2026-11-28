@@ -1171,6 +1171,7 @@ func (r *waking) prepare(ctx context.Context) (*wake, bool, error) {
 			w.files = changes
 		}
 	}
+	w.text += r.w.workContext(ctx, r.sv)
 	w.text += OpenReminders(open)
 	if r.w.Budget != nil {
 		u, err := r.w.Budget.Used(ctx)
