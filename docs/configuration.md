@@ -25,15 +25,18 @@ One instance is one directory, its root. hataori reads and writes only under it.
                       the dashboard's session key and passkeys
   workspaces/         created by hataori: one clone per thread
   confined/           created by hataori: one directory per scope with a supervisor
-  mirrors/            created by hataori: one bare mirror per repository
+  mirrors/            created by hataori: bare mirrors and retained recovery generations
   trash/              created by hataori: removed workspaces, kept for the retention
 ```
 
 - The root is given by `--root DIR`, or by the environment variable `HATAORI_ROOT` when `--root` is not given. Every command except `version`, `host` and `hook` needs one.
 - `hataori run` creates `state/`, `workspaces/` and `mirrors/` (mode 0700) if they are missing, and holds a lock in `state/`. A second daemon on the same root refuses to start.
+
 - A supervisor's thread (`scopes[].supervisor`) has no clone: its working directory is its scope's directory in `confined/`, outside `workspaces/`, which every supervisor thread of the scope works in, one after another. A scope's first supervisor thread gets a new, empty one, named from the scope's key: `scope-<key>` for a key of lowercase letters, digits, `-` and `_`, `scopex-<the key in hex>` for any other, and `scopeh-<its SHA-256 in hex>` for a key over 100 bytes. A scope whose supervisor thread existed before hataori kept a directory per scope keeps that thread's directory, `confined/<number>/`, with everything in it. hataori makes the directory empty only when it makes it; one that is there is used as it is, never emptied, moved or written to by hataori. Nothing in hataori removes it, `hataori remove` of any of the scope's supervisor threads included: the removal is refused.
 - A thread's working directory is `workspaces/<number>/`, by the thread's number. A thread started before thread numbers keeps the directory it was made in, `workspaces/<client>/<scope>/<thread>/`; hataori reads each thread's directory from its database and never moves one.
 - Two instances with different roots on one host are independent. Give each its own config and its own bot; do not share or link one instance's `config/` into another.
+
+A mirror blocked by a Git lock is recovered into a new generation without deleting the lock or moving the old mirror. Previous generations and completed generations left by an interrupted publication are kept indefinitely at their original paths; retained objects may exist only there. This can increase storage use. There is no automatic generation cleanup. See [the mirror recovery design](design/overview.md#63-workspaces-and-mirrors).
 
 ## The config file
 

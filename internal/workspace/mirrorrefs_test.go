@@ -342,7 +342,9 @@ func TestMirrorDropsNothingItCannotKeep(t *testing.T) {
 			x.deleteUpstream("refs/heads/gone", "refs/tags/gone")
 			x.push("main", "refs/heads/moved")
 			added := x.push("main", "refs/heads/added")
-			x.make()
+			// The in-place updater must remain conservative if a lock appears
+			// after the maker's preflight; generation recovery is tested separately.
+			mirrorRepo{dir: x.mirror, env: x.m.gitEnv()}.update(context.Background(), "file://"+x.bare)
 			if got := x.refs("refs/heads/gone", "refs/heads/moved", "refs/tags"); !slices.Equal(got, old) {
 				t.Fatalf("dropped: %v, want %v", got, old)
 			}
@@ -379,7 +381,8 @@ func TestMirrorKeepsByAnotherName(t *testing.T) {
 			block(x, keptRefs+gone)
 			block(x, fetchedRefs+amended)
 			had := x.refs(ownRefs)
-			x.make()
+			// Exercise a lock encountered during an in-place update.
+			mirrorRepo{dir: x.mirror, env: x.m.gitEnv()}.update(context.Background(), "file://"+x.bare)
 			if name == "of another object" {
 				for _, l := range had {
 					if strings.Contains(l, keptRefs) && !slices.Contains(x.refs(ownRefs), l) {
@@ -412,6 +415,7 @@ func TestMirrorPackedRefsLocked(t *testing.T) {
 	for i := range 20 {
 		x.git(x.mirror, "update-ref", fmt.Sprint("refs/heads/many", i), "main")
 	}
+	before := x.refs("refs/")
 	lock := filepath.Join(x.mirror, "packed-refs.lock")
 	if err := os.WriteFile(lock, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -421,11 +425,23 @@ func TestMirrorPackedRefsLocked(t *testing.T) {
 	if d := time.Since(start); d > 20*time.Second {
 		t.Fatal(d)
 	}
-	os.Remove(lock)
-	x.wantHeld(ids...)
+	if got := x.refs("refs/"); !slices.Equal(got, before) {
+		t.Fatalf("recovery changed original refs: %v, want %v", got, before)
+	}
+	for _, id := range ids {
+		x.git(x.mirror, "cat-file", "-e", id)
+	}
+	old := x.mirror
+	x.mirror = selectedMirror(t, x)
+	if x.mirror == old {
+		t.Fatal("locked mirror was not recovered")
+	}
+	x.wantSame()
+	if _, err := os.Stat(lock); err != nil {
+		t.Fatal("old lock was removed:", err)
+	}
 	x.make()
 	x.wantSame()
-	x.wantHeld(ids...)
 }
 
 // Upstream moves on during an update. When that is after what the mirror
@@ -961,7 +977,8 @@ func TestMirrorBranchCannotBeMoved(t *testing.T) {
 	if err := os.WriteFile(lock, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	x.make()
+	// Test a lock that arrives after generation preflight, during update.
+	mirrorRepo{dir: x.mirror, env: x.m.gitEnv()}.update(context.Background(), "file://"+x.bare)
 	if got := x.refs("refs/heads/merged"); got != nil {
 		t.Fatalf("still there: %v", got)
 	}

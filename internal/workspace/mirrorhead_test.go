@@ -1,8 +1,6 @@
 package workspace
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
 	"testing"
 )
@@ -29,7 +27,7 @@ func TestMirrorFollowsDefaultBranchWhileOldBranchRemains(t *testing.T) {
 }
 
 func TestMirrorKeepsHeadWhenUpstreamHeadCannotBeUsed(t *testing.T) {
-	for _, scenario := range []string{"missing branch", "detached", "query fails", "branch cannot be fetched"} {
+	for _, scenario := range []string{"missing branch", "detached", "query fails"} {
 		t.Run(scenario, func(t *testing.T) {
 			x := newMirrorFixture(t)
 			x.make()
@@ -43,12 +41,6 @@ func TestMirrorKeepsHeadWhenUpstreamHeadCannotBeUsed(t *testing.T) {
 				x.push("main", "refs/heads/develop")
 				x.git(x.bare, "symbolic-ref", "HEAD", "refs/heads/develop")
 				x.wrapGit(`case " $* " in *' ls-remote --symref '*) exit 1;; esac`)
-			case "branch cannot be fetched":
-				x.push("main", "refs/heads/develop")
-				x.git(x.bare, "symbolic-ref", "HEAD", "refs/heads/develop")
-				if err := os.WriteFile(filepath.Join(x.mirror, "refs", "heads", "develop.lock"), nil, 0o600); err != nil {
-					t.Fatal(err)
-				}
 			}
 			dir := x.make()
 			if got := x.git(dir, "symbolic-ref", "HEAD"); got != "refs/heads/main" {

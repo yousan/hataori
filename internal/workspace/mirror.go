@@ -92,7 +92,12 @@ func (m Maker) mirror(ctx context.Context, repo string) (string, func()) {
 		}
 	}
 	unlock := func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN); _ = lock.Close() }
-	mirror := filepath.Join(m.Root, "mirrors", key+".git")
+	mirrors := filepath.Join(m.Root, "mirrors")
+	mirror, err := selectedMirrorPath(state, mirrors, key)
+	if err != nil {
+		unlock()
+		return fallback()
+	}
 	run := func(args ...string) error {
 		cmd := gitCommand(bounded, args...)
 		cmd.Env = m.gitEnv()
@@ -112,7 +117,18 @@ func (m Maker) mirror(ctx context.Context, repo string) (string, func()) {
 			}
 		}
 	} else if usable() {
-		mirrorRepo{dir: mirror, env: m.gitEnv(), lock: lock}.update(bounded, repo)
+		// A lock can belong to a live manual Git that never took our flock.
+		// Recover elsewhere; never remove its lock or move its directory.
+		locked, err := mirrorLocked(bounded, mirror)
+		if err == nil && !locked {
+			mirrorRepo{dir: mirror, env: m.gitEnv(), lock: lock}.update(bounded, repo)
+			locked, err = mirrorLocked(bounded, mirror) // an update killed at its deadline
+		}
+		if err == nil && locked {
+			if next, err := m.recoverMirror(bounded, repo, state, mirrors, key, lock); err == nil {
+				mirror = next
+			}
+		}
 	}
 	// The fetch deadline may have expired. Inspect locally using the caller's context.
 	cmd := gitCommand(ctx, "--git-dir", mirror, "rev-parse", "--is-bare-repository")
