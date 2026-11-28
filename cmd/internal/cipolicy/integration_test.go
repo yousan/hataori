@@ -626,3 +626,63 @@ func TestOwnerConcurrentDeadlineRenewalAndClaimCAS(t *testing.T) {
 		t.Fatal("race changed identity or sent", current, seam.posts)
 	}
 }
+
+func TestOwnerRoutingOffReconcilesOldWritesWithoutPermission(t *testing.T) {
+	for _, status := range []string{"confirmed", "uncertain"} {
+		t.Run(status, func(t *testing.T) {
+			c, f, seam := integrationFixture(t)
+			ctx := context.Background()
+			if status == "uncertain" {
+				seam.mode = "lost"
+			}
+			out, err := c.Execute(ctx, "integrate", 1107, 0)
+			if status == "uncertain" {
+				if !errors.Is(err, ErrAmbiguous) {
+					t.Fatal(err)
+				}
+			} else if err != nil {
+				t.Fatal(out, err)
+			}
+			before, err := c.store.Read(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			i, err := integrationIntentAt(ctx, c.store.db, 1107)
+			if err != nil || i.Status != status {
+				t.Fatal(i, err)
+			}
+			// Model a newly loaded root with the same verified key/control/authority
+			// identity and routing disabled; never mutate an in-flight invocation.
+			disabled := *f.adapter
+			disabled.root = f.adapter.root
+			disabled.root.RoutingEnabled = false
+			c = NewCoordinator(&disabled, c.store)
+			out, err = c.Execute(ctx, "integrate", 1107, 0)
+			if err != nil || out.Route == nil || out.Route.Route != "main" || !out.Route.Integrated || out.Route.Allowed || out.Route.DoneAllowed || out.Route.ReleaseAllowed || out.Route.UpgradeAllowed {
+				t.Fatal("routing-off acknowledgement granted permission", out, err)
+			}
+			current, err := integrationIntentAt(ctx, c.store.db, 1107)
+			if err != nil || current.ID != i.ID || current.Write != i.Write || !current.ExpiresAt.Equal(i.ExpiresAt) || current.Status != "confirmed" {
+				t.Fatal("receipt evidence lost", current, err)
+			}
+			after, err := c.store.Read(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if before.State.Root != after.State.Root || before.State.Watermark != after.State.Watermark || before.State.Control != after.State.Control || before.key != after.key {
+				t.Fatal("routing-off reset lane")
+			}
+			out, err = c.Execute(ctx, "done", 1107, 0)
+			if err != nil || out.Route == nil || out.Route.Route != "main" || out.Route.Allowed || out.Route.DoneAllowed || out.Route.ReleaseAllowed || out.Route.UpgradeAllowed {
+				t.Fatal("routing-off allowed Done", out, err)
+			}
+			f.mu.Lock()
+			posts := seam.posts
+			dispatches := f.posts
+			f.mu.Unlock()
+			if posts != 1 || dispatches != 0 {
+				t.Fatal("routing-off resent proof or write", posts, dispatches)
+			}
+		})
+	}
+}

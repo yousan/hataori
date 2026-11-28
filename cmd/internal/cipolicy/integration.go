@@ -197,7 +197,7 @@ func (c *Coordinator) integrate(ctx context.Context, pull int) (Outcome, error) 
 		out, err = c.execute(ctx, "observe", 0, 0, "")
 		out.Operation = "integrate"
 		if err == nil {
-			out.Route = &RouteResult{Pull: pull, Route: "integration", Allowed: true, Integrated: true, Reason: "admitted write recognized; complete coverage still required for Done"}
+			out.Route = integrationAcknowledgement(pull, c.adapter.root.RoutingEnabled)
 		}
 		return out, err
 	}
@@ -262,7 +262,19 @@ func (c *Coordinator) integrate(ctx context.Context, pull int) (Outcome, error) 
 	out, err = c.execute(ctx, "observe", 0, 0, "")
 	out.Operation = "integrate"
 	if err == nil {
-		out.Route = &RouteResult{Pull: pull, Route: "integration", Allowed: true, Integrated: true, Reason: "admitted write recognized; complete coverage still required for Done"}
+		out.Route = integrationAcknowledgement(pull, c.adapter.root.RoutingEnabled)
 	}
 	return out, err
+}
+
+// Recognition is evidence of an old effect, not fresh routing permission.
+func integrationAcknowledgement(pull int, enabled bool) *RouteResult {
+	r := &RouteResult{Pull: pull, Route: "integration", Allowed: true, Integrated: true, Reason: "admitted write recognized; complete coverage still required for Done"}
+	if !enabled {
+		r.Route = "main"
+		r.Allowed = false
+		r.Boundary = "existing main final-head and actual main gates"
+		r.Reason = "previous integration recognized; new routing disabled and main gates still required"
+	}
+	return r
 }
