@@ -11,8 +11,8 @@ var _ agent.LoginFlow = (*Adapter)(nil)
 
 // LoginLaunch starts the device login on pipes with the sessions' CODEX_HOME
 // and environment.
-func (a *Adapter) LoginLaunch(agent.Spec) (agent.Launch, error) {
-	return agent.Launch{Argv: []string{a.command, "login", "--device-auth"}, Env: a.env()}, nil
+func (a *Adapter) LoginLaunch(spec agent.Spec) (agent.Launch, error) {
+	return agent.Launch{Argv: []string{a.command, "login", "--device-auth"}, Env: a.sessionEnv(spec)}, nil
 }
 
 var loginANSI = regexp.MustCompile("\x1b(?:\\[[0-?]*[ -/]*[@-~]|\\][^\x07\x1b]*(?:\x07|\x1b\\\\))")

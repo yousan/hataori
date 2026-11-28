@@ -30,7 +30,7 @@ func SocketPath(root string) string {
 
 func (r *Resident) Hello() workerproto.Hello {
 	return workerproto.Hello{Version: workerproto.Version, Binding: r.binding,
-		Capabilities: []string{"health", "host", "receipts", "lifecycle", "workspace", "transfer", "runner", "replay", "terminal", "placement"}, Required: []string{"receipts", "lifecycle"}}
+		Capabilities: []string{"health", "host", "receipts", "lifecycle", "workspace", "transfer", "runner", "replay", "terminal", "placement", "login"}, Required: []string{"receipts", "lifecycle"}}
 }
 
 func (r *Resident) Listen() (string, error) {
@@ -204,6 +204,10 @@ func (r *Resident) serveConnection(ctx context.Context, c *net.UnixConn) {
 			Op string `json:"op"`
 		}
 		json.Unmarshal(data, &route)
+		if route.Op == "login_start" {
+			r.serveLogin(ctx, c, reader, connection, data)
+			return
+		}
 		if route.Op == "attach" {
 			r.serveAttachment(ctx, c, reader, connection, data)
 			return
