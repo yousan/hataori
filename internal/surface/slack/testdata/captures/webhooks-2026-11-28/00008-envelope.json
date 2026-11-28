@@ -1,0 +1,77 @@
+{
+  "sequence": 8,
+  "elapsed_seconds": 2.724863,
+  "source": "socket-receive",
+  "ack_policy": "immediate",
+  "body": {
+    "envelope_id": "00000000-0000-0000-0000-000000000001",
+    "payload": {
+      "token": "redacted-credential",
+      "team_id": "T0000000012",
+      "context_team_id": "T0000000012",
+      "context_enterprise_id": null,
+      "api_app_id": "A0000000001",
+      "event": {
+        "type": "message",
+        "user": "U0000000014",
+        "ts": "1000000000.547539",
+        "bot_id": "B0000000002",
+        "app_id": "A0000000001",
+        "text": "[hataori test] webhook scenario root",
+        "team": "T0000000012",
+        "bot_profile": {
+          "id": "B0000000002",
+          "deleted": false,
+          "name": "name-3",
+          "updated": 999999032,
+          "app_id": "A0000000001",
+          "user_id": "U0000000014",
+          "icons": {
+            "image_36": "https://example.invalid/redacted-url-2",
+            "image_48": "https://example.invalid/redacted-url-3",
+            "image_72": "https://example.invalid/redacted-url-4"
+          },
+          "team_id": "T0000000012"
+        },
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "opaque-3",
+            "elements": [
+              {
+                "type": "rich_text_section",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "[hataori test] webhook scenario root"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "channel": "C0000000005",
+        "event_ts": "1000000000.547539",
+        "channel_type": "group"
+      },
+      "type": "event_callback",
+      "event_id": "Ev0000000011",
+      "event_time": 1000000000,
+      "authorizations": [
+        {
+          "enterprise_id": null,
+          "team_id": "T0000000012",
+          "user_id": "U0000000014",
+          "is_bot": true,
+          "is_enterprise_install": false
+        }
+      ],
+      "is_ext_shared_channel": false,
+      "event_context": "opaque-4"
+    },
+    "type": "events_api",
+    "accepts_response_payload": false,
+    "retry_attempt": 0,
+    "retry_reason": ""
+  }
+}

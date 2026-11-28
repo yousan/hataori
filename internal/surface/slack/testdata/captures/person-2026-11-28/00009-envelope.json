@@ -1,0 +1,89 @@
+{
+  "sequence": 9,
+  "elapsed_seconds": 72.540842,
+  "source": "socket-receive",
+  "ack_policy": "immediate",
+  "received_seconds": 72.540732,
+  "body": {
+    "envelope_id": "00000000-0000-0000-0000-000000000002",
+    "payload": {
+      "token": "redacted-credential",
+      "team_id": "T0000000022",
+      "context_team_id": "T0000000022",
+      "context_enterprise_id": null,
+      "api_app_id": "A0000000001",
+      "event": {
+        "type": "message",
+        "user": "U0000000023",
+        "ts": "2795873799.324339",
+        "client_msg_id": "00000000-0000-0000-0000-000000000003",
+        "text": "[hataori test] URL <https://example.invalid/redacted-url-5> <@U0000000023>  &amp; &lt; &gt;\n```code```",
+        "team": "T0000000022",
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "opaque-4",
+            "elements": [
+              {
+                "type": "rich_text_section",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "[hataori test] URL "
+                  },
+                  {
+                    "type": "link",
+                    "url": "https://example.invalid/redacted-url-5"
+                  },
+                  {
+                    "type": "text",
+                    "text": " "
+                  },
+                  {
+                    "type": "user",
+                    "user_id": "U0000000023"
+                  },
+                  {
+                    "type": "text",
+                    "text": "  & < >\n"
+                  }
+                ]
+              },
+              {
+                "type": "rich_text_preformatted",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "code"
+                  }
+                ],
+                "border": 0
+              }
+            ]
+          }
+        ],
+        "channel": "C0000000005",
+        "event_ts": "2795873799.324339",
+        "channel_type": "group"
+      },
+      "type": "event_callback",
+      "event_id": "Ev0000000020",
+      "event_time": 2795873799,
+      "authorizations": [
+        {
+          "enterprise_id": null,
+          "team_id": "T0000000022",
+          "user_id": "U0000000024",
+          "is_bot": true,
+          "is_enterprise_install": false
+        }
+      ],
+      "is_ext_shared_channel": false,
+      "event_context": "opaque-3"
+    },
+    "type": "events_api",
+    "accepts_response_payload": false,
+    "retry_attempt": 0,
+    "retry_reason": ""
+  }
+}

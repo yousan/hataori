@@ -1,0 +1,26 @@
+{
+  "sequence": 34,
+  "elapsed_seconds": 14.321502,
+  "source": "http",
+  "request_started_seconds": 14.061002,
+  "request": {
+    "method": "conversations.replies",
+    "body": {
+      "channel": "C0000000004",
+      "ts": "1000000001.000001",
+      "oldest": "1000000000.000049",
+      "limit": 2
+    }
+  },
+  "status": 200,
+  "headers": {
+    "x-slack-req-id": "97c9a35c3ee5142d58688baae023d8bc",
+    "content-type": "application/json; charset=utf-8",
+    "x-accepted-oauth-scopes": "channels:history,groups:history,mpim:history,im:history,read",
+    "x-oauth-scopes": "channels:history,channels:read,groups:history,groups:read,im:history,im:read,metadata.message:read,users:read,chat:write,files:write,im:write,reactions:write,incoming-webhook"
+  },
+  "body": {
+    "ok": false,
+    "error": "thread_not_found"
+  }
+}

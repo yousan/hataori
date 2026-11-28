@@ -1,0 +1,9 @@
+{
+  "sequence": 1,
+  "elapsed_seconds": 0.002811,
+  "scenario": "start",
+  "date": "2026-11-28",
+  "slack_go_version": "not used (direct HTTP/WebSocket)",
+  "websocket_client_version": "1.9.0",
+  "manifest": "manifest.json"
+}

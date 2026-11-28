@@ -1,0 +1,87 @@
+{
+  "sequence": 30,
+  "elapsed_seconds": 13.676855,
+  "source": "http",
+  "request_started_seconds": 13.377684,
+  "request": {
+    "method": "chat.postMessage",
+    "body": {
+      "channel": "C0000000003",
+      "text": "[hataori test] thread buttons fallback",
+      "unfurl_links": false,
+      "unfurl_media": false,
+      "blocks": [
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "capture_format",
+              "text": {
+                "type": "plain_text",
+                "text": "Test button"
+              },
+              "value": "name-3"
+            }
+          ]
+        }
+      ],
+      "thread_ts": "1000000002.485449"
+    }
+  },
+  "status": 200,
+  "headers": {
+    "x-slack-req-id": "2518bec21eec45f674e9cc1cf76e0969",
+    "content-type": "application/json; charset=utf-8",
+    "x-accepted-oauth-scopes": "chat:write",
+    "x-oauth-scopes": "channels:history,channels:read,groups:history,groups:read,im:history,im:read,metadata.message:read,users:read,chat:write,files:write,im:write,reactions:write,incoming-webhook"
+  },
+  "body": {
+    "ok": true,
+    "channel": "C0000000003",
+    "ts": "1000000013.552179",
+    "message": {
+      "user": "U0000000017",
+      "type": "message",
+      "ts": "1000000013.552179",
+      "bot_id": "B0000000002",
+      "app_id": "A0000000001",
+      "text": "[hataori test] thread buttons fallback",
+      "team": "T0000000015",
+      "bot_profile": {
+        "id": "B0000000002",
+        "deleted": false,
+        "name": "name-3",
+        "updated": 999998692,
+        "app_id": "A0000000001",
+        "user_id": "U0000000017",
+        "icons": {
+          "image_36": "https://example.invalid/redacted-url-2",
+          "image_48": "https://example.invalid/redacted-url-3",
+          "image_72": "https://example.invalid/redacted-url-4"
+        },
+        "team_id": "T0000000015"
+      },
+      "thread_ts": "1000000002.485449",
+      "parent_user_id": "U0000000017",
+      "blocks": [
+        {
+          "type": "actions",
+          "block_id": "opaque-10",
+          "elements": [
+            {
+              "type": "button",
+              "action_id": "capture_format",
+              "text": {
+                "type": "plain_text",
+                "text": "Test button",
+                "emoji": true
+              },
+              "value": "name-3"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

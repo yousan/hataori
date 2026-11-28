@@ -1,0 +1,150 @@
+{
+  "sequence": 88,
+  "elapsed_seconds": 21.740123,
+  "source": "socket-receive",
+  "ack_policy": "immediate",
+  "body": {
+    "envelope_id": "00000000-0000-0000-0000-000000000027",
+    "payload": {
+      "token": "redacted-credential",
+      "team_id": "T0000000058",
+      "context_team_id": "T0000000058",
+      "context_enterprise_id": null,
+      "api_app_id": "A0000000001",
+      "event": {
+        "type": "message",
+        "subtype": "message_changed",
+        "message": {
+          "user": "U0000000060",
+          "type": "message",
+          "edited": {
+            "user": "U0000000060",
+            "ts": "1000000021.000000"
+          },
+          "bot_id": "B0000000002",
+          "app_id": "A0000000001",
+          "text": "[hataori test] rate test 7",
+          "team": "T0000000058",
+          "bot_profile": {
+            "id": "B0000000002",
+            "deleted": false,
+            "name": "name-3",
+            "updated": 999999210,
+            "app_id": "A0000000001",
+            "user_id": "U0000000060",
+            "icons": {
+              "image_36": "https://example.invalid/redacted-url-2",
+              "image_48": "https://example.invalid/redacted-url-3",
+              "image_72": "https://example.invalid/redacted-url-4"
+            },
+            "team_id": "T0000000058"
+          },
+          "thread_ts": "1000000002.464549",
+          "reply_count": 3,
+          "reply_users_count": 1,
+          "latest_reply": "1000000009.409849",
+          "reply_users": [
+            "U0000000060"
+          ],
+          "is_locked": false,
+          "blocks": [
+            {
+              "type": "rich_text",
+              "block_id": "opaque-61",
+              "elements": [
+                {
+                  "type": "rich_text_section",
+                  "elements": [
+                    {
+                      "type": "text",
+                      "text": "[hataori test] rate test 7"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "ts": "1000000002.464549",
+          "source_team": "T0000000058",
+          "user_team": "T0000000058"
+        },
+        "previous_message": {
+          "user": "U0000000060",
+          "type": "message",
+          "ts": "1000000002.464549",
+          "edited": {
+            "user": "U0000000060",
+            "ts": "1000000021.000000"
+          },
+          "bot_id": "B0000000002",
+          "app_id": "A0000000001",
+          "text": "[hataori test] rate test 6",
+          "team": "T0000000058",
+          "bot_profile": {
+            "id": "B0000000002",
+            "deleted": false,
+            "name": "name-3",
+            "updated": 999999210,
+            "app_id": "A0000000001",
+            "user_id": "U0000000060",
+            "icons": {
+              "image_36": "https://example.invalid/redacted-url-2",
+              "image_48": "https://example.invalid/redacted-url-3",
+              "image_72": "https://example.invalid/redacted-url-4"
+            },
+            "team_id": "T0000000058"
+          },
+          "thread_ts": "1000000002.464549",
+          "reply_count": 3,
+          "reply_users_count": 1,
+          "latest_reply": "1000000009.409849",
+          "reply_users": [
+            "U0000000060"
+          ],
+          "is_locked": false,
+          "subscribed": false,
+          "blocks": [
+            {
+              "type": "rich_text",
+              "block_id": "opaque-62",
+              "elements": [
+                {
+                  "type": "rich_text_section",
+                  "elements": [
+                    {
+                      "type": "text",
+                      "text": "[hataori test] rate test 6"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "channel": "C0000000004",
+        "hidden": true,
+        "ts": "1000000021.001900",
+        "event_ts": "1000000021.001900",
+        "channel_type": "group"
+      },
+      "type": "event_callback",
+      "event_id": "Ev0000000021",
+      "event_time": 1000000021,
+      "authorizations": [
+        {
+          "enterprise_id": null,
+          "team_id": "T0000000058",
+          "user_id": "U0000000060",
+          "is_bot": true,
+          "is_enterprise_install": false
+        }
+      ],
+      "is_ext_shared_channel": false,
+      "event_context": "opaque-4"
+    },
+    "type": "events_api",
+    "accepts_response_payload": false,
+    "retry_attempt": 0,
+    "retry_reason": ""
+  }
+}

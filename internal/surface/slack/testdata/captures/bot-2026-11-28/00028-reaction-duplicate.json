@@ -1,0 +1,25 @@
+{
+  "sequence": 28,
+  "elapsed_seconds": 10.468521,
+  "source": "http",
+  "request_started_seconds": 10.215828,
+  "request": {
+    "method": "reactions.add",
+    "body": {
+      "channel": "C0000000004",
+      "timestamp": "1000000002.464549",
+      "name": "name-4"
+    }
+  },
+  "status": 200,
+  "headers": {
+    "x-slack-req-id": "a9da1d0b7698b75364e04e39328c6c53",
+    "content-type": "application/json; charset=utf-8",
+    "x-accepted-oauth-scopes": "reactions:write",
+    "x-oauth-scopes": "channels:history,channels:read,groups:history,groups:read,im:history,im:read,metadata.message:read,users:read,chat:write,files:write,im:write,reactions:write,incoming-webhook"
+  },
+  "body": {
+    "ok": false,
+    "error": "already_reacted"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "sequence": 38,
+  "elapsed_seconds": 253.868383,
+  "source": "operator-step",
+  "step": "8: press ACK after five seconds; note what the Slack UI shows",
+  "envelope_id": "00000000-0000-0000-0000-000000000016"
+}

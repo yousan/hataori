@@ -1,0 +1,17 @@
+{
+  "sequence": 9,
+  "elapsed_seconds": 2.840867,
+  "source": "http",
+  "request_started_seconds": 2.576558,
+  "request": {
+    "method": "incoming-webhook",
+    "body": {
+      "text": "[hataori test] other-channel"
+    }
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "text/html"
+  },
+  "body": "ok"
+}

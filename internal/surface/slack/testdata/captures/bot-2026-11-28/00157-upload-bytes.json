@@ -1,0 +1,15 @@
+{
+  "sequence": 157,
+  "elapsed_seconds": 28.561324,
+  "source": "http",
+  "request_started_seconds": 28.114754,
+  "request": {
+    "method": "external-upload",
+    "content": "hataori test capture file\n"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "text/plain; charset=utf-8"
+  },
+  "body": "OK - 26"
+}

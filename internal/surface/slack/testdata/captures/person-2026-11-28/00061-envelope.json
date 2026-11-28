@@ -1,0 +1,63 @@
+{
+  "sequence": 61,
+  "elapsed_seconds": 425.189635,
+  "source": "socket-receive",
+  "ack_policy": "never",
+  "received_seconds": 425.189568,
+  "body": {
+    "envelope_id": "00000000-0000-0000-0000-000000000024",
+    "payload": {
+      "token": "redacted-credential",
+      "team_id": "T0000000022",
+      "context_team_id": "T0000000022",
+      "context_enterprise_id": null,
+      "api_app_id": "A0000000001",
+      "event": {
+        "type": "message",
+        "user": "U0000000023",
+        "ts": "2795874151.739759",
+        "client_msg_id": "00000000-0000-0000-0000-000000000025",
+        "text": "[hataori test] ACK never",
+        "team": "T0000000022",
+        "blocks": [
+          {
+            "type": "rich_text",
+            "block_id": "opaque-17",
+            "elements": [
+              {
+                "type": "rich_text_section",
+                "elements": [
+                  {
+                    "type": "text",
+                    "text": "[hataori test] ACK never"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "channel": "C0000000005",
+        "event_ts": "2795874151.739759",
+        "channel_type": "group"
+      },
+      "type": "event_callback",
+      "event_id": "Ev0000000013",
+      "event_time": 2795874151,
+      "authorizations": [
+        {
+          "enterprise_id": null,
+          "team_id": "T0000000022",
+          "user_id": "U0000000024",
+          "is_bot": true,
+          "is_enterprise_install": false
+        }
+      ],
+      "is_ext_shared_channel": false,
+      "event_context": "opaque-3"
+    },
+    "type": "events_api",
+    "accepts_response_payload": false,
+    "retry_attempt": 0,
+    "retry_reason": ""
+  }
+}

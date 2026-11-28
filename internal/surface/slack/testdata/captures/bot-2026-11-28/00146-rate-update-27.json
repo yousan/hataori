@@ -1,0 +1,79 @@
+{
+  "sequence": 146,
+  "elapsed_seconds": 27.305068,
+  "source": "http",
+  "request_started_seconds": 27.030709,
+  "request": {
+    "method": "chat.update",
+    "body": {
+      "channel": "C0000000004",
+      "ts": "1000000002.464549",
+      "text": "[hataori test] rate test 27"
+    }
+  },
+  "status": 200,
+  "headers": {
+    "x-slack-req-id": "4db363d27c1edb41d5c6efa93a824466",
+    "content-type": "application/json; charset=utf-8",
+    "x-accepted-oauth-scopes": "chat:write",
+    "x-oauth-scopes": "channels:history,channels:read,groups:history,groups:read,im:history,im:read,metadata.message:read,users:read,chat:write,files:write,im:write,reactions:write,incoming-webhook"
+  },
+  "body": {
+    "ok": true,
+    "channel": "C0000000004",
+    "ts": "1000000002.464549",
+    "text": "[hataori test] rate test 27",
+    "message": {
+      "user": "U0000000060",
+      "type": "message",
+      "edited": {
+        "user": "U0000000060",
+        "ts": "1000000027.000000"
+      },
+      "bot_id": "B0000000002",
+      "app_id": "A0000000001",
+      "text": "[hataori test] rate test 27",
+      "team": "T0000000058",
+      "bot_profile": {
+        "id": "B0000000002",
+        "deleted": false,
+        "name": "name-3",
+        "updated": 999999210,
+        "app_id": "A0000000001",
+        "user_id": "U0000000060",
+        "icons": {
+          "image_36": "https://example.invalid/redacted-url-2",
+          "image_48": "https://example.invalid/redacted-url-3",
+          "image_72": "https://example.invalid/redacted-url-4"
+        },
+        "team_id": "T0000000058"
+      },
+      "thread_ts": "1000000002.464549",
+      "reply_count": 3,
+      "reply_users_count": 1,
+      "latest_reply": "1000000009.409849",
+      "reply_users": [
+        "U0000000060"
+      ],
+      "is_locked": false,
+      "subscribed": false,
+      "blocks": [
+        {
+          "type": "rich_text",
+          "block_id": "opaque-120",
+          "elements": [
+            {
+              "type": "rich_text_section",
+              "elements": [
+                {
+                  "type": "text",
+                  "text": "[hataori test] rate test 27"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

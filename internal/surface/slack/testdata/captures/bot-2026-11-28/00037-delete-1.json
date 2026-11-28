@@ -1,0 +1,25 @@
+{
+  "sequence": 37,
+  "elapsed_seconds": 16.236369,
+  "source": "http",
+  "request_started_seconds": 15.945623,
+  "request": {
+    "method": "chat.delete",
+    "body": {
+      "channel": "C0000000004",
+      "ts": "1000000015.819929"
+    }
+  },
+  "status": 200,
+  "headers": {
+    "x-slack-req-id": "11f354521708a0be07b403e64af881fb",
+    "content-type": "application/json; charset=utf-8",
+    "x-accepted-oauth-scopes": "chat:write",
+    "x-oauth-scopes": "channels:history,channels:read,groups:history,groups:read,im:history,im:read,metadata.message:read,users:read,chat:write,files:write,im:write,reactions:write,incoming-webhook"
+  },
+  "body": {
+    "ok": true,
+    "channel": "C0000000004",
+    "ts": "1000000015.819929"
+  }
+}

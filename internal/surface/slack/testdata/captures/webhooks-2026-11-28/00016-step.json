@@ -1,0 +1,7 @@
+{
+  "sequence": 16,
+  "elapsed_seconds": 3.458713,
+  "source": "operator-step",
+  "step": "observe webhook other-thread",
+  "envelope_id": "00000000-0000-0000-0000-000000000003"
+}

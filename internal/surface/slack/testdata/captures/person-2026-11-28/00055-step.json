@@ -1,0 +1,7 @@
+{
+  "sequence": 55,
+  "elapsed_seconds": 323.981855,
+  "source": "operator-step",
+  "step": "9: channel post exactly: [hataori test] ACK late",
+  "envelope_id": "00000000-0000-0000-0000-000000000020"
+}

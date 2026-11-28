@@ -1,0 +1,26 @@
+{
+  "sequence": 2,
+  "elapsed_seconds": 0.347515,
+  "source": "http",
+  "request_started_seconds": 0.003486,
+  "request": {
+    "method": "auth.test",
+    "body": {}
+  },
+  "status": 200,
+  "headers": {
+    "x-slack-req-id": "d4c49037998ae39765c1dcfc1d8a44e5",
+    "content-type": "application/json; charset=utf-8",
+    "x-oauth-scopes": "channels:history,channels:read,groups:history,groups:read,im:history,im:read,metadata.message:read,users:read,chat:write,files:write,im:write,reactions:write,incoming-webhook"
+  },
+  "body": {
+    "ok": true,
+    "url": "https://example.invalid/redacted-url-1",
+    "team": "name-1",
+    "user": "name-2",
+    "team_id": "T0000000008",
+    "user_id": "U0000000010",
+    "bot_id": "B0000000002",
+    "is_enterprise_install": false
+  }
+}

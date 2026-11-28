@@ -1,0 +1,7 @@
+{
+  "sequence": 20,
+  "elapsed_seconds": 4.337707,
+  "source": "operator-step",
+  "step": "observe webhook own-channel",
+  "envelope_id": "00000000-0000-0000-0000-000000000004"
+}
