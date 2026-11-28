@@ -8,6 +8,7 @@ invokes only named focused tests, and never uses a service manager or agent CLI.
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -54,6 +55,29 @@ CASES = [
      "if err = s.verifyBinary(name, a); err != nil {",
      "if err = s.verifyBinary(name, a); false && err != nil {",
      "TestSelectedRefusesChangedBinary"),
+    ("trusted-physical-ancestors", "store.go",
+     "if err = secureAncestors(physicalParent); err != nil {",
+     "if err = secureAncestors(physicalParent); false && err != nil {",
+     "TestInstallRefusesMutableAncestors"),
+    ("stable-physical-prefix", "store.go",
+     "path = filepath.Join(physicalParent, filepath.Base(path))",
+     "path = filepath.Join(filepath.Dir(path), filepath.Base(path))",
+     "TestInstallResolvesAncestorAliasesOnce"),
+    ("go-build-platform", "binary.go",
+     "if goos != p.OS || goarch != p.Arch {",
+     "if false && (goos != p.OS || goarch != p.Arch) {",
+     "TestSignedForeignOperatingSystemKeepsSelection"),
+    ("elf-os-abi", "binary.go",
+     "(e.OSABI == elf.ELFOSABI_NONE || e.OSABI == elf.ELFOSABI_LINUX) && ", "",
+     "TestSignedForeignOperatingSystemKeepsSelection"),
+    ("complete-elf-segments", "binary.go",
+     "if !within(segment.Off, segment.Filesz) || segment.Type == elf.PT_LOAD && segment.Filesz > segment.Memsz {",
+     "if false && (!within(segment.Off, segment.Filesz) || segment.Type == elf.PT_LOAD && segment.Filesz > segment.Memsz) {",
+     "TestCompletePlatformBinaries"),
+    ("complete-macho-segments", "binary.go",
+     "ok && (!within(segment.Offset, segment.Filesz) || segment.Maxprot != 0 && segment.Filesz > segment.Memsz)",
+     "ok && false && (!within(segment.Offset, segment.Filesz) || segment.Maxprot != 0 && segment.Filesz > segment.Memsz)",
+     "TestCompletePlatformBinaries"),
     ("systemd-detached-host-preservation", "service.go",
      "KillMode=process", "KillMode=control-group",
      "TestExplicitServiceTemplatesKeepHosts"),
@@ -90,7 +114,7 @@ def main():
                 failed = run.returncode != 0 and "--- FAIL:" in run.stdout and "build failed" not in run.stdout and "test timed out" not in run.stdout
                 results.append({"guard": name, "test": test, "exit": run.returncode,
                                 "regression_failed": failed,
-                                "failure_lines": [line.strip() for line in run.stdout.splitlines()
+                                "failure_lines": [re.sub(r"/[^\s{}]*Test[^\s{}]*", "<fixture-path>", line.strip()) for line in run.stdout.splitlines()
                                                   if "--- FAIL:" in line or ".go:" in line]})
                 print(f"{name}: {'regression failed' if failed else 'INVALID PROOF'}", flush=True)
                 if not failed:
@@ -102,6 +126,7 @@ def main():
             if (PACKAGE / name).read_bytes() != original:
                 (PACKAGE / name).write_bytes(original)
     evidence = {"scope": "isolated focused tests; no runtime/service-manager acceptance",
+                "redaction": "Disposable absolute test paths, if printed, are replaced with <fixture-path>.",
                 "source_sha256": {name: hashlib.sha256(b).hexdigest() for name, b in originals.items()},
                 "results": results,
                 "sources_restored": all((PACKAGE / name).read_bytes() == b for name, b in originals.items())}

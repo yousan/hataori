@@ -24,8 +24,18 @@ type releaseFixture struct {
 	platform Platform
 }
 
+func privateTestDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func newReleaseFixture(t *testing.T) releaseFixture {
 	t.Helper()
+
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +76,7 @@ func mustInstall(t *testing.T, path string, req Request) Result {
 
 func TestInstallRetainsImmutableVersions(t *testing.T) {
 	f := newReleaseFixture(t)
-	prefix := filepath.Join(t.TempDir(), "install")
+	prefix := filepath.Join(privateTestDir(t), "install")
 	old := mustInstall(t, prefix, f.request(t, "v1", nil))
 	oldInfo, err := os.Stat(old.Path)
 	if err != nil {
@@ -114,7 +124,7 @@ func TestInstallFailuresPreserveSelectionAndVersions(t *testing.T) {
 	f := newReleaseFixture(t)
 	for _, name := range []string{"checksum", "partial", "oversize", "size_mismatch", "reader_failure", "signature", "trust_key", "protocol", "platform", "binary_platform", "binary_format", "publish_failure", "selector_failure", "busy"} {
 		t.Run(name, func(t *testing.T) {
-			prefix := filepath.Join(t.TempDir(), "install")
+			prefix := filepath.Join(privateTestDir(t), "install")
 			old := mustInstall(t, prefix, f.request(t, "v1", nil))
 			before, err := os.ReadFile(filepath.Join(prefix, "selected.json"))
 			if err != nil {
@@ -207,7 +217,7 @@ func TestInstallFailuresPreserveSelectionAndVersions(t *testing.T) {
 func TestInstallRefusesAdoptionAndLinks(t *testing.T) {
 	f := newReleaseFixture(t)
 	t.Run("unregistered", func(t *testing.T) {
-		prefix := t.TempDir()
+		prefix := privateTestDir(t)
 		if err := os.Chmod(prefix, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -224,7 +234,7 @@ func TestInstallRefusesAdoptionAndLinks(t *testing.T) {
 		}
 	})
 	t.Run("prefix_symlink", func(t *testing.T) {
-		parent := t.TempDir()
+		parent := privateTestDir(t)
 		target := filepath.Join(parent, "target")
 		if err := os.Mkdir(target, 0o700); err != nil {
 			t.Fatal(err)
@@ -243,7 +253,7 @@ func TestInstallRefusesAdoptionAndLinks(t *testing.T) {
 	})
 	for _, name := range []string{"trust-key", "versions", "selected.json", "install.lock"} {
 		t.Run(name, func(t *testing.T) {
-			prefix := filepath.Join(t.TempDir(), "install")
+			prefix := filepath.Join(privateTestDir(t), "install")
 			mustInstall(t, prefix, f.request(t, "v1", nil))
 			target := filepath.Join(prefix, "unrelated")
 			if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
@@ -268,7 +278,7 @@ func TestInstallRefusesAdoptionAndLinks(t *testing.T) {
 
 func TestSelectedRefusesChangedBinary(t *testing.T) {
 	f := newReleaseFixture(t)
-	prefix := filepath.Join(t.TempDir(), "install")
+	prefix := filepath.Join(privateTestDir(t), "install")
 	old := mustInstall(t, prefix, f.request(t, "v1", nil))
 	if err := os.Chmod(old.Path, 0o700); err != nil {
 		t.Fatal(err)
@@ -284,9 +294,62 @@ func TestSelectedRefusesChangedBinary(t *testing.T) {
 	}
 }
 
+func TestInstallRefusesMutableAncestors(t *testing.T) {
+	f := newReleaseFixture(t)
+	parent := privateTestDir(t)
+	if err := os.Chmod(parent, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(parent, 0o700)
+	prefix := filepath.Join(parent, "install")
+	if _, err := Install(prefix, f.request(t, "v1", nil)); err == nil {
+		t.Fatal("accepted installation below a mutable ancestor")
+	}
+	if _, err := os.Stat(prefix); !os.IsNotExist(err) {
+		t.Fatal("unsafe ancestor refusal created an installation")
+	}
+}
+
+func TestInstallResolvesAncestorAliasesOnce(t *testing.T) {
+	f := newReleaseFixture(t)
+	parent := privateTestDir(t)
+	physical, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	good := filepath.Join(physical, "good")
+	other := filepath.Join(physical, "other")
+	alias := filepath.Join(physical, "alias")
+	for _, dir := range []string{good, other} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(good, alias); err != nil {
+		t.Fatal(err)
+	}
+	result := mustInstall(t, filepath.Join(alias, "install"), f.request(t, "v1", nil))
+	if result.Prefix != filepath.Join(good, "install") || filepath.Dir(result.Path) != filepath.Join(good, "install", "versions") {
+		t.Fatal("retained a mutable executable/prefix alias")
+	}
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, alias); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := Selected(result.Prefix, f.platform, "1.3")
+	if err != nil || selected.Path != result.Path {
+		t.Fatalf("ancestor alias swap redirected selection: %+v %v", selected, err)
+	}
+	if _, err := os.Stat(result.Path); err != nil {
+		t.Fatal("host/hook executable path followed the swapped alias")
+	}
+}
+
 func TestSelectionIsAlwaysCompleteAndAlreadyPublished(t *testing.T) {
 	f := newReleaseFixture(t)
-	prefix := filepath.Join(t.TempDir(), "install")
+	prefix := filepath.Join(privateTestDir(t), "install")
 	mustInstall(t, prefix, f.request(t, "v0", nil))
 	stop := make(chan struct{})
 	result := make(chan error, 1)

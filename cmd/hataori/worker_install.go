@@ -144,7 +144,7 @@ func workerServiceTemplateMain(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return exitError
 	}
-	b, err := workerinstall.ServiceTemplate(workerinstall.Service{Platform: workerPlatform(), Manager: *manager, Launcher: selected.Path, Prefix: *prefix, Root: *root, Main: *main, Installation: *installation})
+	b, err := workerinstall.ServiceTemplate(workerinstall.Service{Platform: workerPlatform(), Manager: *manager, Launcher: selected.Path, Prefix: selected.Prefix, Root: *root, Main: *main, Installation: *installation})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return exitError

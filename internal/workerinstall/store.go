@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -36,6 +37,7 @@ type Selection struct {
 
 type Result struct {
 	Path    string `json:"path"`
+	Prefix  string `json:"prefix"`
 	Version string `json:"version"`
 	// Once the atomic selector rename succeeds the installation is selected.
 	// A subsequent directory sync failure must not be reported as a refusal
@@ -62,6 +64,16 @@ func openStore(path string, key ed25519.PublicKey, create bool) (_ *store, err e
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return nil, errors.New("worker install: installation prefix must be an explicit canonical absolute path")
 	}
+	// Resolve aliases before creating/opening anything. The returned executable
+	// and service prefix must never re-resolve an operator's mutable alias.
+	physicalParent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	if err = secureAncestors(physicalParent); err != nil {
+		return nil, err
+	}
+	path = filepath.Join(physicalParent, filepath.Base(path))
 	if create {
 		if e := os.Mkdir(path, 0o700); e != nil && !errors.Is(e, os.ErrExist) {
 			return nil, e
@@ -139,6 +151,27 @@ func openStore(path string, key ed25519.PublicKey, create bool) (_ *store, err e
 		return nil, errors.New("worker install: installation is busy")
 	}
 	return s, nil
+}
+
+// Execution eventually uses a pathname, not os.Root. Its ancestors must not
+// allow another user to replace a verified directory after the root is closed.
+// Root-owned sticky directories permit private user-owned children (e.g. /tmp).
+func secureAncestors(path string) error {
+	part := string(filepath.Separator)
+	for _, name := range append([]string{""}, strings.Split(strings.TrimPrefix(path, part), part)...) {
+		if name != "" {
+			part = filepath.Join(part, name)
+		}
+		i, err := os.Lstat(part)
+		if err != nil {
+			return err
+		}
+		st, ok := i.Sys().(*syscall.Stat_t)
+		if !ok || !i.IsDir() || st.Uid != 0 && st.Uid != uint32(os.Geteuid()) || i.Mode().Perm()&0o022 != 0 && !(st.Uid == 0 && i.Mode()&os.ModeSticky != 0) {
+			return errors.New("worker install: installation ancestor can be replaced by another user")
+		}
+	}
+	return nil
 }
 
 func (s *store) close() {
@@ -296,7 +329,7 @@ func Install(path string, req Request) (Result, error) {
 	if err = s.root.Rename(selectTemp, "selected.json"); err != nil {
 		return Result{}, err
 	}
-	result := Result{Path: filepath.Join(s.path, name), Version: m.Version}
+	result := Result{Path: filepath.Join(s.path, name), Prefix: s.path, Version: m.Version}
 	if err = s.sync("."); err != nil {
 		result.DurabilityWarning = "selection committed; directory durability could not be confirmed: " + err.Error()
 	}
@@ -350,7 +383,7 @@ func (s *store) selected(platform Platform, protocol string) (Result, error) {
 	if err = s.verifyBinary(name, a); err != nil {
 		return Result{}, fmt.Errorf("worker install: selection unavailable: %v", err)
 	}
-	return Result{Path: filepath.Join(s.path, name), Version: m.Version}, nil
+	return Result{Path: filepath.Join(s.path, name), Prefix: s.path, Version: m.Version}, nil
 }
 
 // Selected resolves and re-verifies the immutable executable for an explicit

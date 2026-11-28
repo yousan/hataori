@@ -28,6 +28,9 @@ type workerReleaseFixture struct {
 func newWorkerReleaseFixture(t *testing.T) *workerReleaseFixture {
 	t.Helper()
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	f := &workerReleaseFixture{prefix: filepath.Join(dir, "installed"), artifacts: filepath.Join(dir, "artifacts"), manifest: filepath.Join(dir, "release.json"), signature: filepath.Join(dir, "release.sig"), trust: filepath.Join(dir, "release.pub")}
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
