@@ -14,6 +14,9 @@ import { guiEnvironment } from '../src/lifecycle.mjs';
 if (process.platform !== 'darwin' || process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_ENVIRONMENT !== 'github-hosted' || process.env.CI !== 'true') throw new Error('Disposable standard macOS runner required');
 const { app, protocol } = electron;
 app.enableSandbox();
+// The harness, rather than Electron's last-window default, owns exit. Closing
+// the renderer must not interrupt the private fixture's graceful child join.
+app.on('window-all-closed', () => {});
 protocol.registerSchemesAsPrivileged([{ scheme: 'hataori-desktop', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }]);
 const scratch = await mkdtemp(join(process.env.RUNNER_TEMP, 'hataori-electron-'));
 app.setPath('userData', scratch); app.setPath('sessionData', scratch);

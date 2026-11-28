@@ -3,8 +3,10 @@ package desktopstate
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -88,26 +90,24 @@ func checkHost(ctx context.Context, dir *os.Root) error {
 	if specErr != nil {
 		return errors.New("desktop: private host provenance is unavailable")
 	}
-	// Host's existing long-path pointer is private metadata, never a renderer
-	// argument. Verify its name/object before the existing client reads it.
+	// A private pointer is metadata, not proof of endpoint ownership. Refuse a
+	// redirected/stale value and dial only the host's computed endpoint below.
 	if err := RefuseCollision(dir.Name(), "host.sock.path"); err != nil {
 		return err
 	}
 	pointer, err := nativehttp.OpenPrivateFile(dir, "host.sock.path", os.O_RDONLY)
 	if err == nil {
+		data, readErr := io.ReadAll(io.LimitReader(pointer, 1025))
 		pointer.Close()
+		if readErr != nil || len(data) > 1024 || strings.TrimSpace(string(data)) != host.ComputedSocketPath(dir.Name()) {
+			return errors.New("desktop: redirected host endpoint; replacement refused")
+		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	c, err := host.DialContext(ctx, dir.Name())
-	if err != nil {
-		return errors.New("desktop: live host compatibility is unavailable")
-	}
-	defer c.Close()
-	c.Deadline(time.Now().Add(2 * time.Second))
-	capability, err := c.InputCapability()
+	capability, err := host.ProbeInputCapability(ctx, dir.Name())
 	if err != nil || capability.Version != host.InputBatchVersion {
 		return errors.New("desktop: live host protocol is incompatible; replacement refused")
 	}

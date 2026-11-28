@@ -26,8 +26,11 @@ test('desktop path gate includes cumulative source/build inputs and both rename 
     const result = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/paths.mjs', import.meta.url))], { input: files.join('\0') + '\0', encoding: 'utf8' });
     assert.equal(result.status, 0); return result.stdout.trim();
   };
-  assert.equal(classify(['docs/notes.md', 'README.md']), 'false');
+  assert.equal(classify(['docs/notes.md', 'README.md', 'desktop/README.md']), 'false');
   assert.equal(classify(['desktop/src/main.mjs', 'docs/last-commit.md']), 'true');
+  assert.equal(classify(['desktop/README.md', 'desktop/src/main.mjs']), 'true');
+  for (const policy of ['AGENTS.md', 'web/AGENTS.md', '.github/filters.yml', 'docs/design/ci-policy.md', 'docs/protocol.md']) assert.equal(classify([policy]), 'true');
+  for (const executableMarkdown of ['internal/supervisor/layer.md', 'internal/store/testdata/README.md', 'cmd/hataori/testdata/supervisor-layers/none.md']) assert.equal(classify([executableMarkdown]), 'true');
   assert.equal(classify(['docs/moved.md', 'internal/dashboard/page/old.js']), 'true');
   assert.equal(classify(['.github/workflows/desktop.yml']), 'true');
   assert.equal(classify(['internal/core/core.go']), 'true');

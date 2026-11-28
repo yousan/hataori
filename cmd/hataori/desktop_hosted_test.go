@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -34,6 +35,13 @@ func TestDesktopHostedFixture(t *testing.T) {
 		t.Fatal("disposable standard GitHub runner required")
 	}
 	r := newChatRoot(t, nil)
+	// Native discovery binds the canonical selected root. Use that same spelling
+	// when the host computes its long socket path (macOS /var aliases /private).
+	canonical, err := filepath.EvalSymlinks(r.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.root = canonical
 	var input *io.PipeWriter
 	var done chan error
 	start := func() {

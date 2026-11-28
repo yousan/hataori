@@ -7,6 +7,7 @@ import { readFile, writeFile, mkdir, mkdtemp, cp } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyManifest } from '../src/manifest.mjs';
+import { stageDmgSource } from './dmg-source.mjs';
 
 if (process.platform !== 'darwin' || process.env.CI !== 'true') throw new Error('Disposable hosted macOS CI required');
 const desktop = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -54,11 +55,13 @@ const output = await packager({ dir: staged, name: 'hataori', platform: 'darwin'
 });
 if (output.length !== 1) throw new Error('Expected one architecture-specific app');
 const app = path.join(output[0], 'hataori.app');
-await verifyManifest(path.join(app, 'Contents/Resources'), version, arch);
-const runtimeVersion = execFileSync(path.join(app, 'Contents/MacOS/hataori'), ['--desktop-build-version'], { encoding: 'utf8' }).trim();
+const image = await stageDmgSource(app, path.join(desktop, 'out'));
+await verifyManifest(path.join(image.app, 'Contents/Resources'), version, arch);
+const runtimeVersion = execFileSync(path.join(image.app, 'Contents/MacOS/hataori'), ['--desktop-build-version'], { encoding: 'utf8' }).trim();
 if (runtimeVersion !== version) throw new Error('Packaged runtime/package/manifest version mismatch');
 const dmg = path.join(desktop, 'out', `hataori-${version}-${arch}.dmg`);
-execFileSync('/usr/bin/hdiutil', ['create', '-volname', 'hataori', '-srcfolder', app, '-format', 'UDZO', dmg], { stdio: 'inherit' });
+execFileSync('/usr/bin/hdiutil', ['create', '-volname', 'hataori', '-srcfolder', image.directory, '-format', 'UDZO', dmg], { stdio: 'inherit' });
+execFileSync('/usr/bin/hdiutil', ['verify', dmg], { stdio: 'inherit' });
 const digest = createHash('sha256').update(await readFile(dmg)).digest('hex');
 await writeFile(dmg + '.sha256', `${digest}  ${path.basename(dmg)}\n`, { flag: 'wx' });
 console.log(`Built ${path.basename(dmg)} from ${commit}; unsigned, unpublished, no artifact upload`);

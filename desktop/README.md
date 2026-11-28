@@ -46,6 +46,10 @@ fixtures; the hosted daemon restart alone is not proof of cross-version or
 interactive real-Mac acceptance. `desktop/test/runtime-main.mjs` and
 `TestDesktopHostedFixture` are hosted-only entry points; do not run them on an
 operator host. The private helper fixture's normal-suite skip is not evidence.
+Compatibility probes use the computed host endpoint and kernel peer UID, never
+a saved socket pointer. A legacy host created through a different root alias
+can have a different long-path hash; replacement then fails closed and keeps
+the host, selection and pointer intact rather than adopting that endpoint.
 
 A maintainer may create a stable candidate tag at an independently reviewed,
 full-CI-green exact head to supply private device acceptance before merge.
@@ -75,3 +79,6 @@ can reset Electron's internal framework ad-hoc signature during its normal
 rename step; it uses no Developer ID, certificate, Keychain or notarization
 account. Developer ID signing, Gatekeeper acceptance and public distribution
 remain under the existing later gates.
+The DMG source contains `hataori.app` at its root and preserves Electron's
+relative framework links; packaging checks the copied app's runtime version,
+resource manifest and DMG integrity before computing its checksum.
