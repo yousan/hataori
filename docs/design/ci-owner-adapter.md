@@ -21,6 +21,16 @@ existing separately approved rollback-SHA requirement; unknown/contradictory
 modes fail closed. The real source bytes/digest, exact merged/head approvals,
 owner, bounded validity and signed root are required in either mode.
 
+The repository stages that real source as an inactive proposal: `yousan` is the
+proposed policy owner, not an assigned signer, dispatcher or provider reviewer.
+Its validity ends December 5, 2026 at 00:00 UTC. The provisional ten-change,
+six-hour coverage bound and thirty-minute lead reflect observed 22-28 minute
+full-suite runtimes; tune them against measured admission and completion delay.
+Expiry closes admission. Existing workflows do not consume this file, and
+merging it supplies neither independently signed authority nor actual APPROVED
+control provenance, dispatch proof or owner adoption. Numeric role assignments
+and credentials remain outside the repository.
+
 1. The responsible operator supplies an independently signed root, pinned public
    key, reviewed binary and private database/dispatcher credential outside any
    candidate checkout. No bundle or code-review comment supplies live approval.

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "profile": "throughput",
+  "owner": "yousan",
+  "reason": "Inactive proposed first control. Provisional coverage budgets reflect observed 22-28 minute full suites; independently signed authority, actual control approvals and compatible owner opt-in remain required.",
+  "starts_at": "2026-11-28T00:00:00Z",
+  "expires_at": "2026-12-05T00:00:00Z",
+  "rollback_revision": "",
+  "rollback_route": "main-full",
+  "limits": {
+    "max_changes": 10,
+    "max_age_seconds": 21600,
+    "lead_time_seconds": 1800
+  }
+}

@@ -216,8 +216,8 @@ promotion stays with #1104 and existing operator owners.
 
 ## Actual identities, permissions and proof still needed
 
-The real `.github/ci-policy.json` is a source prerequisite, not an identity field
-in the unsigned bundle. The first approved policy can use `rollback_route:
+The staged real `.github/ci-policy.json` is an inactive source proposal, not an
+identity field in the unsigned bundle or activation authority. The first approved policy can use `rollback_route:
 "main-full"` with empty `rollback_revision`, retaining the current control and
 turning new routing off as its stricter fallback. It needs no synthetic genesis
 control or future SHA. Default revision mode retains separately approved rollback
