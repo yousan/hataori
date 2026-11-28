@@ -23,6 +23,7 @@ import (
 // the key and repository identity; a new root cannot reset that lane's debt.
 // Approval declarations are requirements, not evidence: GitHub is queried too.
 type AuthorityRoot struct {
+	Candidate           *CandidateRequirement `json:",omitempty"`
 	CoordinatorDigest   string
 	RoutingEnabled      bool
 	IntegrationWrite    IntegrationWriteContract
@@ -135,6 +136,11 @@ func NewAdapter(key ed25519.PublicKey, payload, signature []byte, token string) 
 	if _, ok := root.Controls[root.CurrentControl]; !ok {
 		return nil, fmt.Errorf("current control unapproved")
 	}
+	if root.Candidate != nil {
+		if err := candidateShape(root.Candidate); err != nil {
+			return nil, err
+		}
+	}
 	return &Adapter{root: root, keyDigest: Digest(key), base: "https://api.github.com", token: token, clock: time.Now,
 		client: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf("API redirect refused") }}}, nil
 }
@@ -231,6 +237,7 @@ type reviewRecord struct {
 }
 type commitRecord struct {
 	SHA     string
+	Tree    struct{ SHA string }
 	Parents []struct{ SHA string }
 }
 type contentRecord struct {
@@ -238,7 +245,9 @@ type contentRecord struct {
 	Size                         int
 }
 type runRecord struct {
+	HeadBranch                      string    `json:"head_branch"`
 	CreatedAt                       time.Time `json:"created_at"`
+	UpdatedAt                       time.Time `json:"updated_at"`
 	ID                              int64
 	RunAttempt                      int    `json:"run_attempt"`
 	WorkflowID                      int64  `json:"workflow_id"`
@@ -251,6 +260,7 @@ type runRecord struct {
 	TriggeringActor                 Identity `json:"triggering_actor"`
 }
 type jobRecord struct {
+	CheckRunURL              string    `json:"check_run_url"`
 	StartedAt                time.Time `json:"started_at"`
 	CompletedAt              time.Time `json:"completed_at"`
 	ID                       int64
@@ -310,6 +320,7 @@ func (a *Adapter) reviews(ctx context.Context, pull int) ([]reviewRecord, error)
 
 // verifiedControl cannot be manufactured by a candidate-supplied Trust value.
 type verifiedControl struct {
+	approvedAt  time.Time
 	selection   Selection
 	requirement ControlRequirement
 	revision    string
@@ -325,6 +336,9 @@ func (a *Adapter) authorityDigest() string {
 	r.Bootstrap = BootstrapRequirement{}
 	r.Routes = nil
 	r.RoutingEnabled = false
+	// A candidate is its own frozen, sealed request, like an owner grant. It
+	// cannot change integration gate scope or reset coverage debt.
+	r.Candidate = nil
 	b, _ := json.Marshal(r)
 	return Digest(b)
 }
@@ -345,6 +359,7 @@ func (a *Adapter) control(ctx context.Context) (verifiedControl, error) {
 	}
 	policies := controlSource{}
 	approved := map[string]string{}
+	var approvedAt time.Time
 	for revision, requirement := range a.root.Controls {
 		var pr pullRecord
 		if err := a.request(ctx, "GET", fmt.Sprintf("%s/pulls/%d", a.prefix(), requirement.Pull), nil, &pr); err != nil {
@@ -359,6 +374,9 @@ func (a *Adapter) control(ctx context.Context) (verifiedControl, error) {
 		}
 		if err := reviewRequirements(reviews, requirement.Reviewers, requirement.Head, pr.MergedAt, pr.User.ID); err != nil {
 			return verifiedControl{}, err
+		}
+		if revision == a.root.CurrentControl {
+			approvedAt = pr.MergedAt
 		}
 		var owner Identity
 		if err := a.request(ctx, "GET", "/users/"+url.PathEscape(requirement.Owner.Login), nil, &owner); err != nil {
@@ -390,7 +408,7 @@ func (a *Adapter) control(ctx context.Context) (verifiedControl, error) {
 	if s.policy.Owner != c.Owner.Login {
 		return verifiedControl{}, fmt.Errorf("policy owner is not the verified responsible identity")
 	}
-	return verifiedControl{s, c, a.root.CurrentControl, a.authorityDigest()}, nil
+	return verifiedControl{selection: s, requirement: c, revision: a.root.CurrentControl, authority: a.authorityDigest(), approvedAt: approvedAt}, nil
 }
 
 func sweepTitle(s Sweep) string {
