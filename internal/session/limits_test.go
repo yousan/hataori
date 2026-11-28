@@ -162,6 +162,41 @@ func TestLimitLegacyAgeAndTrustedBinding(t *testing.T) {
 	}
 }
 
+// A missing reset is not authority to erase a known period. Conversely,
+// evidence of a later period is stronger than receipt order across sessions;
+// changing the window duration starts a different definition.
+func TestLimitResetEvidenceAcrossSessions(t *testing.T) {
+	m := limitMachine(t)
+	reset := time.Unix(1000000, 0)
+	for _, x := range []struct {
+		sid      int64
+		seq      uint64
+		minute   int
+		used     int
+		reset    time.Time
+		duration int64
+		wantUsed int
+		wantAt   int
+	}{
+		{1, 1, 10, 30, reset, 10080, 30, 10},
+		{2, 1, 20, 1, time.Time{}, 10080, 30, 10},
+		{2, 2, 30, 2, reset.Add(-24 * time.Hour), 10080, 30, 10},
+		{2, 3, 40, 20, reset, 10080, 20, 40},
+		{1, 2, 20, 2, reset.Add(24 * time.Hour), 10080, 2, 20},
+		{2, 4, 50, 99, reset, 10080, 2, 20},
+		{2, 5, 60, 1, time.Time{}, 60, 1, 60},
+	} {
+		in := limitInput(x.seq, x.minute, x.used, x.reset, true)
+		in.Agent.Limits.Windows[0].Minutes = x.duration
+		if err := m.Apply(context.Background(), x.sid, in); err != nil {
+			t.Fatal(err)
+		}
+		if used, at := keptLimit(t, m, "local", ""); used != x.wantUsed || at != limitInput(1, x.wantAt, 0, reset, true).Agent.Limits.At.UnixMilli() {
+			t.Fatalf("session %d minute %d: got %d at %d; want %d at minute %d", x.sid, x.minute, used, at, x.wantUsed, x.wantAt)
+		}
+	}
+}
+
 func TestLimitEncodingFailureRollsBackProvenanceAndSequence(t *testing.T) {
 	m := limitMachine(t)
 	in := limitInput(1, 1, 10, time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC), true)
