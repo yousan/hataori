@@ -147,12 +147,12 @@ A separate read-only live probe checks actual repository/ancestry/merge-time
 parsing and rejects the known partial draft run. It establishes no approval,
 dispatch, release/main proof or active configuration. No host tmux tests run.
 
-The next compatible increment must wire a trusted coordinator entry point and
-owner-compatible admission/Done route, prove execution-closure and dispatch
-contract against actual Actions, and preserve current main PR targets, upgrade
-requirements, gates and provider reviews. This is runnable work under #1103,
-not a new permission stage. Parent compatibility must be proved before adoption;
-activation stays off meanwhile. #1104 and existing operator owners retain frozen
-release-candidate/main provenance, publication and operator checks. Exact final
-ready-head and actual merged-main full CI remain required before claiming a
-merged/complete rollout. No unchanged queued macOS run is retried.
+The callable trusted coordinator, repository execution closure, owner opt-in
+admission/Done boundary and metadata summary are now implemented. See [entry
+point, inactive activation bundle and rollback](ci-coordinator-activation.md).
+No live root/key/credential, workflow dispatch or compatible owner hook is
+provisioned here. Actual registration/dispatch and parent/owner compatibility
+remain unproved; activation stays off. Existing main targets, upgrade requirements,
+gates and provider reviews remain unchanged. #1104 and existing operator owners
+retain release/main provenance and publication checks. Exact full ready-head and
+actual merged-main CI remain required before claiming a merged/complete rollout.

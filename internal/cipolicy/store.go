@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -48,6 +49,10 @@ func OpenStore(file string) (*Store, error) {
 	info, err := os.Lstat(abs)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
 		return nil, fmt.Errorf("store must be a private regular file")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || (stat.Uid != uint32(os.Geteuid()) && stat.Uid != 0) || stat.Nlink != 1 {
+		return nil, fmt.Errorf("untrusted store owner or alias")
 	}
 	u := url.URL{Scheme: "file", Path: abs}
 	if !fresh {
@@ -90,6 +95,22 @@ func OpenStore(file string) (*Store, error) {
 			db.Close()
 			return nil, err
 		}
+	}
+	// Compatible additive schema: never replace an existing lane or debt.
+	if err := s.transaction(context.Background(), func(c *sql.Conn) error {
+		for _, q := range []string{
+			`CREATE TABLE IF NOT EXISTS admission (id INTEGER PRIMARY KEY, pull INTEGER NOT NULL, head TEXT NOT NULL, base TEXT NOT NULL, grant_digest TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('reserved','integrated','withdrawn')), expires TEXT NOT NULL)`,
+			`CREATE TABLE IF NOT EXISTS admission_grant (pull INTEGER NOT NULL, head TEXT NOT NULL, base TEXT NOT NULL, digest TEXT NOT NULL, expires TEXT NOT NULL, PRIMARY KEY(pull,head,base,digest))`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS one_admission ON admission((1)) WHERE status='reserved'`,
+		} {
+			if _, err := c.ExecContext(context.Background(), q); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		db.Close()
+		return nil, err
 	}
 	return s, nil
 }

@@ -31,6 +31,9 @@ func capture(t *testing.T, name string, out any) {
 // This HTTP backend derives records from captured GitHub payloads. Explicitly
 // mutated positive variants test the adapter; they are NOT live approvals.
 type githubFixture struct {
+	candidate                                                *pullRecord
+	consent                                                  any
+	candidateReviews                                         []reviewRecord
 	mu                                                       sync.Mutex
 	adapter                                                  *Adapter
 	root                                                     AuthorityRoot
@@ -146,6 +149,22 @@ func (f *githubFixture) serve(w http.ResponseWriter, r *http.Request) {
 			v = f.root.Controls[f.root.CurrentControl].Owner
 		}
 		write(&v)
+		return
+	}
+	if f.candidate != nil {
+		if p == fmt.Sprintf("%s/pulls/%d", prefix, f.candidate.Number) {
+			v := *f.candidate
+			write(&v)
+			return
+		}
+		if p == fmt.Sprintf("%s/pulls/%d/reviews", prefix, f.candidate.Number) {
+			v := append([]reviewRecord{}, f.candidateReviews...)
+			write(&v)
+			return
+		}
+	}
+	if strings.Contains(p, "/issues/comments/") && f.consent != nil {
+		write(f.consent)
 		return
 	}
 	for revision, c := range f.root.Controls {
@@ -266,6 +285,13 @@ func (f *githubFixture) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workflow := f.root.Controls[f.root.CurrentControl].WorkflowID
+	if p == fmt.Sprintf("%s/actions/workflows/%d", prefix, workflow) {
+		var v map[string]any
+		captureValue, _ := os.ReadFile("testdata/github/workflow.json")
+		json.Unmarshal(captureValue, &v)
+		write(v)
+		return
+	}
 	if p == fmt.Sprintf("%s/actions/workflows/%d/dispatches", prefix, workflow) && r.Method == "POST" {
 		var request struct {
 			Ref    string

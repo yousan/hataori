@@ -23,6 +23,9 @@ import (
 // the key and repository identity; a new root cannot reset that lane's debt.
 // Approval declarations are requirements, not evidence: GitHub is queried too.
 type AuthorityRoot struct {
+	CoordinatorDigest   string
+	RoutingEnabled      bool
+	Routes              map[int]RouteGrant
 	MaxRequests         int
 	RiskReviewers       []Identity
 	RequiredPullReviews map[int][]Identity
@@ -46,6 +49,8 @@ type ControlRequirement struct {
 	ExecutionFiles                          map[string]string // approved execution closure: path -> SHA-256
 	LinuxJobs, MacOSJobs, CompatibilityJobs []string
 	RequiredSteps, RunnerLabels             map[string][]string
+	OptionalSkippedJobs                     []string
+	DevelopmentJobs                         []string
 }
 
 type Identity struct {
@@ -116,6 +121,12 @@ func NewAdapter(key ed25519.PublicKey, payload, signature []byte, token string) 
 					return nil, fmt.Errorf("ambiguous required job")
 				}
 				jobs[name] = true
+			}
+		}
+
+		for _, name := range c.DevelopmentJobs {
+			if name == "" || len(c.RequiredSteps[name]) == 0 || len(c.RunnerLabels[name]) == 0 {
+				return nil, fmt.Errorf("incomplete development feedback requirements")
 			}
 		}
 	}
@@ -192,6 +203,8 @@ type repoRecord struct {
 }
 type pullRecord struct {
 	Number   int
+	State    string
+	Draft    bool
 	Merged   bool
 	MergedAt time.Time `json:"merged_at"`
 	MergeSHA string    `json:"merge_commit_sha"`
@@ -201,6 +214,7 @@ type pullRecord struct {
 		Repo repoRecord
 	}
 	Base struct {
+		SHA  string
 		Ref  string
 		Repo repoRecord
 	}
@@ -221,6 +235,7 @@ type contentRecord struct {
 	Size                         int
 }
 type runRecord struct {
+	CreatedAt                       time.Time `json:"created_at"`
 	ID                              int64
 	RunAttempt                      int    `json:"run_attempt"`
 	WorkflowID                      int64  `json:"workflow_id"`
@@ -233,6 +248,8 @@ type runRecord struct {
 	TriggeringActor                 Identity `json:"triggering_actor"`
 }
 type jobRecord struct {
+	StartedAt                time.Time `json:"started_at"`
+	CompletedAt              time.Time `json:"completed_at"`
 	ID                       int64
 	RunID                    int64  `json:"run_id"`
 	Attempt                  int    `json:"run_attempt"`
@@ -303,6 +320,8 @@ func (a *Adapter) authorityDigest() string {
 	r := a.root
 	r.ExpiresAt = time.Time{}
 	r.Bootstrap = BootstrapRequirement{}
+	r.Routes = nil
+	r.RoutingEnabled = false
 	b, _ := json.Marshal(r)
 	return Digest(b)
 }
@@ -406,6 +425,46 @@ func (a *Adapter) completion(ctx context.Context, c verifiedControl, s Sweep, id
 	if r.Status != "completed" {
 		return nil, nil
 	}
+	jobs, err := a.jobs(ctx, s, id, attempt)
+	if err != nil {
+		return nil, err
+	}
+	known := map[string]bool{}
+	for _, list := range [][]string{c.requirement.LinuxJobs, c.requirement.MacOSJobs, c.requirement.CompatibilityJobs, c.requirement.DevelopmentJobs} {
+		for _, name := range list {
+			known[name] = true
+		}
+	}
+	for _, name := range c.requirement.OptionalSkippedJobs {
+		if j, ok := jobs[name]; ok && j.Status == "completed" && j.Conclusion == "skipped" {
+			known[name] = true
+		}
+	}
+	for name := range jobs {
+		if !known[name] {
+			return nil, fmt.Errorf("job outside approved scope manifest")
+		}
+	}
+	scope := func(names []string) string {
+		for _, name := range names {
+			j, ok := jobs[name]
+			if !ok || j.Status != "completed" || j.Conclusion != "success" || j.RunnerID <= 0 || !jobExecution(j, c.requirement.RequiredSteps[name], c.requirement.RunnerLabels[name]) {
+				return "failure"
+			}
+		}
+		if r.Conclusion != "success" {
+			return "failure"
+		}
+		return "success"
+	}
+	result := &Completion{Sweep: s, Linux: scope(c.requirement.LinuxJobs), MacOS: scope(c.requirement.MacOSJobs), Compatibility: "not_applicable"}
+	if s.CompatibilityRequired {
+		result.Compatibility = scope(c.requirement.CompatibilityJobs)
+	}
+	return result, nil
+}
+
+func (a *Adapter) jobs(ctx context.Context, s Sweep, id int64, attempt int) (map[string]jobRecord, error) {
 	jobs := map[string]jobRecord{}
 	ids := map[int64]bool{}
 	total := -1
@@ -440,34 +499,7 @@ func (a *Adapter) completion(ctx context.Context, c verifiedControl, s Sweep, id
 			return nil, fmt.Errorf("job enumeration limit")
 		}
 	}
-	known := map[string]bool{}
-	for _, list := range [][]string{c.requirement.LinuxJobs, c.requirement.MacOSJobs, c.requirement.CompatibilityJobs} {
-		for _, name := range list {
-			known[name] = true
-		}
-	}
-	for name := range jobs {
-		if !known[name] {
-			return nil, fmt.Errorf("job outside approved scope manifest")
-		}
-	}
-	scope := func(names []string) string {
-		for _, name := range names {
-			j, ok := jobs[name]
-			if !ok || j.Status != "completed" || j.Conclusion != "success" || j.RunnerID <= 0 || !jobExecution(j, c.requirement.RequiredSteps[name], c.requirement.RunnerLabels[name]) {
-				return "failure"
-			}
-		}
-		if r.Conclusion != "success" {
-			return "failure"
-		}
-		return "success"
-	}
-	result := &Completion{Sweep: s, Linux: scope(c.requirement.LinuxJobs), MacOS: scope(c.requirement.MacOSJobs), Compatibility: "not_applicable"}
-	if s.CompatibilityRequired {
-		result.Compatibility = scope(c.requirement.CompatibilityJobs)
-	}
-	return result, nil
+	return jobs, nil
 }
 
 // Observe never accepts external history, merge times, classification, success
@@ -686,6 +718,16 @@ func (a *Adapter) prepareDispatch(ctx context.Context, c verifiedControl, s Swee
 	if actor != a.root.Dispatcher {
 		return dispatchRequest{}, fmt.Errorf("untrusted dispatcher credential")
 	}
+	var workflow struct {
+		ID          int64
+		Path, State string
+	}
+	if err := a.request(ctx, "GET", fmt.Sprintf("%s/actions/workflows/%d", a.prefix(), c.requirement.WorkflowID), nil, &workflow); err != nil {
+		return dispatchRequest{}, err
+	}
+	if workflow.ID != c.requirement.WorkflowID || workflow.Path != c.requirement.WorkflowPath || workflow.State != "active" {
+		return dispatchRequest{}, fmt.Errorf("registered workflow contract mismatch")
+	}
 	for p, d := range c.requirement.ExecutionFiles {
 		b, err := a.content(ctx, s.Target, p)
 		if err != nil || Digest(b) != d {
@@ -713,7 +755,7 @@ func (a *Adapter) prepareDispatch(ctx context.Context, c verifiedControl, s Swee
 	if record.Object.SHA != s.Target {
 		return dispatchRequest{}, fmt.Errorf("frozen dispatch ref moved; quarantine")
 	}
-	body := map[string]any{"ref": strings.TrimPrefix(ref, "heads/"), "inputs": map[string]string{"intent": s.ID, "target": s.Target, "control": s.Control, "digest": s.Digest, "authority": s.Authority, "scope": strconv.FormatBool(s.CompatibilityRequired), "title": sweepTitle(s)}}
+	body := map[string]any{"ref": strings.TrimPrefix(ref, "heads/"), "inputs": map[string]string{"purpose": "sweep", "intent": s.ID, "from": s.From, "target": s.Target, "control": s.Control, "digest": s.Digest, "authority": s.Authority, "scope": strconv.FormatBool(s.CompatibilityRequired), "title": sweepTitle(s)}}
 	request, err := a.prepareRequest(ctx, "POST", fmt.Sprintf("%s/actions/workflows/%d/dispatches", a.prefix(), c.requirement.WorkflowID), body)
 	return dispatchRequest{request: request}, err
 }
