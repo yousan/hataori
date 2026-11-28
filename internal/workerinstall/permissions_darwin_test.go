@@ -13,6 +13,8 @@ import (
 
 const aclGuardRemoved = "HATAORI_TEST_INSTALL_ACL_GUARD_REMOVED"
 
+var darwinACLTargets = []string{"ancestor", "prefix", "versions", "trust-key", "selected.json", "binary", "install.lock"}
+
 // These native tests run only in macOS CI. chmod creates ACLs only on each
 // test's new disposable files/directories; no command output is parsed.
 func TestDarwinACLChecks(t *testing.T) {
@@ -20,7 +22,7 @@ func TestDarwinACLChecks(t *testing.T) {
 		checkPlatformACL = func(string) error { return nil }
 	}
 	f := newReleaseFixture(t)
-	for _, name := range []string{"ancestor", "prefix", "versions", "trust-key", "selected.json", "binary"} {
+	for _, name := range darwinACLTargets {
 		t.Run(name, func(t *testing.T) {
 			prefix := filepath.Join(privateTestDir(t), "install")
 			old := mustInstall(t, prefix, f.request(t, "v1", nil))
@@ -70,11 +72,36 @@ func TestDarwinACLChecks(t *testing.T) {
 func TestDarwinACLGuardRemoval(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDarwinACLChecks$", "-test.parallel=1")
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDarwin(ACLChecks|TrustKeyACLChecks)$", "-test.parallel=1")
 	cmd.Env = append(os.Environ(), aclGuardRemoved+"=1", "GOMAXPROCS=1")
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() != nil || err == nil || !strings.Contains(string(out), "unsafe ACL installation was accepted") {
 		t.Fatalf("ACL guard removal did not produce its required assertion failure: %v %s", err, out)
+	}
+	for _, name := range darwinACLTargets {
+		if !strings.Contains(string(out), "--- FAIL: TestDarwinACLChecks/"+name+" ") {
+			t.Fatalf("ACL guard removal missed %s: %s", name, out)
+		}
+	}
+	if !strings.Contains(string(out), "unsafe ACL trust source accepted") {
+		t.Fatalf("ACL guard removal missed enrollment authority: %s", out)
+	}
+}
+
+func TestDarwinTrustKeyACLChecks(t *testing.T) {
+	if os.Getenv(aclGuardRemoved) == "1" {
+		checkPlatformACL = func(string) error { return nil }
+	}
+	path := filepath.Join(privateTestDir(t), "source-key")
+	if err := os.WriteFile(path, bytes.Repeat([]byte{42}, 32), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("/bin/chmod", "+a", "everyone allow write,delete", path).CombinedOutput(); err != nil {
+		t.Fatalf("disposable key ACL: %v %s", err, out)
+	}
+	defer exec.Command("/bin/chmod", "-N", path).Run()
+	if _, err := ReadTrustKey(path); err == nil {
+		t.Fatal("unsafe ACL trust source accepted")
 	}
 }
 

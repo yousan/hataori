@@ -42,7 +42,7 @@ func workerInstallMain(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return exitError
 	}
-	key, err := readInstallInput(*trust, ed25519.PublicKeySize)
+	key, err := workerinstall.ReadTrustKey(*trust)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return exitError

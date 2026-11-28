@@ -2,13 +2,36 @@
   "scope": "isolated focused tests; no runtime/service-manager acceptance",
   "redaction": "Disposable absolute test paths, if printed, are replaced with <fixture-path>.",
   "source_sha256": {
+    "trust.go": "1795a04e54544e70b0ca49a5925f9c79078875634d62902ce59e57c0fea7559f",
     "manifest.go": "5d6c4716a3998b1507d662832d7d73df28db3229b997c469a21e3301b51c0af3",
-    "store.go": "844a2634362276a94da16a7a25ea0cd5ad20f3d9bfe6bc439eed2b89d6b48035",
+    "store.go": "f3540c108d6a0bbcc0b644eb30cb9ed6f6e80f127db5bdd8a1c7b3b1ff25f1f7",
     "binary.go": "09d17b2f7d2a62487df23a0ef5a6b3759cddbd0fbbbc37f6a073955cb9a91387",
     "permissions.go": "678cf7596f4838ebfdcb3db7ee5f8b0898ddac61e8cfc296811413d457e4efda",
     "service.go": "e448d6aa854b3c2a06f858ab8f165c200b1063aa5af533ebb251bc2226719116"
   },
   "results": [
+    {
+      "guard": "protected-enrollment-key",
+      "test": "TestTrustKeySourceProtection/writable-key",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestTrustKeySourceProtection (0.00s)",
+        "--- FAIL: TestTrustKeySourceProtection/writable-key (0.00s)",
+        "trust_test.go:41: mutable trust source accepted"
+      ]
+    },
+    {
+      "guard": "protected-enrollment-ancestors",
+      "test": "TestTrustKeySourceProtection/mutable-parent",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestTrustKeySourceProtection (0.00s)",
+        "--- FAIL: TestTrustKeySourceProtection/mutable-parent (0.00s)",
+        "trust_test.go:41: mutable trust source accepted"
+      ]
+    },
     {
       "guard": "manifest-provenance",
       "test": "TestVerifyRefusesBeforeInstallation",
@@ -36,8 +59,8 @@
       "exit": 1,
       "regression_failed": true,
       "failure_lines": [
-        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.08s)",
-        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions/checksum (0.07s)",
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.10s)",
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions/checksum (0.10s)",
         "store_test.go:195: unsafe installation accepted"
       ]
     },
@@ -47,7 +70,7 @@
       "exit": 1,
       "regression_failed": true,
       "failure_lines": [
-        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.06s)",
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.07s)",
         "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions/size_mismatch (0.06s)",
         "store_test.go:195: unsafe installation accepted"
       ]
@@ -58,8 +81,8 @@
       "exit": 1,
       "regression_failed": true,
       "failure_lines": [
-        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.05s)",
-        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions/reader_failure (0.05s)",
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.08s)",
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions/reader_failure (0.07s)",
         "store_test.go:195: unsafe installation accepted"
       ]
     },
@@ -69,14 +92,14 @@
       "exit": 1,
       "regression_failed": true,
       "failure_lines": [
-        "--- FAIL: TestCompletePlatformBinaries (1.40s)",
-        "--- FAIL: TestCompletePlatformBinaries/linux-amd64 (0.78s)",
+        "--- FAIL: TestCompletePlatformBinaries (0.94s)",
+        "--- FAIL: TestCompletePlatformBinaries/linux-amd64 (0.23s)",
         "platform_test.go:52: incomplete executable was not refused by segment validation: <nil>",
-        "--- FAIL: TestCompletePlatformBinaries/linux-arm64 (0.19s)",
+        "--- FAIL: TestCompletePlatformBinaries/linux-arm64 (0.26s)",
         "platform_test.go:52: incomplete executable was not refused by segment validation: <nil>",
         "--- FAIL: TestCompletePlatformBinaries/darwin-amd64 (0.21s)",
         "platform_test.go:52: incomplete executable was not refused by segment validation: <nil>",
-        "--- FAIL: TestCompletePlatformBinaries/darwin-arm64 (0.21s)",
+        "--- FAIL: TestCompletePlatformBinaries/darwin-arm64 (0.22s)",
         "platform_test.go:52: incomplete executable was not refused by segment validation: <nil>"
       ]
     },
@@ -86,7 +109,7 @@
       "exit": 1,
       "regression_failed": true,
       "failure_lines": [
-        "--- FAIL: TestInstallRetainsImmutableVersions (0.13s)",
+        "--- FAIL: TestInstallRetainsImmutableVersions (0.11s)",
         "store_test.go:106: reinstall rewrote old executable"
       ]
     },
@@ -96,8 +119,8 @@
       "exit": 1,
       "regression_failed": true,
       "failure_lines": [
-        "--- FAIL: TestInstallRefusesAdoptionAndLinks (0.03s)",
-        "--- FAIL: TestInstallRefusesAdoptionAndLinks/unregistered (0.02s)",
+        "--- FAIL: TestInstallRefusesAdoptionAndLinks (0.04s)",
+        "--- FAIL: TestInstallRefusesAdoptionAndLinks/unregistered (0.03s)",
         "store_test.go:229: nonempty prefix was not refused before adoption: <nil>"
       ]
     },
@@ -107,8 +130,8 @@
       "exit": 1,
       "regression_failed": true,
       "failure_lines": [
-        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.06s)",
-        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions/trust_key (0.06s)",
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.07s)",
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions/trust_key (0.07s)",
         "store_test.go:195: unsafe installation accepted"
       ]
     },
@@ -118,8 +141,8 @@
       "exit": 1,
       "regression_failed": true,
       "failure_lines": [
-        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.21s)",
-        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions/busy (0.21s)",
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.06s)",
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions/busy (0.06s)",
         "store_test.go:195: unsafe installation accepted"
       ]
     },
@@ -139,7 +162,7 @@
       "exit": 1,
       "regression_failed": true,
       "failure_lines": [
-        "--- FAIL: TestInstallRefusesMutableAncestors (0.03s)",
+        "--- FAIL: TestInstallRefusesMutableAncestors (0.04s)",
         "store_test.go:306: accepted installation below a mutable ancestor"
       ]
     },
@@ -149,7 +172,7 @@
       "exit": 1,
       "regression_failed": true,
       "failure_lines": [
-        "--- FAIL: TestInstallResolvesAncestorAliasesOnce (0.04s)",
+        "--- FAIL: TestInstallResolvesAncestorAliasesOnce (0.05s)",
         "store_test.go:333: retained a mutable executable/prefix alias"
       ]
     },
@@ -159,7 +182,7 @@
       "exit": 1,
       "regression_failed": true,
       "failure_lines": [
-        "--- FAIL: TestSignedForeignOperatingSystemKeepsSelection (0.33s)",
+        "--- FAIL: TestSignedForeignOperatingSystemKeepsSelection (0.38s)",
         "platform_test.go:110: accepted signed foreign-OS ELF as linux-amd64"
       ]
     },
@@ -169,7 +192,7 @@
       "exit": 1,
       "regression_failed": true,
       "failure_lines": [
-        "--- FAIL: TestSignedForeignOperatingSystemKeepsSelection (0.34s)",
+        "--- FAIL: TestSignedForeignOperatingSystemKeepsSelection (0.39s)",
         "platform_test.go:110: accepted signed foreign-OS ELF as linux-amd64"
       ]
     },
@@ -179,10 +202,10 @@
       "exit": 1,
       "regression_failed": true,
       "failure_lines": [
-        "--- FAIL: TestCompletePlatformBinaries (0.76s)",
-        "--- FAIL: TestCompletePlatformBinaries/linux-amd64 (0.20s)",
+        "--- FAIL: TestCompletePlatformBinaries (0.88s)",
+        "--- FAIL: TestCompletePlatformBinaries/linux-amd64 (0.22s)",
         "platform_test.go:52: incomplete executable was not refused by segment validation: <nil>",
-        "--- FAIL: TestCompletePlatformBinaries/linux-arm64 (0.18s)",
+        "--- FAIL: TestCompletePlatformBinaries/linux-arm64 (0.21s)",
         "platform_test.go:52: incomplete executable was not refused by segment validation: <nil>"
       ]
     },
@@ -192,10 +215,10 @@
       "exit": 1,
       "regression_failed": true,
       "failure_lines": [
-        "--- FAIL: TestCompletePlatformBinaries (0.85s)",
-        "--- FAIL: TestCompletePlatformBinaries/darwin-amd64 (0.20s)",
+        "--- FAIL: TestCompletePlatformBinaries (0.91s)",
+        "--- FAIL: TestCompletePlatformBinaries/darwin-amd64 (0.21s)",
         "platform_test.go:52: incomplete executable was not refused by segment validation: <nil>",
-        "--- FAIL: TestCompletePlatformBinaries/darwin-arm64 (0.24s)",
+        "--- FAIL: TestCompletePlatformBinaries/darwin-arm64 (0.25s)",
         "platform_test.go:52: incomplete executable was not refused by segment validation: <nil>"
       ]
     },

@@ -17,6 +17,13 @@ ROOT = Path(__file__).resolve().parents[3]
 PACKAGE = ROOT / "internal/workerinstall"
 
 CASES = [
+    ("protected-enrollment-key", "trust.go",
+     " || i.Mode().Perm()&0o022 != 0", "",
+     "TestTrustKeySourceProtection/writable-key"),
+    ("protected-enrollment-ancestors", "trust.go",
+     "if err = secureAncestors(parent); err != nil {",
+     "if err = secureAncestors(parent); false && err != nil {",
+     "TestTrustKeySourceProtection/mutable-parent"),
     ("manifest-provenance", "manifest.go",
      " || !ed25519.Verify(trusted, raw, signature)", "",
      "TestVerifyRefusesBeforeInstallation"),

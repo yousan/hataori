@@ -143,6 +143,9 @@ func openStore(path string, key ed25519.PublicKey, create bool) (_ *store, err e
 		if e = owned(inf, false); e != nil {
 			return nil, e
 		}
+		if e = checkPlatformACL(filepath.Join(s.path, "install.lock")); e != nil {
+			return nil, e
+		}
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return nil, e
 	}
@@ -150,8 +153,22 @@ func openStore(path string, key ed25519.PublicKey, create bool) (_ *store, err e
 	if err != nil {
 		return nil, err
 	}
+	locked, err := s.lock.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if err = owned(locked, false); err != nil {
+		return nil, err
+	}
+	if err = checkPlatformACL(filepath.Join(s.path, "install.lock")); err != nil {
+		return nil, err
+	}
 	if err = unix.Flock(int(s.lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		return nil, errors.New("worker install: installation is busy")
+	}
+	current, err := r.Lstat("install.lock")
+	if err != nil || !os.SameFile(locked, current) {
+		return nil, errors.New("worker install: lock identity changed")
 	}
 	return s, nil
 }

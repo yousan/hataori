@@ -129,3 +129,25 @@ func TestWorkerInstallCommandIsExplicitAndOffline(t *testing.T) {
 		t.Fatal("implicitly chose a service manager")
 	}
 }
+
+func TestWorkerInstallCommandRejectsMutableTrustSource(t *testing.T) {
+	for _, name := range []string{"key", "parent"} {
+		t.Run(name, func(t *testing.T) {
+			f := newWorkerReleaseFixture(t)
+			if name == "key" {
+				if err := os.Chmod(f.trust, 0o666); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Chmod(filepath.Dir(f.trust), 0o777); err != nil {
+				t.Fatal(err)
+			}
+			var out, stderr bytes.Buffer
+			if code := workerInstallMain(f.release(t, "v1"), &out, &stderr); code == 0 {
+				t.Fatal("mutable enrollment authority accepted")
+			}
+			if _, err := os.Stat(f.prefix); !os.IsNotExist(err) {
+				t.Fatal("unsafe enrollment touched installation prefix")
+			}
+		})
+	}
+}
