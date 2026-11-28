@@ -24,6 +24,7 @@ import { useEffect, useState } from "react";
 import { type AssertionOptions, PasskeyError, passkeyAnswer } from "./passkeys";
 import { mouseModes } from "./reports";
 import { authorized, sessionToken } from "./session";
+import { dashboardSocket } from "./transport";
 
 const mayPath = "/api/act/may";
 const checkPath = "/api/act/check";
@@ -153,7 +154,7 @@ export class Attachment {
     if (this.done) return; // closed or switched off while the check ran
     let ws: WebSocket;
     try {
-      ws = new WebSocket(`${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}${attachPath}`);
+      ws = dashboardSocket(attachPath);
     } catch {
       return this.end("failed");
     }
