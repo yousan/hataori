@@ -22,7 +22,7 @@ func TestCaptureTools(t *testing.T) {
 var (
 	slackID    = regexp.MustCompile(`\b(?:[UTCAFBGDWE][A-Z0-9]{8,}|Ev[A-Za-z0-9]{8,})\b`)
 	tokenShape = regexp.MustCompile(`(?:xox[bpe]-|xapp-)[A-Za-z0-9-]+`)
-	urlShape   = regexp.MustCompile(`(?:https?|wss)://[^\s<>"\\]+`)
+	urlShape   = regexp.MustCompile(`(?:https?|wss)://[^\s<>|"\\]+`)
 	emailShape = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)
 )
 
@@ -83,12 +83,23 @@ func TestLeakShapes(t *testing.T) {
 			t.Errorf("missed %s token shape", prefix)
 		}
 	}
-	for _, s := range []string{"UABCDEF1234", "https://files.slack.com/files-pri/test", "https://example.com/?signature=secret", "someone@corp.example", "/home/someone/file", "/Users/someone/file"} {
+	for _, s := range []string{
+		"UABCDEF1234", "https://files.slack.com/files-pri/test", "https://example.com/?signature=secret",
+		"someone@corp.example", "/home/someone/file", "/Users/someone/file",
+		`<https://files.slack.com/files-pri/test|test link label>`,
+		`<https://example.invalid/redacted-url-1|https://files.slack.com/files-pri/test>`,
+		`<https://example.invalid/redacted-url-1?signature=secret|test link label>`,
+	} {
 		if len(captureLeaks(s)) == 0 {
 			t.Error("missed leak shape")
 		}
 	}
-	if len(captureLeaks(`U0000000001 Ev0000000002 https://example.invalid/redacted-url-1 user1@example.com`)) != 0 {
-		t.Fatal("rejected placeholders")
+	for _, s := range []string{
+		`U0000000001 Ev0000000002 https://example.invalid/redacted-url-1 user1@example.com`,
+		`<https://example.invalid/redacted-url-1|test link label>`,
+	} {
+		if len(captureLeaks(s)) != 0 {
+			t.Fatal("rejected placeholders")
+		}
 	}
 }
