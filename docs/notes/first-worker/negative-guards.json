@@ -5,10 +5,10 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestFirstWorkerLostWriteReplyDedupAndCatchup (14.11s)",
+      "--- FAIL: TestFirstWorkerLostWriteReplyDedupAndCatchup (14.09s)",
       "first_worker_recovery_test.go:231: timed out waiting for all original worker turn ends committed",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t14.122s",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t14.109s",
       "FAIL"
     ]
   },
@@ -18,10 +18,10 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestFirstWorkerLostWriteReplyDedupAndCatchup (11.00s)",
+      "--- FAIL: TestFirstWorkerLostWriteReplyDedupAndCatchup (11.07s)",
       "first_worker_recovery_test.go:215: timed out waiting for unknown receipt blocks catch-up after restart",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t11.014s",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t11.084s",
       "FAIL"
     ]
   },
@@ -31,10 +31,10 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestFirstWorkerRemovalPreservesSoleCopy (0.99s)",
+      "--- FAIL: TestFirstWorkerRemovalPreservesSoleCopy (0.96s)",
       "first_worker_recovery_test.go:471: removal accepted untracked sole-copy file",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t1.010s",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t0.979s",
       "FAIL"
     ]
   },
@@ -65,7 +65,7 @@
       "first_worker_cleanup_test.go:85: TERM-resistant child did not exercise escalation",
       "first_worker_cleanup_test.go:93: reaped process was signalled again",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t2.086s",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t2.090s",
       "FAIL"
     ]
   },
@@ -75,10 +75,10 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestFirstWorkerGenerationWaitsForAuthorizedHandler (0.54s)",
+      "--- FAIL: TestFirstWorkerGenerationWaitsForAuthorizedHandler (0.82s)",
       "first_worker_cleanup_test.go:280: generation cleanup returned before authorized handler finished: <nil>",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t0.552s",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t0.838s",
       "FAIL"
     ]
   },
@@ -88,11 +88,11 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestFirstWorkerSSHAuthorityRejectsForeignConnection (0.59s)",
+      "--- FAIL: TestFirstWorkerSSHAuthorityRejectsForeignConnection (0.65s)",
       "first_worker_cleanup_test.go:217: foreign main generation was admitted",
       "first_worker_cleanup_test.go:220: foreign main generation created an SSH child",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t0.601s",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t0.663s",
       "FAIL"
     ]
   },
@@ -102,10 +102,10 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestFirstWorkerLateSSHDescendantExitEvidence (0.71s)",
+      "--- FAIL: TestFirstWorkerLateSSHDescendantExitEvidence (0.79s)",
       "first_worker_cleanup_test.go:434: late SSH descendant evidence missing",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t0.720s",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t0.806s",
       "FAIL"
     ]
   }
