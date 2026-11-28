@@ -55,6 +55,14 @@ func (s *Store) prepareIntegration(ctx context.Context, snap Snapshot, w integra
 		existing, err := integrationIntentAt(ctx, c, w.Pull)
 		if err == nil {
 			if existing.ID == i.ID {
+				// Fresh exact admission may renew a definitely unsent request.
+				// Once uncertainty is claimed its original deadline is frozen.
+				if existing.Status == "prepared" {
+					if _, err = c.ExecContext(ctx, "UPDATE integration_intent SET expires=? WHERE id=? AND status='prepared'", i.ExpiresAt.UTC().Format(time.RFC3339Nano), existing.ID); err != nil {
+						return err
+					}
+					existing.ExpiresAt = i.ExpiresAt
+				}
 				i = existing
 				return nil
 			}

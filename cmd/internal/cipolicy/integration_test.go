@@ -461,3 +461,168 @@ func TestOwnerNonUTCGrantExpiryUsesInstantIdentity(t *testing.T) {
 		t.Fatal("equivalent expiry timezone blocked first write", out, err, seam.posts)
 	}
 }
+
+func TestOwnerPreparedDeadlineRenewalAfterAuthorityExpiry(t *testing.T) {
+	c, f, seam := integrationFixture(t)
+	ctx := context.Background()
+	now := c.store.clock()
+	f.adapter.root.ExpiresAt = now.Add(time.Minute)
+	_, old, _ := prepareOwnerIntent(t, c, f)
+	now = now.Add(2 * time.Minute)
+	c.store.clock = func() time.Time { return now }
+	f.adapter.clock = c.store.clock
+	f.adapter.root.ExpiresAt = now.Add(30 * time.Minute)
+	out, err := c.Execute(ctx, "integrate", 1107, 0)
+	if err != nil || out.Route == nil || !out.Route.Integrated || seam.posts != 1 {
+		t.Fatal("same-ID definitely-unsent renewal stranded", out, err, seam.posts)
+	}
+	current, err := integrationIntentAt(ctx, c.store.db, 1107)
+	if err != nil || current.ID != old.ID || current.Status != "confirmed" || !current.ExpiresAt.Equal(f.adapter.root.ExpiresAt) {
+		t.Fatal("identity/deadline renewal mismatch", old, current, err)
+	}
+}
+
+func TestOwnerDeadlineRenewalClaimRaceFreezesSentIntent(t *testing.T) {
+	for _, claimFirst := range []bool{false, true} {
+		t.Run(fmt.Sprint(claimFirst), func(t *testing.T) {
+			c, f, seam := integrationFixture(t)
+			ctx := context.Background()
+			f.adapter.root.ExpiresAt = c.store.clock().Add(time.Minute)
+			snap, old, control := prepareOwnerIntent(t, c, f)
+			if claimFirst {
+				claim, err := c.store.claimIntegration(ctx, snap.Version, old, control.selection, f.adapter.root.ExpiresAt)
+				if err != nil || !claim {
+					t.Fatal(claim, err)
+				}
+			}
+			f.adapter.root.ExpiresAt = c.store.clock().Add(30 * time.Minute)
+			g := f.adapter.root.Routes[1107]
+			renewed, err := c.store.prepareIntegration(ctx, snap, old.Write, g, control.selection, f.adapter.root.ExpiresAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if renewed.ID != old.ID {
+				t.Fatal("renewal changed write identity")
+			}
+			if claimFirst {
+				if renewed.Status != "uncertain" || !renewed.ExpiresAt.Equal(old.ExpiresAt) {
+					t.Fatal("claimed deadline extended", old, renewed)
+				}
+			} else {
+				if renewed.Status != "prepared" || !renewed.ExpiresAt.After(old.ExpiresAt) {
+					t.Fatal("unsent deadline not renewed", old, renewed)
+				}
+				if claim, err := c.store.claimIntegration(ctx, snap.Version, old, control.selection, f.adapter.root.ExpiresAt); claim || err == nil {
+					t.Fatal("stale claim ignored renewal CAS", claim, err)
+				}
+				if claim, err := c.store.claimIntegration(ctx, snap.Version, renewed, control.selection, f.adapter.root.ExpiresAt); err != nil || !claim {
+					t.Fatal("renewed claim rejected", claim, err)
+				}
+			}
+			// A second invocation cannot send an already-claimed unknown write.
+			if _, err = c.Execute(ctx, "integrate", 1107, 0); !errors.Is(err, ErrAmbiguous) || seam.posts != 0 {
+				t.Fatal("unknown write replayed", err, seam.posts)
+			}
+		})
+	}
+}
+
+func TestOwnerConfirmedDeadlineAndExpiredAuthorityGrantRemainClosed(t *testing.T) {
+	c, f, seam := integrationFixture(t)
+	ctx := context.Background()
+	f.adapter.root.ExpiresAt = c.store.clock().Add(time.Minute)
+	if _, err := c.Execute(ctx, "integrate", 1107, 0); err != nil {
+		t.Fatal(err)
+	}
+	old, err := integrationIntentAt(ctx, c.store.db, 1107)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.adapter.root.ExpiresAt = c.store.clock().Add(30 * time.Minute)
+	if _, err = c.Execute(ctx, "integrate", 1107, 0); err != nil {
+		t.Fatal(err)
+	}
+	current, err := integrationIntentAt(ctx, c.store.db, 1107)
+	if err != nil || current != old || seam.posts != 1 {
+		t.Fatal("confirmed deadline mutated or sent again", old, current, err, seam.posts)
+	}
+	for _, expired := range []string{"root", "grant"} {
+		t.Run(expired, func(t *testing.T) {
+			c, f, seam := integrationFixture(t)
+			now := c.store.clock()
+			f.adapter.root.ExpiresAt = now.Add(time.Minute)
+			_, old, _ := prepareOwnerIntent(t, c, f)
+			if expired == "root" {
+				f.adapter.root.ExpiresAt = now
+			} else {
+				g := f.adapter.root.Routes[1107]
+				now = g.ExpiresAt
+				c.store.clock = func() time.Time { return now }
+				f.adapter.clock = c.store.clock
+				f.adapter.root.ExpiresAt = now.Add(time.Hour)
+			}
+			if _, err := c.Execute(ctx, "integrate", 1107, 0); err == nil || seam.posts != 0 {
+				t.Fatal("expired authority/grant renewed", expired, err, seam.posts)
+			}
+			current, err := integrationIntentAt(ctx, c.store.db, 1107)
+			if err != nil || current != old {
+				t.Fatal("invalid renewal changed intent", current, err)
+			}
+		})
+	}
+}
+
+func TestOwnerConcurrentDeadlineRenewalAndClaimCAS(t *testing.T) {
+	c, f, seam := integrationFixture(t)
+	ctx := context.Background()
+	f.adapter.root.ExpiresAt = c.store.clock().Add(time.Minute)
+	snap, old, control := prepareOwnerIntent(t, c, f)
+	f.adapter.root.ExpiresAt = c.store.clock().Add(30 * time.Minute)
+	var file string
+	if err := c.store.db.QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&file); err != nil {
+		t.Fatal(err)
+	}
+	other, err := OpenStore(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	other.clock = c.store.clock
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var renewed integrationIntent
+	var renewalErr, claimErr error
+	var claimed bool
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		renewed, renewalErr = c.store.prepareIntegration(ctx, snap, old.Write, f.adapter.root.Routes[1107], control.selection, f.adapter.root.ExpiresAt)
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		claimed, claimErr = other.claimIntegration(ctx, snap.Version, old, control.selection, f.adapter.root.ExpiresAt)
+	}()
+	close(start)
+	wg.Wait()
+	if renewalErr != nil {
+		t.Fatal(renewalErr)
+	}
+	current, err := integrationIntentAt(ctx, c.store.db, 1107)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed {
+		if claimErr != nil || current.Status != "uncertain" || !current.ExpiresAt.Equal(old.ExpiresAt) || renewed != current {
+			t.Fatal("claim-first freeze lost", current, renewed, claimErr)
+		}
+	} else {
+		if !errors.Is(claimErr, ErrConflict) || current.Status != "prepared" || !current.ExpiresAt.After(old.ExpiresAt) || renewed != current {
+			t.Fatal("renewal-first stale claim accepted", current, renewed, claimErr)
+		}
+	}
+	if current.ID != old.ID || seam.posts != 0 {
+		t.Fatal("race changed identity or sent", current, seam.posts)
+	}
+}
