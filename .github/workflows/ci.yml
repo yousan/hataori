@@ -29,7 +29,7 @@ jobs:
         if: github.event_name == 'pull_request' || github.event_name == 'push'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: '[[ "$BASE_SHA" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]'
+        run: '[[ "$BASE_SHA" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ && "$BASE_SHA" =~ [1-9a-f] ]]'
       - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         id: filter
         with:
