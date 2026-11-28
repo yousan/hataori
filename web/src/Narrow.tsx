@@ -1,3 +1,4 @@
+import { unavailable, visibleState } from "./machine";
 import { useEffect, useState } from "react";
 import type { ChatLayout, Event, HostTerminal, ScopeInfo, ThreadInfo } from "./api";
 import { hostLabel } from "./hostTerminals";
@@ -49,10 +50,12 @@ interface ListProps {
 export function NarrowList({ threads, attention, now, onOpen, hosts, onOpenHost, show, open, onShow, hidden, hiddenHosts }: ListProps) {
   const every = threads ?? [];
   const all = every.filter((x) => shows(show, x, open));
-  const needs = (x: ThreadInfo) => x.state === "waiting" || x.state === "failed";
+  const needs = (x: ThreadInfo) => visibleState(x) === "waiting" || visibleState(x) === "failed";
   const waiting = all.filter(needs);
-  const running = all.filter((x) => x.state === "running");
-  const rest = all.filter((x) => !needs(x) && x.state !== "running");
+  const running = all.filter((x) => visibleState(x) === "running");
+  const away = all.filter(unavailable);
+  const pending = all.filter((x) => !unavailable(x) && x.placement_pending);
+  const rest = all.filter((x) => !needs(x) && visibleState(x) !== "running" && !unavailable(x) && !x.placement_pending);
   const rows = (list: ThreadInfo[], why: boolean, label: string) => (
     <ul role="listbox" aria-label={label}>
       {list.map((x) => (
@@ -79,6 +82,8 @@ export function NarrowList({ threads, attention, now, onOpen, hosts, onOpenHost,
           {rows(running, false, t("narrow.running"))}
         </section>
       )}
+      {away.length > 0 && <section data-section="unavailable"><h2>{t("machine.unavailable")}</h2>{rows(away, false, t("machine.unavailable"))}</section>}
+      {pending.length > 0 && <section data-section="pending"><h2>{t("machine.pending")}</h2>{rows(pending, false, t("machine.pending"))}</section>}
       {rest.length > 0 && (
         <details data-section="rest">
           <summary>{t("narrow.rest", { n: rest.length })}</summary>
@@ -142,7 +147,7 @@ export function NarrowThread({ x, attention, workspace, subscribe, opens, scopes
       <div className="narrow-pane">
         <ThreadPane x={x} now={now} subscribe={subscribe} opens={opens} view={view} onView={onView} mayAct={mayAct} narrow onOpen={onOpen} />
       </div>
-      <Details x={x} attention={attention} workspace={workspace} subscribe={subscribe} opens={opens} scopes={scopes} layout={layout} withWaiting={false} />
+      <Details now={now} x={x} attention={attention} workspace={workspace} subscribe={subscribe} opens={opens} scopes={scopes} layout={layout} withWaiting={false} />
     </div>
   );
 }

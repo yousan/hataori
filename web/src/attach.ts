@@ -230,6 +230,12 @@ export class Attachment {
     this.end("ended");
   }
 
+  // Availability changed or the connection was lost. Drop pending keys
+  // immediately; a new deliberate attachment never inherits this queue.
+  lost(): void {
+    if (!this.done) this.end("lost");
+  }
+
   // close is the tab closed: the WebSocket closes at once.
   close(): void {
     this.done = true;

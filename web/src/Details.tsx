@@ -1,6 +1,9 @@
+import { MachineStatus } from "./MachineStatus";
+import { threadStateName } from "./machine";
+import { workspaceNotice } from "./cache";
 import type { ChatLayout, Event, ScopeInfo, ThreadInfo } from "./api";
 import { lang, t } from "./catalog";
-import { displayTitle, fullTitle, scopeName, stateName } from "./format";
+import { displayTitle, fullTitle, scopeName } from "./format";
 import type { Attention } from "./live";
 import { eventLine, useThreadEvents } from "./threadEvents";
 import { noWorkspace, type Workspace } from "./workspaces";
@@ -90,14 +93,15 @@ interface Props {
   // withWaiting shows what the thread waits on at the top; a view that
   // shows it elsewhere leaves it out here.
   withWaiting?: boolean;
+  now: number;
 }
 
 // Details is the panel on the right for the active tab's thread. Every
 // value comes from the control API; one it leaves out is a dash. It only
 // shows: nothing in it answers, sends or changes anything.
-export function Details({ x, attention, workspace, subscribe, opens, scopes, layout, withWaiting = true }: Props) {
+export function Details({ x, attention, workspace, subscribe, opens, scopes, layout, now, withWaiting = true }: Props) {
   if (!x) return <p className="empty">{t("details.none")}</p>;
-  const ws = workspace && workspace !== "unreadable" ? workspace : undefined;
+  const ws = workspace?.data;
   const none = noWorkspace(x);
   const pct = x.context && x.context.size > 0 ? Math.round((100 * x.context.used) / x.context.size) : null;
   const n = (v: number | undefined) => (v === undefined ? dash() : numbers.format(v));
@@ -106,9 +110,10 @@ export function Details({ x, attention, workspace, subscribe, opens, scopes, lay
       {withWaiting && attention && <Waiting a={attention} />}
       <section data-block="thread">
         <h3>{t("details.thread")}</h3>
+        <MachineStatus x={x} now={now} />
         <dl>
           <Field name="title" label={t("details.title")} value={displayTitle(x) || dash()} tip={fullTitle(x)} />
-          <Field name="state" label={t("details.state")} value={stateName(x.state)} />
+          <Field name="state" label={t("details.state")} value={threadStateName(x)} />
           <Field name="scope" label={t("details.scope")} value={x.scope ? scopeName(x.scope, scopes, layout) : dash()} tip={x.scope} />
           <Field
             name="startedBy"
@@ -142,6 +147,7 @@ export function Details({ x, attention, workspace, subscribe, opens, scopes, lay
       </section>
       <section data-block="workspace">
         <h3>{t("details.workspace")}</h3>
+        {!none && workspaceNotice(x, workspace, now) && <p className="cached" data-workspace-unavailable="">{workspaceNotice(x, workspace, now)}</p>}
         {none && (
           <p className="empty" data-field="noWorkspace" data-why={none}>
             {t(none === "supervisor" ? "details.noRepo" : "details.threadRemoved")}

@@ -1,3 +1,4 @@
+import { unavailable } from "./machine";
 // useDashboard keeps the page's picture of the threads: the list from the
 // server, what each thread that needs attention is waiting on, and the
 // event stream that says when to read them again. The server is the only
@@ -141,6 +142,7 @@ export function useDashboard(): Dashboard {
     opens: 0,
   });
   const reads = useRef(0);
+  const snapshotTimes = useRef(new Map<number, string>());
   const listeners = useRef(new Set<(e: Event) => void>());
   const subscribe = useRef((f: (e: Event) => void) => {
     listeners.current.add(f);
@@ -172,7 +174,15 @@ export function useDashboard(): Dashboard {
         readClients();
         // The layout is read with the list: a layout event, like any other,
         // brings a read.
-        const [ts, ss, ls] = await Promise.all([threads(), scopes(), layout()]);
+        const [received, ss, ls] = await Promise.all([threads(), scopes(), layout()]);
+        if (closed || n !== reads.current) return;
+        const at = new Date().toISOString();
+        const listed = new Set(received.map((x) => x.id));
+        for (const id of snapshotTimes.current.keys()) if (!listed.has(id)) snapshotTimes.current.delete(id);
+        const ts = received.map((x) => {
+          if (!unavailable(x) && !x.placement_pending) snapshotTimes.current.set(x.id, at);
+          return { ...x, snapshotReadAt: snapshotTimes.current.get(x.id) };
+        });
         // A thread that goes away between the list and its detail keeps
         // the list good: it shows without what it waits on until the next
         // read.

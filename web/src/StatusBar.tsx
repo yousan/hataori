@@ -1,6 +1,8 @@
+import { MachineStatus } from "./MachineStatus";
+import { threadStateName, visibleState } from "./machine";
 import type { AgentLimits, ClientState, ThreadInfo } from "./api";
 import { t } from "./catalog";
-import { contextUse, stateName, when, windowName } from "./format";
+import { contextUse, when, windowName } from "./format";
 import type { Live } from "./live";
 import { Passkeys } from "./Passkeys";
 import { Trusts } from "./Trusts";
@@ -80,7 +82,8 @@ export function StatusBar({ selected: x, live, limits, clients, now, signedIn, o
         {x ? (
           <>
             <span>{t("thread.number", { n: x.id })}</span>
-            <span className={`state-text state-${x.state}`}>{stateName(x.state)}</span>
+            <span className={`state-text state-${visibleState(x)}`}>{threadStateName(x)}</span>
+            <MachineStatus x={x} now={now} />
             {x.model && <span>{x.model}</span>}
             {contextUse(x) && <span>{contextUse(x)}</span>}
             {x.terminal && <span className="device">{x.terminal}</span>}

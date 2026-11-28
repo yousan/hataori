@@ -6,6 +6,26 @@
 // values in braces, such as {n}; t fills them in.
 
 const en = {
+  "machine.key": "Machine: {machine}",
+  "machine.pending": "Pending placement",
+  "machine.pendingReason": "Pending placement: {reason}",
+  "machine.noReason": "waiting for admission",
+  "machine.checking": "Checking machine",
+  "machine.away": "Machine away",
+  "machine.catching_up": "Machine catching up",
+  "machine.unavailable": "Machine unavailable",
+  "machine.since": "{state} since {time}",
+  "machine.lastKnown": "Last known state: {state}",
+  "machine.lastKnownAt": "Last known state: {state} at {time}",
+  "machine.outputPaused": "Output unavailable: {reason}",
+  "machine.workspaceUnavailable": "Workspace unavailable",
+  "machine.workspaceCached": "Workspace unavailable · cached {age} ago ({time})",
+  "machine.statsUnknown": "Cached statistics · last read time unavailable",
+  "machine.statsCached": "Cached statistics · last read {age} ago ({time})",
+  "machine.outputCached": "Output unavailable · cached {age} ago ({time})",
+  "machine.outputUnavailable": "Output unavailable · no cached output",
+  "machine.attachmentLost": "Read-only again: the connection was lost. Keys were not replayed.",
+
   "app.title": "hataori dashboard",
   "app.readOnly": "read-only",
   "app.signedOut": "Not signed in, or the session has ended. Open a new sign-in link.",
@@ -376,6 +396,26 @@ export type Key = keyof typeof en;
 export type Catalog = { readonly [K in Key]: string };
 
 const ja: Catalog = {
+  "machine.key": "マシン: {machine}",
+  "machine.pending": "配置待ち",
+  "machine.pendingReason": "配置待ち: {reason}",
+  "machine.noReason": "受け入れ待ち",
+  "machine.checking": "マシン確認中",
+  "machine.away": "マシン不在",
+  "machine.catching_up": "マシン同期中",
+  "machine.unavailable": "マシン利用不可",
+  "machine.since": "{time}から{state}",
+  "machine.lastKnown": "最後に確認した状態: {state}",
+  "machine.lastKnownAt": "最後に確認した状態: {time}時点で{state}",
+  "machine.outputPaused": "出力を取得できません: {reason}",
+  "machine.workspaceUnavailable": "作業ディレクトリを取得できません",
+  "machine.workspaceCached": "作業ディレクトリを取得できません · {age}前のキャッシュ ({time})",
+  "machine.statsUnknown": "統計のキャッシュ · 読み取り時刻不明",
+  "machine.statsCached": "統計のキャッシュ · 最後の読み取り: {age}前 ({time})",
+  "machine.outputCached": "出力を取得できません · {age}前のキャッシュ ({time})",
+  "machine.outputUnavailable": "出力を取得できません · キャッシュなし",
+  "machine.attachmentLost": "読み取り専用: 接続が切れました。キーは再送されません。",
+
   "app.title": "hataori ダッシュボード",
   "app.readOnly": "読み取り専用",
   "app.signedOut": "サインインしていないか、セッションが終了しました。新しいサインインリンクを開いてください。",

@@ -1,8 +1,10 @@
+import { MachineStatus } from "./MachineStatus";
+import { threadStateName, unavailableStates, visibleState } from "./machine";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type AgentLimits, type ChatLayout, type ClientState, type HostTerminal, type Me, type ScopeInfo, type State, states, type ThreadInfo } from "./api";
 import { type ChatChannel, type ChatItem, chatTree } from "./chatTree";
 import { hostID, hostMatches } from "./hostTerminals";
-import { t } from "./catalog";
+import { type Key, t } from "./catalog";
 import { age, contextUse, displayTitle, fullTitle, matches, scopeLabel, stateName, when, windowName } from "./format";
 import type { Attention } from "./live";
 import { type OpenInChat, type Show, shows } from "./show";
@@ -88,13 +90,13 @@ export function Row(props: {
   level?: number; // in the tree: its depth, 2 when not given
   rail?: Rail;
 }) {
-  const { x, attention, why, selected, onSelect, parent, level, rail } = props;
+  const { x, now, attention, why, selected, onSelect, parent, level, rail } = props;
   const ctx = contextUse(x);
   return (
     <li
       className={(selected ? "row selected" : "row") + railClass(rail)}
       data-thread={x.id}
-      data-state={x.state}
+      data-state={visibleState(x)}
       role={parent ? "treeitem" : "option"}
       aria-level={parent ? (level ?? 2) : undefined}
       data-tree-item={parent ? `thread:${x.id}` : undefined}
@@ -115,8 +117,9 @@ export function Row(props: {
             {displayTitle(x)}
           </span>
           <span className="num">{t("thread.number", { n: x.id })}</span>
-          {x.state !== "asleep" && <span className={`dot state-${x.state}`} data-dot={x.state} title={stateName(x.state)} />}
+          {x.state !== "asleep" && <span className={`dot state-${visibleState(x)}`} data-dot={visibleState(x)} title={threadStateName(x)} />}
         </div>
+        <MachineStatus x={x} now={now} />
         {why && attention && <div className="why">{attentionText(attention)}</div>}
         <div className="line2">
           {x.model && <span className="model">{x.model}</span>}
@@ -205,7 +208,7 @@ function Node(props: {
         {!chat && dots && dots.length > 0 && (
           <span className="dots" data-dots={dots.length}>
             {dots.slice(0, maxDots).map((x) => (
-              <span key={x.id} className={`dot state-${x.state}`} title={stateName(x.state)} />
+              <span key={x.id} className={`dot state-${visibleState(x)}`} title={threadStateName(x)} />
             ))}
           </span>
         )}
@@ -390,8 +393,8 @@ export function Tree(props: Props) {
     .filter(([, list]) => !filtering || list.length > 0)
     .map(([scope, list]) => ({ scope, label: label(scope), list: [...list].sort(newestFirst) }))
     .sort((a, b) => a.label.localeCompare(b.label) || a.scope.localeCompare(b.scope));
-  const counts = new Map<State, number>();
-  for (const x of all) counts.set(x.state, (counts.get(x.state) ?? 0) + 1);
+  const counts = new Map<string, number>();
+  for (const x of all) counts.set(visibleState(x), (counts.get(visibleState(x)) ?? 0) + 1);
   const hostsShown = hosts?.filter((h) => hostMatches(h, filter)) ?? [];
   const open = (node: string, found: boolean) => (filtering ? found && !(filterFolds[node] ?? false) : !folded(node));
   const fold = (node: string, f: boolean) => {
@@ -589,12 +592,12 @@ export function Tree(props: Props) {
         </div>
       </div>
       <ul className="counts" aria-label={t("tree.counts")}>
-        {states
+        {[...states, ...unavailableStates]
           .filter((s) => counts.has(s))
           .map((s) => (
             <li key={s} data-count={s} data-n={counts.get(s)}>
               <span className={`dot state-${s}`} />
-              {t("state.count", { state: stateName(s), n: counts.get(s) ?? 0 })}
+              {t("state.count", { state: states.some((v) => v === s) ? stateName(s as State) : t(`machine.${s}` as Key), n: counts.get(s) ?? 0 })}
             </li>
           ))}
       </ul>

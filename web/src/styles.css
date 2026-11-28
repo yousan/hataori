@@ -2279,3 +2279,16 @@ a.chat-link:hover {
 .usage-resets {
   margin-left: 4px;
 }
+
+/* Availability is visible even in dense rows; it is not a session state. */
+.machine-status { display: flex; flex-wrap: wrap; gap: .2em .6em; font-size: .85em; overflow-wrap: anywhere; min-width: 0; }
+.row .machine-status { margin-top: .2em; }
+.machine-status [data-availability], .machine-status [data-placement-pending], .cached { color: var(--muted); }
+.cached { display: block; font-size: .85em; white-space: normal; overflow-wrap: anywhere; }
+.state-away, .state-checking, .state-catching_up, .state-unavailable, .state-pending { --st: var(--muted); color: var(--muted); }
+.dot.state-away, .dot.state-checking, .dot.state-catching_up, .dot.state-unavailable, .dot.state-pending { background: currentColor; animation: none; }
+.pane-head > .machine-status { flex: 1; }
+.status .machine-status { max-width: 36em; }
+
+.all-threads td[data-col="age"] .machine-status,
+.all-threads td[data-col="age"] .cached { max-width: 20ch; white-space: normal; }

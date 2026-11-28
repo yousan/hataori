@@ -1,3 +1,4 @@
+import { unavailable } from "./machine";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { t } from "./catalog";
 import { useLayout } from "./layout";
@@ -167,14 +168,18 @@ export function App() {
   };
   const typingFor = (k: TabKey, n: number): Typing => {
     const phase = atts.get(k)?.phase;
+    const x = d.threads?.find((x) => x.id === n);
+    const ready = !!x && !unavailable(x) && !x.placement_pending;
     return {
-      allowed: mayAct && (!web() || phase === "on" || phase === "starting"),
-      attached: mayAct && phase === "on",
+      allowed: ready && mayAct && (!web() || phase === "on" || phase === "starting"),
+      attached: ready && mayAct && phase === "on",
       onResize: (cols, rows) => {
+        if (!ready) return;
         const a = attachments.current.get(k);
         if (a?.live) a.resize(cols, rows);
       },
       onKeys: (keys) => {
+        if (!ready) return;
         let a = attachments.current.get(k);
         if (!a?.live) {
           if (web()) return; // the switch is off
@@ -187,18 +192,29 @@ export function App() {
       },
     };
   };
-  const switchFor = (k: TabKey, n: number): AttachSwitch | undefined =>
-    mayAct && web()
+  const switchFor = (k: TabKey, n: number): AttachSwitch | undefined => {
+    const x = d.threads?.find((x) => x.id === n);
+    const blocked = !x || unavailable(x) || !!x.placement_pending;
+    return mayAct
       ? {
           state: atts.get(k),
+          canSwitch: web(),
+          disabled: blocked,
           onSwitch: () => {
             const now = attachments.current.get(k);
             if (now?.live) now.stop();
-            else attach(k, n);
+            else if (!blocked) attach(k, n);
           },
         }
       : undefined;
+  };
   useEffect(() => () => attachments.current.forEach((a) => a.close()), []);
+  useEffect(() => {
+    for (const [k, a] of attachments.current) {
+      const x = d.threads?.find((x) => x.id === threadOf(k));
+      if (x && (unavailable(x) || x.placement_pending)) a.lost();
+    }
+  }, [d.threads]);
   const attached = [...atts.values()].find((s) => s.phase === "on")?.thread;
 
   const paneThread = (k: TabKey) => {
@@ -451,6 +467,7 @@ export function App() {
               host(currentHost) ? <HostDetails h={host(currentHost)!} now={now} /> : <p className="empty">{t("host.gone")}</p>
             ) : (
             <Details
+              now={now}
               x={current === null ? undefined : thread(current)}
               attention={current === null ? undefined : d.attention.get(current)}
               workspace={current === null ? undefined : workspaces.get(current)}

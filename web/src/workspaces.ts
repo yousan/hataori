@@ -6,9 +6,20 @@
 // few run at once, and of a thread's reads only the newest answer counts.
 
 import { useEffect, useRef, useState } from "react";
+import { unavailable } from "./machine";
 import { type ThreadInfo, type WorkspaceState, workspace } from "./api";
 
-export type Workspace = WorkspaceState | "unreadable";
+export interface Workspace {
+  data?: WorkspaceState;
+  at?: string;
+  unavailable: boolean;
+}
+
+// A failed read preserves the last successful observation and its time.
+// Never turn an unknown workspace into a zero-change workspace.
+export function workspaceResult(previous: Workspace | undefined, data?: WorkspaceState): Workspace {
+  return data ? { data, at: new Date().toISOString(), unavailable: false } : { ...previous, unavailable: true };
+}
 
 // noWorkspace says why the server has no workspace of x to read: x is a
 // supervisor's thread, whose directory holds no repository, or x was
@@ -22,7 +33,7 @@ const refreshEvery = 60000;
 const atOnce = 4;
 
 function moment(x: ThreadInfo): string {
-  return `${x.state}|${x.updated}|${x.turns ?? 0}`;
+  return `${x.state}|${x.updated}|${x.turns ?? 0}|${x.machine ?? ""}|${x.availability?.state ?? ""}|${x.availability?.at ?? ""}|${!!x.placement_pending}`;
 }
 
 export function useWorkspaces(threads: ThreadInfo[] | null, shown: boolean, selected: number | null): ReadonlyMap<number, Workspace> {
@@ -41,20 +52,19 @@ export function useWorkspaces(threads: ThreadInfo[] | null, shown: boolean, sele
       const queued = queue.current.shift()!;
       // It may have been removed, or be listed no more, since it was queued.
       const x = latest.current.find((y) => y.id === queued.id);
-      if (!x || noWorkspace(x)) continue;
+      if (!x || noWorkspace(x) || unavailable(x) || x.placement_pending) continue;
       const n = ++seq.current;
       asked.current.set(x.id, n);
       running.current++;
       workspace(x.id)
-        .then((w): Workspace => w)
-        .catch((): Workspace => "unreadable")
+        .catch(() => undefined)
         .then((w) => {
           running.current--;
           // An older read, or one of a thread that has none any more or is
           // no longer listed, is dropped.
-          const still = latest.current.some((y) => y.id === x.id && !noWorkspace(y));
+          const still = latest.current.find((y) => y.id === x.id && !noWorkspace(y));
           if (asked.current.get(x.id) === n && still) {
-            setStates((m) => new Map(m).set(x.id, w));
+            setStates((m) => new Map(m).set(x.id, workspaceResult(m.get(x.id), unavailable(still) || still.placement_pending ? undefined : w)));
           }
           pump();
         });
@@ -62,6 +72,12 @@ export function useWorkspaces(threads: ThreadInfo[] | null, shown: boolean, sele
   }).current;
   const ask = (x: ThreadInfo) => {
     if (noWorkspace(x)) return;
+    if (unavailable(x) || x.placement_pending) {
+      // Invalidate an in-flight ready read before retaining any cache.
+      asked.current.set(x.id, ++seq.current);
+      setStates((m) => new Map(m).set(x.id, workspaceResult(m.get(x.id))));
+      return;
+    }
     queue.current = [...queue.current.filter((y) => y.id !== x.id), x];
     pump();
   };

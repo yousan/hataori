@@ -1,10 +1,11 @@
+import { threadStateName, visibleState } from "./machine";
 import { useEffect, useRef, useState } from "react";
 import type { HostTerminal, ThreadInfo } from "./api";
 import { hostLabel } from "./hostTerminals";
 import { clock, left, type OpState } from "./operate";
 import type { AttachState } from "./attach";
 import { t } from "./catalog";
-import { age, displayTitle, fullTitle, mark, stateName } from "./format";
+import { age, displayTitle, fullTitle, mark } from "./format";
 import type { Layout } from "./layout";
 import { type Show, ShowTool } from "./show";
 import { ToolIcon } from "./ToolIcon";
@@ -86,14 +87,14 @@ function Tab(props: {
         onKeyDown={(e) => onKey(e, k)}
       >
         {n !== null && x && (
-          <span className={`agent-mark state-${x.state}`} title={stateName(x.state)}>
+          <span className={`agent-mark state-${visibleState(x)}`} title={threadStateName(x)}>
             {mark(x)}
           </span>
         )}
         <span className="tab-title" title={(x && fullTitle(x)) || undefined}>
           {name}
         </span>
-        {x?.state === "running" && <span className="elapsed">{age(x.updated, now)}</span>}
+        {x && visibleState(x) === "running" && <span className="elapsed">{age(x.updated, now)}</span>}
         {b && (
           <span className={`badge badge-${b}`} data-badge={b}>
             {t(b === "question" ? "tabs.question" : "tabs.failed")}

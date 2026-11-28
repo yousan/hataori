@@ -1,7 +1,10 @@
+import { workspaceNotice } from "./cache";
+import { MachineStatus } from "./MachineStatus";
+import { stateSince, threadStateName, visibleState } from "./machine";
 import type { ReactNode } from "react";
 import type { ScopeInfo, ThreadInfo } from "./api";
 import { type Key, lang, t } from "./catalog";
-import { age, displayTitle, fullTitle, scopeLabel, stateName } from "./format";
+import { age, displayTitle, fullTitle, scopeLabel } from "./format";
 import { type OpenInChat, type Show, shows } from "./show";
 import type { Workspace } from "./workspaces";
 
@@ -40,7 +43,7 @@ const columns: { col: Column; head: Key }[] = [
 
 // readable is the workspace of a thread when it could be read.
 function readable(w: Workspace | undefined) {
-  return w && w !== "unreadable" ? w : undefined;
+  return w?.data;
 }
 
 // contextPct is a thread's context use in percent, or null when the agent
@@ -65,7 +68,7 @@ function hasValue(c: Column, x: ThreadInfo, w: Workspace | undefined): boolean {
       return !!readable(w)?.branch;
     case "changes":
     case "unpushed":
-      return !!readable(w);
+      return !!w;
     case "last":
       return !!x.last;
   }
@@ -81,12 +84,12 @@ function Row(props: { x: ThreadInfo; w: Workspace | undefined; now: number; sele
     <tr
       className={selected ? "selected" : undefined}
       data-thread={x.id}
-      data-state={x.state}
+      data-state={visibleState(x)}
       aria-current={selected ? "true" : undefined}
       onClick={() => onOpen(x.id)}
     >
       <td data-col="state">
-        <span className={`dot state-${x.state}`} title={stateName(x.state)} />
+        <span className={`dot state-${visibleState(x)}`} title={threadStateName(x)} />
       </td>
       <td data-col="number">
         <button
@@ -113,8 +116,10 @@ function Row(props: { x: ThreadInfo; w: Workspace | undefined; now: number; sele
           {t("table.agentModel", { agent: x.agent || dash(), model: x.model || dash() })}
         </td>,
       )}
-      <td data-col="age" data-since={x.updated}>
-        {t("table.stateAge", { state: stateName(x.state), age: age(x.updated, now) })}
+      <td data-col="age" data-since={stateSince(x)}>
+        {t("table.stateAge", { state: threadStateName(x), age: age(stateSince(x), now) })}
+        <MachineStatus x={x} now={now} />
+        {workspaceNotice(x, w, now) && <span className="cached" data-workspace-unavailable="">{workspaceNotice(x, w, now)}</span>}
       </td>
       {cell(
         "context",
