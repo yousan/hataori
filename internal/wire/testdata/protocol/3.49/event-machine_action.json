@@ -1,0 +1,1 @@
+{"id":1,"event":{"pos":42,"thread":7,"scope":"C0123","time":"2026-01-02T03:04:05.678Z","kind":"machine_action","data":{"action":"stop","state":"pending","reason":"No stop has been performed; waiting for reconciliation."}}}

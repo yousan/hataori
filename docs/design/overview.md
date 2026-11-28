@@ -2985,6 +2985,7 @@ Remaining usage per agent is `Limits`, declared above (#211), from the sources t
 | The `input_waits` event, and a `Send` to a conversation with the supervisor that waits for its place (section 7.1, *Several at once*, #875) | minor: a new event kind; 3.39 |
 | `ThreadInfo.Links` of `ThreadLink`, a `LinkRef` with `opened`: whether the client opened the conversation (section 5.2, #870) | minor: a new optional field; 3.40 |
 | `Files`, with `FilesRequest`, `FilesAnswer` and `ScopeFile`: a supervisor's session lists, reads, writes and edits the files of its directory (section 7.1, *No write is lost*, #868) | minor: a new operation; 3.41 |
+| `ReadChat`, with `ReadChatRequest` and `ReadChatAnswer`: token-scoped public service history, 50 entries/16 KiB, trust-filtered and marked before delivery (#894); runtime binding pending prerequisites | minor: a new operation; 3.49 |
 | `WorkspaceState.PullRequest` | minor, and only after its research |
 
 Declared above, in protocol 1.5: `ThreadInfo`'s `agent`, `model`, `effort`, `turns`, `last` and `background`; `Thread`'s argument `events` and `ThreadDetail.events`. In protocol 1.8: `ThreadInfo`'s `context` and `tokens`, and the fields of the `usage` event. In protocol 1.9: `Terminal`, which turns its connection into a stream as `Events` does. In protocol 1.12: `ThreadInfo.terminal`, the terminal device its session host opened, for the tree's filter, the status bar and the details panel (#285); `HostTerminals` still leaves these terminals out.
