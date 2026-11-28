@@ -417,3 +417,65 @@ The CLI writes the lines of a warning that start with ⚠ in bold, also where th
 | `trust_marks_refused`, `_allowed` | `Bash(café x)` with one accent of its own, `Bash(rm -rf x)` with 14 behind `rm`, `Bash(ls:*)`, `Bash(git diff:*)` | ordinary, without and with `TrustFiles` | as `trust_warnings_dirs_refused` and `_allowed`, the rules quoted as drawn |
 | `trust_marks_emoji` | `Bash(❤️x y)`, `Bash(1️⃣x y)` and `Bash(⌚️x y)`, each with U+FE0F, for which the CLI counts two columns with its character, and `Bash(ls:*)` | ordinary, no `TrustFiles` | as `trust_warnings_dirs_refused`, the rules quoted as drawn |
 | `trust_marks_sign` | `Bash(éé⚠ x)` with two accents of their own, `Bash(ls:*)` | ordinary, `TrustFiles` | nothing: a warning sign in the rules. No key and no event within 15 s. |
+
+## Image paths in pasted input (2.1.332, taken for #915)
+
+`2.1.332/image_paths/` was taken on 2026-11-27 with `image_paths.py`, then
+`scrub.py`. Each scenario starts and resumes the same real CLI session. HOME,
+configuration, working directory and outside directory are new temporary
+directories. The images are generated dummies, and the API is `mention.py`'s
+loopback stand-in, answering "ok". No real model, login or user files are used.
+The version probe has its own empty HOME, configuration and working directory.
+
+The two baseline scenarios paste the input unchanged. `image_paths_ordinary`
+uses ordinary tools; `image_paths_confined` uses the confined tool list and
+`--restricted`. Both attach in-directory absolute image paths, including a
+whole input, a separate line, quotes, escaped spaces and extensions, and a
+symlink to an in-directory image. Ordinary mode also attaches outside paths,
+outside symlinks and two outside paths on one line; restricted mode excludes
+those. The hook reports image markers in place of attached paths.
+
+The `.png`, `.jpg`, `.jpeg`, `.gif` and `.webp` names all hold distinct dummy
+PNG bytes. They establish filename suffix recognition, not decoder coverage
+for each format. The API request's latest user message is inspected even when
+a system message follows it; earlier user messages' images are excluded.
+An absent request is an error, rather than evidence that no image was sent.
+
+A terminal color sequence before a path does not prevent attachment. A
+zero-width space before the path, inside its extension or after it does:
+image recognition and invisible-character removal occur at different stages.
+The relative basename and quoted wake line attach nothing in these captures;
+no clipboard image was prepared.
+
+The three `_pasted` scenarios use the adapter's rewrite: ordinary, confined,
+and the confined rewrite without `--restricted`. No image reaches the API in
+any of their 21 inputs at either start or resume. `outcome.json` records each
+input, actual paste, reported prompt and dummy images sent. The adapter tests
+check the captured paste, input attribution, saved paste and reconnect.
+Invisible-character attribution and ordinary terminal-sequence attribution
+remain covered separately by #916; those cases still check image behavior
+and paste persistence here.
+
+`2.1.332/image_shell/` was taken with the same helper and isolation on the
+same date, at a start and a resume. An ordinary one-line `!printf` command
+with a PNG basename is preserved. An opening shell command does not exempt
+later lines of its bracketed paste from image detection: the unchanged
+multiline input attaches the dummy image, holds the editor and combines it
+with the next harmless input. The rewrite preserves the opening command line
+and prefixes later bare image-path lines, including shell continuations.
+The rewritten captures send no image and report the follow-up input on its
+own. `command_images: null` with zero `command_requests` records that no API
+observation was available before the follow-up, rather than claiming no
+attachment; the follow-up always has an observed request.
+
+The message rewrite retains conservative protection for standalone basenames,
+but leaves prose ending in a basename unchanged. Ordinary shell continuations
+protect absolute paths only: the raw relative-name cases above attach nothing,
+and adding a word to a relative shell argument would change its syntax. The
+shell captures demonstrate absolute continuations, not relative continuations.
+An ordinary opening slash-command head is preserved independently of its
+arguments; later lines still pass through image-path protection. This syntax
+policy treats an ambiguous unquoted root name with spaces as a command in an
+ordinary opening line; quoted/escaped root names and image-suffix heads stay
+protected. Confined inputs have no slash-command exemption. Prepared-clipboard
+behavior and ambiguous unquoted root names are outside the captured matrix.
