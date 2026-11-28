@@ -45,6 +45,11 @@ func TestDesktopHostedFixture(t *testing.T) {
 		cfg["drivers"] = map[string]any{remoteSurface: map[string]any{"socket": "DESKTOP_FIXTURE_SOCKET"}}
 		cfg["scopes"].([]map[string]any)[0]["client"] = remoteSurface
 	})
+	// newChatRoot is a fresh fixture, not an adopted instance. Go's TempDir
+	// mode is not the product's 0700 root contract on every hosted platform.
+	if err := os.Chmod(r.root, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	// Native discovery binds the canonical selected root. Use that same spelling
 	// when the host computes its long socket path (macOS /var aliases /private).
 	canonical, err := filepath.EvalSymlinks(r.root)
