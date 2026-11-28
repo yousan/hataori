@@ -1,7 +1,7 @@
 # Worker protocol
 
 Status: worker protocol and runner integration through #963, part of #956. This document specifies
-worker protocol **1.3**. It is independent of the control protocol described in
+worker protocol **1.4**. It is independent of the control protocol described in
 `protocol.md`; a control socket and an unversioned host socket are never worker
 endpoints. The resident is described in `worker-resident.md`. SSH transport and
 the machine-bound runner are implemented; durable placement is implemented; away queues
@@ -97,7 +97,7 @@ versions and an `error` object. Only fixed, safe explanations may be returned.
 
 The exported structs in `internal/workerproto/bodies.go` define the JSON field
 names and types. All bodies are objects, including `Empty` (`{}`). The table is
-exhaustive for 1.3; an unlisted operation refuses. **S** means a registered
+exhaustive for 1.4; an unlisted operation refuses. **S** means a registered
 session/run is required, **D** means durable acceptance and a receipt reply.
 
 | Operation | Capability | Scope | Request body | Reply body |
@@ -136,10 +136,14 @@ session/run is required, **D** means durable acceptance and a receipt reply.
 | `login_start` | login | connection | Login | LoginAttempt |
 | `login_input` | login | connection | LoginInput | LoginAttempt |
 | `login_cancel` | login | connection | LoginAttempt | LoginAttempt |
+| `ephemeral_login_start` (since 1.4) | ephemeral_login | connection | Login | LoginAttempt |
+| `ephemeral_login_input` (since 1.4) | ephemeral_login | connection | LoginInput | LoginAttempt |
+| `ephemeral_login_cancel` (since 1.4) | ephemeral_login | connection | LoginAttempt | LoginAttempt |
 
 `read` and `attach` may emit `stream` frames with `Bytes` bodies. The attachment
 output has its own source/generation and ordered byte ranges; it is not codec
-reconstruction history. `login_start` alone may emit `LoginStream` frames.
+reconstruction history. The legacy `login_start` may emit opaque `LoginStream`
+frames; `ephemeral_login_start` emits the typed stream defined below.
 Other operations have no stream form. A refusal is legal for every operation.
 
 The resident builds launches and probes using the named, locally configured
@@ -270,6 +274,43 @@ or `expired`. Main/resident restart, connection loss or timeout invalidates the
 attempt and all input handles. Nothing is replayed; the owner starts a new
 attempt. The codec only validates these frames; implementations must provide
 separate in-memory routing and must never log the body on decode failure.
+
+The live relay uses only protocol 1.4's `ephemeral_login` capability and its
+three `ephemeral_login_*` operations. Both peers must offer that capability,
+and the negotiated minor must be at least 4; an older peer's optional offer is
+removed before required-capability checks. Main checks this contract before
+even probing the selected configuration. New operations refuse on older
+minors or without their capability, before any login command starts. The
+released opaque `login_*` operations and `login` capability retain their old
+encoding and validation; they do not authorize this typed relay. The resident
+advertises only the typed login capability. No host, placement or receipt
+semantics change.
+
+For the typed operations, `Login` names registered `agent`, `config` and a fresh
+`attempt`. Input contains the same `attempt` and base64 `data`: one nonempty
+printable UTF-8 word, at most 16 KiB. Cancellation and all acknowledgements
+carry the same attempt. No session target or durable operation key is allowed;
+these requests cannot be hashed into receipts. Main additionally correlates
+each acknowledgement with its outstanding request ID.
+
+`LoginStream` carries `attempt`, `state` and optional base64 `data`. A `data`
+state contains UTF-8 JSON `LoginData`: optional `link`, `show_code`,
+`wants_code`, `no_code`, `refused` and `result`. Text fields are each at most
+16 KiB and the serialized payload is at most 64 KiB. Empty payloads, duplicate
+or noncanonical known keys, authority fields, incompatible code-back/device
+flags and unknown results refuse. `show_code` requires `no_code`. A terminal
+result is `logged_in` or `failed`, without a link, display code, refusal or
+input request; `logged_in` requires the resident's clean CLI exit and bounded
+status check in the same configuration. A `complete`, `cancelled` or `expired`
+stream contains no data. Cleanup precedes the completion/cancellation barrier;
+a new attempt needs a new live connection and no input is replayed.
+
+The 1.4 corpus adds typed code-back/device/status/end-state examples, capability
+negotiation and safe refusal examples. These fixed wire values are not CLI
+captures or runtime proof. The 1.0–1.3 corpora and their SUMS lines are immutable.
+Real successful completion/status for device-auth and code-back, supported-CLI
+descendant containment and complete acceptance remain gates in
+[worker login evidence](worker-login-evidence.md). CI does not establish them.
 
 ## Implementation status
 

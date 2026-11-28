@@ -1,0 +1,1 @@
+{"kind":"refusal","id":"request-ephemeral_login_start","binding":{"main":"main-A","worker":"worker-A"},"op":"ephemeral_login_start","body":{"code":"unsupported_capability","message":"operation capability was not negotiated"}}

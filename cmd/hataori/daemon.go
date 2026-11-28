@@ -513,6 +513,10 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 	// The login relay (section 4.7). It starts flows only once a client of
 	// the owner takes its updates: the chat front end sets Notify.
 	lr := &relay.Relay{Store: st, Adapters: adapters, People: cfg.People, Off: !cfg.LoginRelay, Log: lg, Guard: []string{exe, "login-guard"}}
+	lr.Workers = make(map[string]relay.WorkerLoginEndpoint, len(r.Remotes))
+	for key, remote := range r.Remotes {
+		lr.Workers[key] = relay.WorkerLoginEndpoint{Binding: remote.Binding, Open: remote.Open}
+	}
 	var fronts []*chat.FrontEnd
 	if len(cfg.Drivers) > 0 {
 		confDir, err := in.Root.OpenRoot("config")
@@ -552,8 +556,12 @@ func daemon(ctx context.Context, root string, logOut io.Writer) (err error) {
 			}
 		}()
 	}
+	loginCtx, loginCancel := context.WithCancel(ctx)
+	loginDone := make(chan struct{})
+	defer func() { loginCancel(); <-loginDone }()
 	go func() {
-		if err := lr.Run(ctx); err != nil {
+		defer close(loginDone)
+		if err := lr.Run(loginCtx); err != nil && loginCtx.Err() == nil {
 			lg.Error("login relay", "err", err)
 		}
 	}()

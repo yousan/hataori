@@ -86,10 +86,14 @@ type Relay struct {
 	// outside Linux, so it ends when the daemon dies. When empty, nothing
 	// ends it there when the daemon dies.
 	Guard []string
+	// Workers contains only configured, installation-pinned transports. Worker
+	// login streams carry no chat/person credentials and are never replayed.
+	Workers map[string]WorkerLoginEndpoint
 
-	startMu sync.Mutex // one start at a time, so that no flow is left untracked
-	mu      sync.Mutex
-	flows   map[session.Login]*flow
+	startMu     sync.Mutex // one start at a time, so that no flow is left untracked
+	mu          sync.Mutex
+	flows       map[session.Login]*flow
+	workerFlows map[int64]*workerLoginFlow
 }
 
 func (r *Relay) timeout() time.Duration {
@@ -159,6 +163,12 @@ func (r *Relay) Run(ctx context.Context) error {
 			continue
 		}
 		json.Unmarshal(e.Data, &d)
+		if handled, err := r.workerLoginEvent(ctx, e.Kind, d.Agent, d.Outage); handled || err != nil {
+			if err != nil && ctx.Err() == nil {
+				r.Log.Error("worker login relay", "outage", d.Outage)
+			}
+			continue
+		}
 		l, err := r.account(ctx, d.Agent, d.Outage)
 		if err != nil {
 			if ctx.Err() == nil {
@@ -219,6 +229,12 @@ func (r *Relay) Start(ctx context.Context, from, agentName string, outage int64)
 		r.Log.Warn("login relay refused", "op", "start", "from", from)
 		return ErrForbidden
 	}
+	if l, ok, err := r.workerAccount(ctx, agentName, outage); ok || err != nil {
+		if err != nil {
+			return err
+		}
+		return r.startWorker(ctx, l, outage)
+	}
 	l, err := r.account(ctx, agentName, outage)
 	if err != nil {
 		return err
@@ -234,6 +250,15 @@ func (r *Relay) Code(ctx context.Context, from, agentName string, outage int64, 
 	if !r.isOwner(from) {
 		r.Log.Warn("login relay refused", "op", "code", "from", from)
 		return ErrForbidden
+	}
+	if l, ok, err := r.workerAccount(ctx, agentName, outage); ok || err != nil {
+		if err != nil {
+			return err
+		}
+		if !l.Open {
+			return ErrBack
+		}
+		return r.workerCode(outage, code)
 	}
 	l, err := r.account(ctx, agentName, outage)
 	if err != nil {
@@ -522,6 +547,7 @@ func (r *Relay) endFlow(f *flow, outcome Outcome) {
 }
 
 func (r *Relay) stopAll() {
+	r.stopWorkerLogins()
 	r.mu.Lock()
 	var fs []*flow
 	for _, f := range r.flows {

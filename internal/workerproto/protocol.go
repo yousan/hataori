@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const Version = "1.3"
+const Version = "1.4"
 
 const (
 	MaxFrame = 1 << 20 // Includes the terminating newline.
@@ -74,6 +74,16 @@ func (c *Connection) CanPlace() bool {
 	}
 	_, minor, ok := version(c.version)
 	return ok && minor >= 3 && c.caps["placement"]
+}
+
+// CanLogin requires the typed ephemeral contract. The legacy login capability
+// carries opaque bytes and never certifies support for this live relay.
+func (c *Connection) CanLogin() bool {
+	if c == nil {
+		return false
+	}
+	_, minor, ok := version(c.version)
+	return ok && minor >= 4 && c.caps[LoginCapability]
 }
 
 func version(s string) (int, int, bool) {
@@ -152,6 +162,9 @@ func Negotiate(registered Binding, local, peer Hello) (*Connection, error) {
 			return nil, refuse("invalid_message", "invalid peer capability offer")
 		}
 		seen[cap] = true
+		if cap == LoginCapability && minor < 4 {
+			continue
+		}
 		if offered[cap] && knownCapability(cap) {
 			caps[cap] = true
 		}
@@ -273,6 +286,9 @@ func (c *Connection) Decode(data []byte, expected *Target) (Message, error) {
 	}
 	if !c.caps[op.Capability] {
 		return Message{}, refuse("unsupported_capability", "operation capability was not negotiated")
+	}
+	if op.Capability == LoginCapability && m.Key != "" {
+		return Message{}, refuse("invalid_message", "ephemeral login cannot carry a durable key")
 	}
 	if op.Session {
 		if expected == nil || m.Target == nil {

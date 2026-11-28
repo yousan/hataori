@@ -1,0 +1,1 @@
+{"kind":"stream","id":"request-ephemeral_login_start","binding":{"main":"main-A","worker":"worker-A"},"op":"ephemeral_login_start","body":{"attempt":"attempt-A","state":"data","data":"eyJyZXN1bHQiOiJsb2dnZWRfaW4ifQ=="}}

@@ -43,6 +43,105 @@ func TestMajorRefusedBeforeEffects(t *testing.T) {
 	}
 }
 
+func TestEphemeralLoginContractNegotiation(t *testing.T) {
+	for _, tc := range []struct {
+		name, local, peer string
+		capability, want  bool
+	}{
+		{"both", "1.4", "1.4", true, true},
+		{"old-peer", "1.4", "1.3", true, false},
+		{"old-local", "1.3", "1.4", true, false},
+		{"missing-capability", "1.4", "1.4", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			local, peer := hello(), hello()
+			local.Version, peer.Version = tc.local, tc.peer
+			if !tc.capability {
+				peer.Capabilities = []string{"login", "health"}
+			}
+			c, err := Negotiate(registration, local, peer)
+			if err != nil || c.CanLogin() != tc.want {
+				t.Fatalf("typed login negotiation = %v, %v; want %v", c, err, tc.want)
+			}
+			for _, cap := range c.Hello().Capabilities {
+				if cap == LoginCapability && !tc.want {
+					t.Fatal("typed login capability survived an older minor")
+				}
+			}
+			m := message(t, "request-"+LoginStart+".json")
+			_, err = c.Decode(encoded(t, m), nil)
+			if tc.want {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if tc.local == "1.3" || tc.peer == "1.3" {
+				code(t, err, "unsupported_operation")
+			} else {
+				code(t, err, "unsupported_capability")
+			}
+			// The released opaque login contract retains its original shape.
+			legacy := message(t, "stream-login-data.json")
+			if _, err := c.Decode(encoded(t, legacy), nil); err != nil {
+				t.Fatalf("legacy opaque login contract changed: %v", err)
+			}
+			local.Required = []string{LoginCapability}
+			_, err = Negotiate(registration, local, peer)
+			if !tc.want {
+				code(t, err, "unsupported_capability")
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestEphemeralLoginContractValidation(t *testing.T) {
+	c := connection(t)
+	for _, op := range []string{LoginStart, LoginInputOp, LoginCancel} {
+		m := message(t, "request-"+op+".json")
+		if _, err := c.Decode(encoded(t, m), nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := RequestHash(m); err == nil {
+			t.Fatal("ephemeral login became a durable request")
+		}
+		m.Key = "durable-key"
+		if _, err := c.Decode(encoded(t, m), nil); err == nil {
+			t.Fatal("ephemeral login accepted a durable key")
+		}
+		m.Key, m.Target = "", &target
+		if _, err := c.Decode(encoded(t, m), nil); err == nil {
+			t.Fatal("ephemeral login accepted a session target")
+		}
+	}
+	for _, input := range [][]byte{nil, []byte("two words"), []byte("line\ncode"), {0xff}, []byte(strings.Repeat("x", MaxLoginData+1))} {
+		m := message(t, "request-"+LoginInputOp+".json")
+		m.Body = raw(t, LoginInput{Attempt: "attempt-A", Data: input})
+		if _, err := c.Decode(encoded(t, m), nil); err == nil {
+			t.Fatal("typed login accepted invalid or oversized input")
+		}
+	}
+	for _, payload := range []string{
+		`{}`, `{"no_code":true,"wants_code":true}`, `{"result":"unknown"}`,
+		`{"result":"logged_in","link":"https://example.invalid"}`,
+		`{"result":"logged_in","result":"failed"}`, `{"person":"owner"}`,
+		`{"show_code":"code"}`, `{"link":"` + strings.Repeat("x", MaxLoginData+1) + `"}`,
+	} {
+		m := message(t, "stream-ephemeral-login-device.json")
+		m.Body = raw(t, LoginStream{Attempt: "attempt-A", State: "data", Data: []byte(payload)})
+		if _, err := c.Decode(encoded(t, m), nil); err == nil {
+			t.Fatal("typed login accepted an invalid stream payload")
+		}
+	}
+	for _, state := range []string{"complete", "cancelled", "expired", "unknown"} {
+		m := message(t, "stream-ephemeral-login-device.json")
+		m.Body = raw(t, LoginStream{Attempt: "attempt-A", State: state, Data: []byte(`{"result":"logged_in"}`)})
+		if _, err := c.Decode(encoded(t, m), nil); err == nil {
+			t.Fatal("typed login accepted data in an invalid terminal stream")
+		}
+	}
+}
+
 func TestMinorCapabilitiesAndExtensions(t *testing.T) {
 	local, peer := hello(), hello()
 	local.Version, peer.Version = "1.3", "1.1"

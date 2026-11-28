@@ -183,15 +183,16 @@ Health records are machine-keyed; unknown resource values remain unknown.
 Login outages and usage snapshots are keyed by machine, agent and configuration
 directory, so identical path spellings on two machines stay distinct. The current
 `Limits` API retains its local-only view: the newest local snapshot per agent,
-without summing account allowances. Remote login relay is unavailable; a remote
-outage cannot start a login command on the main.
+without summing account allowances. A remote outage can use the
+[worker login relay](#worker-login-relay); it cannot start a login command on
+the main.
 
 Isolation fixtures cover placement gates/order, durable waiting, reservations,
 bound worker execution and workspace identity guards. CI on Linux and macOS
 checks the code and fixtures; it does not establish real macOS worker runtime
 support. Durable away handling and the [first-worker guide](first-worker.md)
-describe the shipped recovery and combined integration path. Remote login,
-upgrades, dashboard machine views and full macOS worker conformance are later steps of #956. Configuration installs or restarts no
+describe the shipped recovery and combined integration path. Upgrades,
+dashboard machine views and full macOS worker conformance are later steps of #956. Configuration installs or restarts no
 service and increases no provider quota. A worker requires a compatible manual
 installation, configured repository grants and an existing agent login.
 
@@ -398,7 +399,7 @@ The section may be empty (`{}`). The common `model` and `effort` keys are also a
 
 Unknown keys are refused; `model` and `effort` are hataori's (see [Keys of every adapter section](#keys-of-every-adapter-section)). The defaults, like Claude Code's today, never ask for approval and allow commands to write anywhere and use the network.
 
-Codex writes session files (rollouts) under `sessions/` and caches under `CODEX_HOME` (`~/.codex` by default), as for any thread. Codex would also record the workspace's trust in `config.toml`; hataori prevents that write by supplying `-c projects={...}` on the command line. Codex treats the workspace as a trusted project and reads the workspace's `.codex/` configuration, as it would after recording the trust itself. hataori never sets `CODEX_HOME`, runs a login, or writes the user's Codex configuration.
+Codex writes session files (rollouts) under `sessions/` and caches under `CODEX_HOME` (`~/.codex` by default), as for any thread. Codex would also record the workspace's trust in `config.toml`; hataori prevents that write by supplying `-c projects={...}` on the command line. Codex treats the workspace as a trusted project and reads the workspace's `.codex/` configuration, as it would after recording the trust itself. A session with an explicit configuration directory, and the login/status commands for it, use that directory as `CODEX_HOME`; otherwise hataori retains the adapter's default environment. The [worker login relay](#worker-login-relay) runs the selected CLI command without copying credentials between machines.
 
 ### `dashboard`
 
@@ -709,6 +710,47 @@ capacity can limit later uploads without blocking unrelated operations.
 Main routing/placement uses the same registered worker handles; macOS runtime
 support remains gated by #969.
 
+## Worker login relay
+
+`login_relay` also controls worker login attempts; there is no additional
+operator key. Main selects the outage's configured, pinned worker transport and
+requires negotiated worker protocol 1.4 and capability `ephemeral_login` before
+probing or starting the login. The legacy `login` capability is insufficient.
+It selects the affected session's registered agent configuration. The resident runs its
+own CLI login and final status command under the worker's OS user, in that
+configuration directory. Main never runs the worker's login locally or copies
+credentials, an account directory or its own environment to the worker.
+
+The owner receives the link and any device code in a direct message. A code
+sent back is admitted only while that command asks for one. An explicit reply
+must identify the exact login or follow-up message, including its channel and
+thread; an unrelated reply is refused even when only one login waits. A bare
+code is accepted only when exactly one login waits. Device-auth flows accept
+no code back. Guests and other people cannot start attempts or send codes.
+
+Login material uses one live connection with no retry, receipt, replay record,
+session host or diagnostic payload logging. An attempt lasts at most ten
+minutes; a code or decoded line is at most 16 KiB, and the update queue is
+bounded. The final status command has a two-second deadline and at most 16 KiB
+of discarded output. Only clean command exit and clean final status close the
+original machine-agent-configuration outage. Failed thread input is never
+resent automatically.
+
+Connection loss, timeout and main/resident shutdown cancel the attempt. The
+resident's EOF guard terminates its still-owned direct child and its own
+process group. Independently detached descendants are outside that group;
+supported-CLI containment evidence remains a required acceptance gate. A new
+button press replaces the old attempt only after its cleanup is confirmed.
+
+Worker adapters must implement `agent.LoginFlow` and the opt-in bounded
+`agent.WorkerLoginStatus` contract. This change enables Codex's device-auth
+command and `codex login status` in the selected configuration. Adapters that
+need status-output interpretation are refused until that interpretation has
+real captures and a bounded implementation. Real code-back support and
+disposable successful completion/status captures for both flows remain
+acceptance blockers tracked in [worker login evidence](worker-login-evidence.md).
+Synthetic fixtures and CI do not certify provider login or macOS runtime.
+
 ## Machine session I/O
 
 Worker protocol 1.2 adds resident reads, retained source handles, codec metadata,
@@ -717,7 +759,7 @@ owner attachment and same-directory run rebinding. Public protocol 3.44 adds
 `Attachment.socket` and `Limits` semantics are unchanged: `Limits` remains the
 local agent summary, while worker windows stay separately sourced by machine,
 agent and login configuration in storage. They are never summed as quota.
-Remote login is optional and is not relayed by this implementation.
+Remote login is optional; see [Worker login relay](#worker-login-relay).
 
 Obtain the main's stable registration ID with
 `hataori worker main-id --root MAIN_ROOT` after initializing the main. This

@@ -15,6 +15,9 @@ import (
 )
 
 func workerMain(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "login-guard" {
+		return worker.LoginGuardMain(args[1:])
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: hataori worker main-id|init|run --root DIR --main ID [--installation ID]")
 		return exitUsage

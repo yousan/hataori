@@ -52,6 +52,9 @@ var operations = map[string]Operation{
 	"login_start":        {"login_start", "login", false, false, 0},
 	"login_input":        {"login_input", "login", false, false, 0},
 	"login_cancel":       {"login_cancel", "login", false, false, 0},
+	LoginStart:           {LoginStart, LoginCapability, false, false, 4},
+	LoginInputOp:         {LoginInputOp, LoginCapability, false, false, 4},
+	LoginCancel:          {LoginCancel, LoginCapability, false, false, 4},
 }
 
 func Operations() []Operation {
@@ -445,6 +448,17 @@ func validateBody(m Message) error {
 				return identifier(b.Attempt) && len(b.Data) <= MaxChunk &&
 					(oneOf(b.State, "complete", "cancelled", "expired") && len(b.Data) == 0 || b.State == "data" && len(b.Data) > 0)
 			})
+		case LoginStart:
+			return body(m, func(b LoginStream) bool {
+				if !identifier(b.Attempt) || len(b.Data) > MaxChunk {
+					return false
+				}
+				if b.State == "data" {
+					_, err := DecodeLoginData(b.Data)
+					return err == nil
+				}
+				return oneOf(b.State, "complete", "cancelled", "expired") && len(b.Data) == 0
+			})
 		}
 		return refuse("invalid_message", "operation has no stream form")
 	}
@@ -513,7 +527,7 @@ func validateBody(m Message) error {
 			return body(m, func(b FileBytes) bool {
 				return identifier(b.Handle) && digest(b.Digest) && len(b.Data) <= MaxChunk && b.Offset <= b.Size && uint64(len(b.Data)) <= b.Size-b.Offset && (!b.Final || uint64(len(b.Data)) == b.Size-b.Offset)
 			})
-		case "login_start", "login_input", "login_cancel":
+		case "login_start", "login_input", "login_cancel", LoginStart, LoginInputOp, LoginCancel:
 			return body(m, func(b LoginAttempt) bool { return identifier(b.Attempt) })
 		case "keys", "resize", "detach":
 			return body(m, func(Empty) bool { return true })
@@ -573,11 +587,13 @@ func validateBody(m Message) error {
 		return body(m, func(b Download) bool {
 			return identifier(b.Handle) && b.Limit > 0 && b.Limit <= MaxChunk && b.Offset <= math.MaxUint64-uint64(b.Limit)
 		})
-	case "login_start":
+	case "login_start", LoginStart:
 		return body(m, func(b Login) bool { return agent(b.AgentConfig) && identifier(b.Attempt) })
 	case "login_input":
 		return body(m, func(b LoginInput) bool { return identifier(b.Attempt) && len(b.Data) > 0 && len(b.Data) <= MaxChunk })
-	case "login_cancel":
+	case LoginInputOp:
+		return body(m, loginInput)
+	case "login_cancel", LoginCancel:
 		return body(m, func(b LoginAttempt) bool { return identifier(b.Attempt) })
 	}
 	return refuse("invalid_message", "invalid operation form")

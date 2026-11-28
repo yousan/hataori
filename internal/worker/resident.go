@@ -41,6 +41,10 @@ type Options struct {
 	Now         func() time.Time
 	BootID      func() (string, error)
 	Telemetry   func() workerproto.Telemetry
+	// LoginGuard is the installed executable's EOF guard command. LoginTimeout
+	// bounds the ephemeral attempt; zero uses ten minutes.
+	LoginGuard   []string
+	LoginTimeout time.Duration
 	// checkpoint is only a fault-injection point in isolated tests. Returning
 	// an error simulates loss at a crash boundary; recovery must reconcile it.
 	checkpoint            func(string) error
@@ -119,6 +123,7 @@ type Resident struct {
 	socket          string
 	socketInfo      os.FileInfo
 	connections     map[net.Conn]bool
+	loginAttempts   map[workerproto.AgentConfig]*loginAttempt
 	workspaceConfig WorkspaceConfig
 }
 

@@ -187,7 +187,9 @@ func (f *FrontEnd) postLogin(ctx context.Context, text string, outage int64) {
 }
 
 // msgPlace identifies a message by what a reply to it names.
-func msgPlace(ref surface.MessageRef) string { return ref.Conv.Channel + "\x00" + ref.ID }
+func msgPlace(ref surface.MessageRef) string {
+	return ref.Conv.Channel + "\x00" + ref.Conv.Thread + "\x00" + ref.ID
+}
 
 func (f *FrontEnd) postOwner(ctx context.Context, m surface.Message) (surface.MessageRef, error) {
 	conv, err := f.ownerConv(ctx)
@@ -218,7 +220,7 @@ func (f *FrontEnd) direct(in surface.Inbound) {
 		l.mu.Lock()
 		answered = l.about[msgPlace(*in.ReplyTo)]
 		l.mu.Unlock()
-		os, err := outages(f.context(), f.Outbox.Store.DB, f.Name, `AND dm_channel = ? AND dm_ref = ?`, in.ReplyTo.Conv.Channel, in.ReplyTo.ID)
+		os, err := outages(f.context(), f.Outbox.Store.DB, f.Name, `AND dm_channel = ? AND dm_thread = ? AND dm_ref = ?`, in.ReplyTo.Conv.Channel, in.ReplyTo.Conv.Thread, in.ReplyTo.ID)
 		if err != nil {
 			f.Log.Error("chat: reading login outages", "err", err)
 			f.postDirect(f.context(), "The code was not taken: "+err.Error())
@@ -226,6 +228,10 @@ func (f *FrontEnd) direct(in surface.Inbound) {
 		}
 		if len(os) == 1 {
 			answered = os[0].id
+		}
+		if answered == 0 {
+			f.postDirect(f.context(), "Not waiting for a code from that message.")
+			return
 		}
 	}
 	if answered != 0 {
