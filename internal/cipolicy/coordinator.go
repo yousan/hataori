@@ -309,6 +309,9 @@ func RunCLI(ctx context.Context, args []string, out io.Writer, binary string) in
 	if err != nil {
 		return 1
 	}
+	if result.State != nil && result.State.Failed {
+		return 1
+	}
 	if result.Route != nil && !result.Route.Allowed {
 		return 1
 	}
@@ -334,5 +337,5 @@ func writeCLI(w io.Writer, out Outcome, err error) {
 		Outcome Outcome
 		Closed  bool
 		Reason  string
-	}{out, err != nil || (out.Route != nil && !out.Route.Allowed) || out.Policy.FullOnly, reason})
+	}{out, err != nil || (out.State != nil && out.State.Failed) || (out.Route != nil && !out.Route.Allowed) || out.Policy.FullOnly, reason})
 }

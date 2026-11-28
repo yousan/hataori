@@ -93,7 +93,9 @@ authenticates that actual account, and advances the same CAS without resetting
 watermark, debt or old proof. Its nonsecret diagnosis/control/watermark audit is
 committed atomically with the replacement prepared intent. It does not POST,
 rerun or cancel Actions; a concurrent/second recovery cannot replace the sole
-active proof. They do not waive provider, merge or publication authority.
+active proof. Diagnosis keeps failure/admission closed even below the ordinary
+count/age ceiling; only successful full replacement clears failure. Newer debt
+beyond that frozen proof remains uncovered. They do not waive provider, merge or publication authority.
 
 The same transaction commits a frozen intent with a random ID before dispatch:
 

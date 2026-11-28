@@ -40,6 +40,8 @@ type State struct {
 	Sequence                          uint64
 	Active, Pending                   *Sweep
 	Failed                            bool
+	// Diagnosed replacement is pending; failure still fences admission.
+	Recovering bool
 }
 
 func NewState(s Selection, watermark string) (State, error) {
@@ -95,6 +97,9 @@ func Reconcile(old State, policy Selection, e Event) (State, Decision, error) {
 	if e.Now.IsZero() || s.Control != policy.revision || s.Digest != policy.digest || s.Control == "" {
 		return fail("control identity changed or clock missing; coverage cannot be reused")
 	}
+	if s.Recovering && (!s.Failed || s.Active == nil) {
+		return fail("invalid pending recovery proof")
+	}
 	positions, err := validateHistory(e.History, e.Now)
 	if err != nil {
 		return fail(err.Error())
@@ -144,17 +149,18 @@ func Reconcile(old State, policy Selection, e Event) (State, Decision, error) {
 		}
 		if c.Linux == "success" && c.MacOS == "success" && compatibilityOK {
 			s.Watermark = s.Active.Target
+			s.Failed, s.Recovering = false, false
 			w = positions[s.Watermark]
 		} else {
-			s.Failed = true
+			s.Failed, s.Recovering = true, false
 		}
 		s.Active, s.Pending = nil, nil
 	}
 	if e.Recovery != nil {
-		if !s.Failed || e.Recovery.Owner != d.Policy.Owner || e.Recovery.Reason == "" || d.Policy.FullOnly {
+		if !s.Failed || s.Recovering || e.Recovery.Owner != d.Policy.Owner || e.Recovery.Reason == "" || d.Policy.FullOnly {
 			return fail("recovery needs the trusted responsible owner and diagnosis")
 		}
-		s.Failed = false
+		s.Recovering = true
 	}
 	s.ObservedTip = e.History.Root
 	if len(e.History.Commits) > 0 {
@@ -178,7 +184,7 @@ func Reconcile(old State, policy Selection, e Event) (State, Decision, error) {
 		d.Reason = d.Policy.BlockedReason
 		return s, d, nil
 	}
-	if s.Failed {
+	if s.Failed && !s.Recovering {
 		d.Reason = "full sweep failed; diagnose before recovery"
 		return s, d, nil
 	}
@@ -198,11 +204,18 @@ func Reconcile(old State, policy Selection, e Event) (State, Decision, error) {
 	default:
 		d.Reason = "within coverage budget"
 	}
+	if s.Failed {
+		d.AllowCode = false
+		d.Reason = "diagnosed recovery awaits successful full proof"
+	}
 	// Empty and already-covered ranges never allocate a run, even on Force.
 	if d.Uncovered == 0 {
+		if s.Recovering {
+			return fail("recovery has no failed coverage range")
+		}
 		return s, d, nil
 	}
-	due := e.Force || d.Uncovered >= limits.MaxChanges-1 || age >= maxAge-lead
+	due := e.Force || s.Recovering || d.Uncovered >= limits.MaxChanges-1 || age >= maxAge-lead
 	if !due {
 		return s, d, nil
 	}

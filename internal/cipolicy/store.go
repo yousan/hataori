@@ -430,6 +430,8 @@ func (s *Store) SwitchControl(ctx context.Context, version int64, o Observation)
 		}
 		next := snap.State
 		next.Active = nil
+		// Retiring unsent proof cannot turn diagnosis into validated recovery.
+		next.Recovering = false
 		next.Authority = o.control.authority
 		next.Control = o.control.revision
 		next.Digest = o.control.selection.digest

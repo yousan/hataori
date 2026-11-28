@@ -46,7 +46,11 @@ sole proof fail closed. The diagnosis is a nonsecret audit entry in the same
 serialized CAS as recovery; root, watermark, cumulative debt and old intents
 remain. A new fixed-ID proof is only prepared, not sent: recovery has no rerun,
 cancellation or dispatch side effect. Normal admission/provider/Done/full-proof
-requirements still apply. Supply the responsible credential through the existing
+requirements still apply. Diagnosis does not clear the failure/admission fence,
+including below-budget early failures: only a successful complete replacement
+advances the watermark and clears failure. Pending recovery stays `Closed=true`
+and returns a nonzero CLI gate status; do not interpret that as permission to
+repeat recovery or dispatch. Supply the responsible credential through the existing
 external trusted boundary; this command does not issue or replace credentials.
 
 `AUTHORITY_DIR` is a dedicated private directory outside Git checkouts. Its

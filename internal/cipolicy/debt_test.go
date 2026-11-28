@@ -165,7 +165,7 @@ func TestFailureRetainsWatermarkAndRequiresDiagnosedRecovery(t *testing.T) {
 			}
 		}
 		next, d = step(t, next, s, Event{Now: clock.Add(2 * time.Hour), History: h, Recovery: &Recovery{Owner: s.policy.Owner, Reason: "isolated repair validated"}, Force: true})
-		if next.Failed || d.Dispatch == nil || next.Active.From != h.Root || next.Active.ID == st.Active.ID {
+		if !next.Failed || !next.Recovering || d.AllowCode || d.Dispatch == nil || next.Active.From != h.Root || next.Active.ID == st.Active.ID {
 			t.Fatal(next, d)
 		}
 	}
@@ -295,5 +295,34 @@ func TestUnserializableTimeCannotCollapseHistoryFingerprint(t *testing.T) {
 		if err == nil || d.AllowCode || !reflect.DeepEqual(next, initialState) {
 			t.Fatal("invalid-time rewrite enabled admission", next, d, err)
 		}
+	}
+}
+
+func TestEarlyRecoveryKeepsAdmissionClosedUntilFullReplacement(t *testing.T) {
+	policy := selected(t, validPolicy())
+	h := history(1, clock)
+	st, _ := step(t, initial(t, policy, h), policy, Event{Now: clock, History: h, Force: true})
+	failed := green(st.Active)
+	failed.MacOS = "failure"
+	st, _ = step(t, st, policy, Event{Now: clock, History: h, Completion: failed})
+	st, d := step(t, st, policy, Event{Now: clock, History: h, Recovery: &Recovery{Owner: policy.policy.Owner, Reason: "diagnosed early failure"}})
+	if !st.Failed || !st.Recovering || st.Watermark != h.Root || d.AllowCode || d.Dispatch == nil || d.Uncovered != 1 {
+		t.Fatal("diagnosis reopened below-budget admission", st, d)
+	}
+	replacement := *st.Active
+	h = history(2, clock)
+	st, d = step(t, st, policy, Event{Now: clock.Add(time.Minute), History: h})
+	if d.AllowCode || !st.Failed || *st.Active != replacement {
+		t.Fatal("pending replacement lost failure fence", st, d)
+	}
+	partial := green(&replacement)
+	partial.MacOS = "skipped"
+	rejected, blocked := step(t, st, policy, Event{Now: clock.Add(time.Minute), History: h, Completion: partial})
+	if !rejected.Failed || rejected.Recovering || blocked.AllowCode || rejected.Watermark != h.Root {
+		t.Fatal("partial replacement cleared failure", rejected, blocked)
+	}
+	st, d = step(t, st, policy, Event{Now: clock.Add(time.Minute), History: h, Completion: green(&replacement)})
+	if st.Failed || st.Recovering || st.Watermark != sha(101) || d.Uncovered != 1 || !d.AllowCode {
+		t.Fatal("full replacement did not retain newer debt", st, d)
 	}
 }

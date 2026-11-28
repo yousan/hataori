@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func failedCoordinator(t *testing.T) (*Coordinator, *githubFixture, string) {
+func failedCoordinator(t *testing.T, counts ...int) (*Coordinator, *githubFixture, string) {
 	t.Helper()
 	s, f, file, _ := storeFixture(t)
 	ctx := context.Background()
@@ -24,7 +24,11 @@ func failedCoordinator(t *testing.T) (*Coordinator, *githubFixture, string) {
 	f.mu.Lock()
 	f.run.Conclusion = "failure"
 	f.mu.Unlock()
-	snap, observation = observed(t, s, f, 2)
+	count := 2
+	if len(counts) > 0 {
+		count = counts[0]
+	}
+	snap, observation = observed(t, s, f, count)
 	if _, err := s.Advance(ctx, snap.Version, observation); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +52,7 @@ func TestCoordinatorAuthenticatedRecoveryPreservesDebtAcrossRestart(t *testing.T
 	before, _ := c.store.Read(ctx)
 	posts := f.posts
 	out, err := c.Recover(ctx, "diagnosed isolated runner failure; new proof required")
-	if err != nil || out.State == nil || out.State.Failed || out.Decision == nil || out.Decision.Uncovered != 2 || out.Decision.AllowCode || out.Intent == nil || out.Intent.Status != "prepared" {
+	if err != nil || out.State == nil || !out.State.Failed || !out.State.Recovering || out.Decision == nil || out.Decision.Uncovered != 2 || out.Decision.AllowCode || out.Intent == nil || out.Intent.Status != "prepared" {
 		t.Fatal(out, err)
 	}
 	if out.State.Root != before.State.Root || out.State.Watermark != before.State.Watermark || out.State.Active.From != sha(100) || out.State.Active.Target != sha(102) || f.posts != posts {
@@ -188,5 +192,51 @@ func TestRecoveryCLIRequiresDiagnosisAndReachesAuthorityLoader(t *testing.T) {
 		if status != tc.status || !strings.Contains(output.String(), `"Closed":true`) || strings.Contains(output.String(), "nonsecret diagnosis") || strings.Contains(output.String(), "missing-authority") {
 			t.Fatal(status, output.String())
 		}
+	}
+}
+
+func TestRecoveryPendingIsClosedInCLIOutput(t *testing.T) {
+	var output bytes.Buffer
+	writeCLI(&output, Outcome{State: &State{Failed: true, Recovering: true}}, nil)
+	if !strings.Contains(output.String(), `"Closed":true`) {
+		t.Fatal(output.String())
+	}
+}
+
+func TestCoordinatorBelowBudgetRecoveryWaitsForFullReplacement(t *testing.T) {
+	c, f, _ := failedCoordinator(t, 1)
+	ctx := context.Background()
+	out, err := c.Recover(ctx, "diagnosed early failure")
+	if err != nil || out.Decision == nil || out.Decision.Uncovered != 1 || out.Decision.AllowCode || !out.State.Failed || !out.State.Recovering {
+		t.Fatal("diagnosis reopened below-budget lane", out, err)
+	}
+	out, err = c.Execute(ctx, "observe", 0, 0)
+	if err != nil || out.Decision.AllowCode || !out.State.Failed {
+		t.Fatal("observation reopened pending recovery", out, err)
+	}
+	f.tamper = nil // Use the fixture's independently designated dispatcher for pump.
+	if err = c.store.Pump(ctx, f.adapter); err != nil {
+		t.Fatal(err)
+	}
+	out, err = c.Execute(ctx, "observe", 0, 0)
+	if err != nil || out.State.Failed || out.State.Recovering || out.State.Root != sha(100) || out.State.Watermark != sha(101) || out.Decision.Uncovered != 0 {
+		t.Fatal("full replacement not required/completed", out, err)
+	}
+}
+
+func TestRecoveryControlTransitionPreservesFailureAndDebt(t *testing.T) {
+	c, f, _ := failedCoordinator(t, 1)
+	ctx := context.Background()
+	if _, err := c.Recover(ctx, "diagnosed failure"); err != nil {
+		t.Fatal(err)
+	}
+	f.adapter.root.CurrentControl = sha(2)
+	out, err := c.Execute(ctx, "control-transition", 0, 0)
+	if err != nil || out.State == nil || !out.State.Failed || out.State.Recovering || out.State.Active != nil || out.State.Root != sha(100) || out.State.Watermark != sha(100) {
+		t.Fatal("control transition erased failure or retained retired proof", out, err)
+	}
+	out, err = c.Execute(ctx, "observe", 0, 0)
+	if err != nil || out.Decision == nil || out.Decision.AllowCode || out.Decision.Uncovered != 1 || out.Intent != nil {
+		t.Fatal("new control bypassed diagnosis/full-proof fence", out, err)
 	}
 }
