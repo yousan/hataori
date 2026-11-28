@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-//	hataori run [--root DIR]                    run the daemon of an instance
+//	hataori run [--root DIR] [--native]         run the daemon; optionally serve its private owner dashboard
 //	hataori threads [--root DIR]                one line per thread
 //	hataori thread [--root DIR] NUMBER          the thread with NUMBER (or #NUMBER), or exit 3
 //	hataori events [--root DIR] [--after N] [--follow]
@@ -212,6 +212,7 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 	after := fs.Uint64("after", 0, "events: print the events after this position")
 	follow := fs.Bool("follow", false, "events: keep printing new events")
 	web := fs.Bool("web", false, "signin: a link for the dashboard's web listener instead of its loopback listener")
+	native := fs.Bool("native", false, "run: enable the private owner-only Unix dashboard listener")
 	scope := fs.String("scope", "", "take: the scope the window's thread is made in")
 	key := fs.String("key", "", "take: makes the call safe to repeat; a new one each time by default")
 	var pos []string // flags may come before or after the key
@@ -242,7 +243,7 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 		fmt.Fprintln(stderr, usage)
 		return exitUsage
 	}
-	if len(pos) != want || *root == "" || (name != "events" && (*after != 0 || *follow)) || (name != "signin" && *web) {
+	if len(pos) != want || *root == "" || (name != "events" && (*after != 0 || *follow)) || (name != "signin" && *web) || (name != "run" && *native) {
 		fmt.Fprintln(stderr, usage)
 		return exitUsage
 	}
@@ -251,6 +252,7 @@ func command(ctx context.Context, name string, args []string, stdout, stderr io.
 		return exitError
 	}
 	if name == "run" {
+		ctx = context.WithValue(ctx, nativeDashboardKey{}, *native)
 		if err := daemon(ctx, *root, stderr); err != nil {
 			return fail(err)
 		}

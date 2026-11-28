@@ -89,6 +89,11 @@ export function linkRefused(): boolean {
 // kept earlier in this origin's storage. Storage may be unavailable (a
 // private window may refuse it); the session then lasts as long as the tab.
 export async function adoptSession(): Promise<void> {
+  if (location.origin === "hataori-desktop://instance") {
+    // Native authority comes from the private listener, never a browser token.
+    current = null;
+    return;
+  }
   let link: string | null = null;
   if (location.pathname === signInPath) {
     link = new URLSearchParams(location.hash.slice(1)).get("t");

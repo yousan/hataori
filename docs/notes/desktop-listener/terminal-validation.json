@@ -1,0 +1,445 @@
+{
+  "scope": "Only core.Terminal exit/replacement child joins; supervisor-authorized disjoint hunks, not full #1071 acceptance.",
+  "source_sha256": {
+    "internal/core/core.go": "de8b7e4f94ec97a3c9482a289e6d0cbe207f50b49a2b3614453be5ede3256e3b",
+    "internal/core/terminal_join_test.go": "40ad853ed8d96968729080f42508a53bbce4f994442192411eed7bad91bfda7a"
+  },
+  "negative_guards": [
+    {
+      "guard": "terminal-exit-child-join",
+      "file": "internal/core/core.go",
+      "test": "^TestTerminalJoinsChildBeforeClosing$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestTerminalJoinsChildBeforeClosing (0.17s)",
+        "terminal_join_test.go:120: API stream closed before its child released resources",
+        "terminal_join_test.go:128: API stream outlived child join"
+      ]
+    },
+    {
+      "guard": "terminal-replacement-child-join",
+      "file": "internal/core/core.go",
+      "test": "^TestTerminalJoinsOldChildBeforeReplacement/success$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestTerminalJoinsOldChildBeforeReplacement (3.65s)",
+        "--- FAIL: TestTerminalJoinsOldChildBeforeReplacement/success (3.65s)",
+        "terminal_join_test.go:158: replacement 2 opened while old child still held resources",
+        "terminal_join_test.go:162: runner stream did not open"
+      ]
+    },
+    {
+      "guard": "terminal-cancellation-during-join",
+      "file": "internal/core/core.go",
+      "test": "^TestTerminalCancellationDuringReplacementJoinsOldChild$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestTerminalCancellationDuringReplacementJoinsOldChild (0.68s)",
+        "terminal_join_test.go:207: replacement opened after request canceled during child join"
+      ]
+    }
+  ],
+  "positive_runs": [
+    {
+      "command": "GOMAXPROCS=1 go test -json -p 1 -parallel 1 -count=1 -run ^Test(Terminal(Joins|CancellationDuringReplacement|Of)|NoTextTerminalIsRefused) ./internal/core",
+      "exit_code": 0,
+      "results": [
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Test": "TestTerminalOfAThread",
+          "Elapsed": 0.15
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Test": "TestNoTextTerminalIsRefused",
+          "Elapsed": 0.16
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Test": "TestTerminalJoinsChildBeforeClosing",
+          "Elapsed": 0.17
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Test": "TestTerminalJoinsOldChildBeforeReplacement/success",
+          "Elapsed": 0.73
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Test": "TestTerminalJoinsOldChildBeforeReplacement/open-error",
+          "Elapsed": 0.68
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Test": "TestTerminalJoinsOldChildBeforeReplacement",
+          "Elapsed": 1.41
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Test": "TestTerminalCancellationDuringReplacementJoinsOldChild",
+          "Elapsed": 0.71
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Elapsed": 2.605
+        }
+      ]
+    },
+    {
+      "command": "GOMAXPROCS=1 go test -json -p 1 -parallel 1 -count=1 -race -run ^Test(Terminal(Joins|CancellationDuringReplacement|Of)|NoTextTerminalIsRefused) ./internal/core",
+      "exit_code": 0,
+      "results": [
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Test": "TestTerminalOfAThread",
+          "Elapsed": 1.04
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Test": "TestNoTextTerminalIsRefused",
+          "Elapsed": 1
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Test": "TestTerminalJoinsChildBeforeClosing",
+          "Elapsed": 1.07
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Test": "TestTerminalJoinsOldChildBeforeReplacement/success",
+          "Elapsed": 1.61
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Test": "TestTerminalJoinsOldChildBeforeReplacement/open-error",
+          "Elapsed": 1.62
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Test": "TestTerminalJoinsOldChildBeforeReplacement",
+          "Elapsed": 3.24
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Test": "TestTerminalCancellationDuringReplacementJoinsOldChild",
+          "Elapsed": 1.62
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/core",
+          "Elapsed": 8.989
+        }
+      ]
+    },
+    {
+      "command": "GOMAXPROCS=1 go test -json -p 1 -parallel 1 -count=1 -run ^TestNative ./internal/dashboard ./cmd/hataori",
+      "exit_code": 0,
+      "results": [
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeAuthorityAndIsolation",
+          "Elapsed": 0.08
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/foreign_host",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/port_host",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/foreign_origin",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/duplicate_origin",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/empty_origin",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/missing_write_origin",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/missing_upgrade_origin",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/foreign_upgrade_origin",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/bearer",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/empty_bearer",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/method",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/sign-in",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/passkey",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/new_route",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/wire_op",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/encoded_path",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/normalized_path",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/double_slash",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/trailing_dot_segment",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/upgrade_read",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/Forwarded",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/X-Forwarded-For",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/X-Forwarded-Host",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/X-Forwarded-Proto",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/X-Real-Ip",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/Via",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP/X-Forwarded-Port",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRefusesHostileHTTP",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeStreamsAndShutdown",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeRejectsHTTPProxyTargets",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeOperateAuthenticationAndShutdown",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeWebSocketOrigin",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativePreauthShutdown",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeShutdownWaitsForAPI",
+          "Elapsed": 0.03
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeShutdownJoinsStreamProducer/shutdown",
+          "Elapsed": 0.03
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeShutdownJoinsStreamProducer/head",
+          "Elapsed": 0.03
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeShutdownJoinsStreamProducer/disconnect",
+          "Elapsed": 0.12
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeShutdownJoinsStreamProducer",
+          "Elapsed": 0.18
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeShutdownJoinsHostScreen",
+          "Elapsed": 1.03
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeOnlyDoesNotBindTCPOrIssueLinks",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Test": "TestNativeAttachAuthenticationAndShutdown",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/internal/dashboard",
+          "Elapsed": 1.405
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/cmd/hataori",
+          "Test": "TestNativeDaemonLifecycle",
+          "Elapsed": 0.22
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/cmd/hataori",
+          "Test": "TestNativeDaemonKeepsBrowserSignIn",
+          "Elapsed": 0.2
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/cmd/hataori",
+          "Test": "TestNativeFlagAndUnsafeRootRefuse",
+          "Elapsed": 0.14
+        },
+        {
+          "Action": "pass",
+          "Package": "github.com/yousan/hataori/cmd/hataori",
+          "Elapsed": 0.582
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Only disposable in-process core metadata and fake held producers; no agent or host process starts.",
+    "No page/build edit; #1013 release does not release #1054/#1108 shared generated hunks.",
+    "Darwin ACL/cross-user execution, preserved provider gates and full final-head/exact-main CI remain unmet.",
+    "No Mac, local tmux/full suite, Claude/paid API, production/configuration/credential/host action or CI rerun."
+  ]
+}

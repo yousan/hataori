@@ -86,11 +86,12 @@ const (
 	DefaultWebSessionTTL   = 12 * time.Hour
 )
 
-// Config is how one instance serves its dashboard. At least one of Local
-// and Web is set.
+// Config is how one instance serves its dashboard. At least one of Local,
+// Web and Native is set.
 type Config struct {
-	Local *Local // the loopback listener; nil for none
-	Web   *Web   // the web listener; nil for none
+	Local  *Local  // the loopback listener; nil for none
+	Web    *Web    // the web listener; nil for none
+	Native *Native // private owner transport, independent of browser sign-in
 
 	LinkTTL         time.Duration // how long a sign-in link works; DefaultLinkTTL when zero
 	LocalSessionTTL time.Duration // how long a session of the loopback listener lasts; DefaultLocalSessionTTL when zero
@@ -175,10 +176,10 @@ type Server struct {
 	For func(person string) (api control.API, ok bool)
 	Log *slog.Logger
 
-	local, web *listener
-	linkTTL    time.Duration
-	now        func() time.Time
-	mux        *http.ServeMux
+	local, web, native *listener
+	linkTTL            time.Duration
+	now                func() time.Time
+	mux                *http.ServeMux
 
 	key []byte // signs sessions
 	// ceremonyKey signs passkey sign-in ceremonies. It is made at each
@@ -196,8 +197,13 @@ type Server struct {
 	attachIdle time.Duration
 	// closing is closed when the server closes: the connections the
 	// WebSocket routes took over are not the http.Server's to close.
-	closing   chan struct{}
-	closeOnce sync.Once
+	closing        chan struct{}
+	closeOnce      sync.Once
+	requestMu      sync.Mutex
+	requests       sync.WaitGroup
+	stopping       bool
+	requestContext context.Context
+	cancelRequests context.CancelFunc
 
 	// Passkeys: the web listener's relying party, nil when there is none
 	// (rpOff says why), and where they are kept, nil for nowhere.
@@ -226,12 +232,13 @@ type Server struct {
 
 // listener is one way of reaching the dashboard.
 type listener struct {
-	way   control.Way
-	ln    net.Listener
-	base  *url.URL // where its links point, canonical: scheme and host, no default port
-	proxy net.IP   // the web listener's reverse proxy, if any
-	ttl   time.Duration
-	srv   *http.Server
+	way    control.Way
+	ln     net.Listener
+	base   *url.URL // where its links point, canonical: scheme and host, no default port
+	proxy  net.IP   // the web listener's reverse proxy, if any
+	ttl    time.Duration
+	srv    *http.Server
+	native *Native // non-nil only for a kernel-checked native Unix listener
 }
 
 // link is a sign-in link not used yet: whose session it opens, on which
@@ -261,7 +268,7 @@ func isLoopback(host string) bool {
 // refuses a loopback listener on an address that is not loopback, and a web
 // listener that would not be served over HTTPS, and the error says so.
 func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.Logger) (*Server, error) {
-	if cfg.Local == nil && cfg.Web == nil {
+	if cfg.Local == nil && cfg.Web == nil && cfg.Native == nil {
 		return nil, errors.New("dashboard: neither a loopback nor a web listener")
 	}
 	s := &Server{For: api, Log: log, linkTTL: cfg.LinkTTL, now: cfg.Now,
@@ -269,6 +276,7 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 		keepAlive: defaultKeepAlive, writeTimeout: defaultWriteTimeout, hostScreenInterval: defaultHostScreenInterval,
 		operatedScreenInterval: defaultOperatedScreenInterval, hostInput: cfg.HostInput, mayOperate: cfg.MayOperate, mayAct: cfg.MayAct,
 		acted: map[[32]byte]time.Time{}, attachHost: cfg.AttachHost, attachIdle: orDefault(cfg.AttachIdle, DefaultAttachIdle), closing: make(chan struct{})}
+	s.requestContext, s.cancelRequests = context.WithCancel(context.Background())
 	if len(s.key) == 0 {
 		s.key = make([]byte, 32)
 		if _, err := rand.Read(s.key); err != nil {
@@ -312,6 +320,12 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 			return nil, err
 		}
 	}
+	if cfg.Native != nil {
+		if s.native, err = listenNative(*cfg.Native); err != nil {
+			s.Close()
+			return nil, err
+		}
+	}
 	s.rpOff = "passkeys are for the web listener, and this dashboard has none"
 	if s.web != nil {
 		if s.rp, err = relyingParty(s.web); err != nil {
@@ -321,6 +335,7 @@ func Listen(cfg Config, api func(person string) (control.API, bool), log *slog.L
 	}
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("GET "+SessionPath, s.signIn)
+	s.mux.HandleFunc("GET "+NativeIdentityPath, s.nativeIdentity)
 	s.passkeyRoutes()
 	s.operateRoutes()
 	s.actRoutes()
@@ -491,7 +506,7 @@ func loopbackName(host string) bool {
 // listeners is the listeners the server has, loopback first.
 func (s *Server) listeners() []*listener {
 	var ls []*listener
-	for _, l := range []*listener{s.local, s.web} {
+	for _, l := range []*listener{s.local, s.web, s.native} {
 		if l != nil {
 			ls = append(ls, l)
 		}
@@ -564,7 +579,13 @@ func (s *Server) Serve(ctx context.Context) error {
 // Close stops the server and closes its connections and its listeners,
 // also when it never served.
 func (s *Server) Close() error {
-	s.closeOnce.Do(func() { close(s.closing) })
+	s.closeOnce.Do(func() {
+		s.requestMu.Lock()
+		s.stopping = true
+		close(s.closing)
+		s.cancelRequests()
+		s.requestMu.Unlock()
+	})
 	var first error
 	for _, l := range s.listeners() {
 		var err error
@@ -581,6 +602,14 @@ func (s *Server) Close() error {
 	return first
 }
 
+// CloseAndWait stops request admission, cancels active streams/upgrades and
+// waits for their handlers before the daemon closes their backing store.
+func (s *Server) CloseAndWait() error {
+	err := s.Close()
+	s.requests.Wait()
+	return err
+}
+
 // NewLink makes a sign-in link for the listener way names (empty: the
 // loopback listener when there is one, else the web listener) that works
 // once, within the link lifetime, and opens a session of person on that
@@ -592,6 +621,9 @@ func (s *Server) NewLink(_ context.Context, person string, way control.Way) (str
 	l, err := s.listenerOf(way)
 	if err != nil {
 		return "", err
+	}
+	if l == nil {
+		return "", errors.New("dashboard: no browser sign-in listener")
 	}
 	token, sum, err := secret()
 	if err != nil {
@@ -688,6 +720,9 @@ type claims struct {
 // last longer than l's sessions last now, such as one made before its
 // lifetime was shortened, is refused.
 func (s *Server) valid(token string, l *listener) (claims, bool) {
+	if l.native != nil {
+		return claims{}, false
+	}
 	p, sig, ok := strings.Cut(token, ".")
 	if !ok {
 		return claims{}, false
@@ -760,6 +795,9 @@ func listenerOfRequest(r *http.Request) *listener {
 // hostOK reports whether host, a request's Host, is one this listener
 // answers.
 func (l *listener) hostOK(host string) bool {
+	if l.native != nil {
+		return host == "instance"
+	}
 	if l.way == control.WayLocal {
 		return loopbackName(host)
 	}
@@ -770,6 +808,9 @@ func (l *listener) hostOK(host string) bool {
 // listener's own for a request whose Host is host: the scheme, the host and
 // the port.
 func (l *listener) originOK(origin, host string) bool {
+	if l.native != nil {
+		return host == "instance" && origin == NativeOrigin
+	}
 	u, err := url.Parse(origin)
 	if err != nil || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
 		return false
@@ -792,6 +833,19 @@ func isPageFile(path string) bool {
 // handler checks every request that l accepted, then hands it to its route.
 func (s *Server) handler(l *listener) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.requestMu.Lock()
+		if s.stopping {
+			s.requestMu.Unlock()
+			http.Error(w, "dashboard is stopping", http.StatusServiceUnavailable)
+			return
+		}
+		s.requests.Add(1)
+		s.requestMu.Unlock()
+		defer s.requests.Done()
+		ctx, cancel := context.WithCancel(r.Context())
+		stop := context.AfterFunc(s.requestContext, cancel)
+		defer func() { stop(); cancel() }()
+		r = r.WithContext(ctx)
 		h := w.Header()
 		h.Set("Cache-Control", "no-store")
 		h.Set("Referrer-Policy", "no-referrer")
@@ -810,7 +864,7 @@ func (s *Server) handler(l *listener) http.Handler {
 			s.refuse(w, r, l, http.StatusForbidden, "unknown host")
 			return
 		}
-		if l.way == control.WayLocal {
+		if l.way == control.WayLocal || l.native != nil {
 			for _, name := range proxyHeaders {
 				if r.Header.Get(name) != "" {
 					s.refuse(w, r, l, http.StatusForbidden, "through a reverse proxy: the loopback listener serves this machine and ports forwarded over SSH; put a proxy in front of the web listener")
@@ -820,6 +874,10 @@ func (s *Server) handler(l *listener) http.Handler {
 		}
 		if o := r.Header.Get("Origin"); o != "" && !l.originOK(o, r.Host) {
 			s.refuse(w, r, l, http.StatusForbidden, "foreign origin")
+			return
+		}
+		if l.native != nil && !nativeRequestOK(r) {
+			s.refuse(w, r, l, http.StatusForbidden, "native request has a forbidden route or authority")
 			return
 		}
 		// Only the operate route accepts an Upgrade; the terminal routes
@@ -849,7 +907,7 @@ func (s *Server) handler(l *listener) http.Handler {
 				return
 			}
 		}
-		ctx := context.WithValue(r.Context(), listenerKey{}, l)
+		ctx = context.WithValue(r.Context(), listenerKey{}, l)
 		// The operate WebSocket carries its session in its first message:
 		// a browser sends no header with a WebSocket (operate.go).
 		if !signInRoute(r.URL.Path) && !isPageFile(r.URL.Path) && r.URL.Path != OperatePath && r.URL.Path != AttachPath {
@@ -868,6 +926,12 @@ func (s *Server) handler(l *listener) http.Handler {
 // it is one of l's that this key signed, has not expired, and belongs to a
 // person who may still sign in.
 func (s *Server) sessionFrom(r *http.Request, l *listener) (session, bool) {
+	if l.native != nil {
+		if r.Header.Get("Authorization") != "" {
+			return session{}, false
+		}
+		return l.nativeSession(), true
+	}
 	token, ok := bearer(r)
 	if !ok {
 		return session{}, false
