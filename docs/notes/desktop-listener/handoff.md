@@ -193,13 +193,22 @@ cross-user acceptance remains unmet. Darwin libc/ACL/mount fixtures have not
 executed here. No real Mac, local tmux/full suite, production/configuration,
 service, credential or host operation is part of this work.
 
-Still required for #1071: #1054/#1108 minimum shared page/build releases and
-native bootstrap implementation;
-executed supported-platform ACL/cross-user security acceptance; fresh final
-independent implementation and authority reviews; every preserved mandatory
-Claude/provider review gate; full required Linux/macOS CI on the final head and
-exact main merge SHA; merge and issue closure. No Claude invocation or gate
-waiver is authorized. Draft static/web/cross-build successes are not these
+The minimum page/build releases and native bootstrap are implemented. The
+maintainer now authorizes the separate `native-listener-proof.yml` workflow:
+only PR #1115, standard disposable Linux/macOS runners, exact PR head checkout,
+ordinary-user Darwin ACL/kernel-peer/non-cgo checks and elevation of only the
+compiled cross-user fixture with an empty environment. It uses the PR event,
+not an unregistered dispatch. Named PASS results without skips must be recorded;
+adding the workflow or compiling a test binary is not executed acceptance.
+Existing draft/full CI and policy are unchanged.
+
+Still required for #1071: executed supported-platform ACL/cross-user security
+acceptance; fresh final independent Codex implementation and authority reviews;
+full required Linux/macOS CI on the final head and exact main merge SHA; merge
+and issue closure. Issue #1071 specifies Codex review and forbids running Claude.
+Earlier references here to an additional mandatory Claude/provider gate had no
+PR-specific primary source and do not establish one. Other PRs retain their own
+explicit review requirements. Draft static/web/cross-build successes are not
 runtime gates and do not establish complete daemon/HTTP/page acceptance.
 
 #1072 starts in a separate issue/branch/PR only after #1071 merges; #1073 follows
