@@ -1,0 +1,156 @@
+{
+  "scope": "isolated focused tests; no runtime/service-manager acceptance",
+  "source_sha256": {
+    "manifest.go": "5d6c4716a3998b1507d662832d7d73df28db3229b997c469a21e3301b51c0af3",
+    "store.go": "ebec0e6da959ac0641dbefcb84f6bf114ea3779dd7610d78f5aef2d9e73d3790",
+    "binary.go": "f7208935733dafd244fbe72e066074c43346a045af667932f0ae398169316547",
+    "service.go": "e448d6aa854b3c2a06f858ab8f165c200b1063aa5af533ebb251bc2226719116"
+  },
+  "results": [
+    {
+      "guard": "manifest-provenance",
+      "test": "TestVerifyRefusesBeforeInstallation",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestVerifyRefusesBeforeInstallation (0.00s)",
+        "manifest_test.go:79: accepted unauthenticated manifest"
+      ]
+    },
+    {
+      "guard": "protocol-major",
+      "test": "TestVerifyRefusesBeforeInstallation/major",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestVerifyRefusesBeforeInstallation (0.00s)",
+        "--- FAIL: TestVerifyRefusesBeforeInstallation/major (0.00s)",
+        "manifest_test.go:64: accepted invalid release"
+      ]
+    },
+    {
+      "guard": "download-checksum",
+      "test": "TestInstallFailuresPreserveSelectionAndVersions/checksum",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.07s)",
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions/checksum (0.06s)",
+        "store_test.go:185: unsafe installation accepted"
+      ]
+    },
+    {
+      "guard": "complete-download-size",
+      "test": "TestInstallFailuresPreserveSelectionAndVersions/size_mismatch",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.06s)",
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions/size_mismatch (0.06s)",
+        "store_test.go:185: unsafe installation accepted"
+      ]
+    },
+    {
+      "guard": "download-read-error",
+      "test": "TestInstallFailuresPreserveSelectionAndVersions/reader_failure",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.06s)",
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions/reader_failure (0.06s)",
+        "store_test.go:185: unsafe installation accepted"
+      ]
+    },
+    {
+      "guard": "executable-platform",
+      "test": "TestCompletePlatformBinaries",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestCompletePlatformBinaries (0.79s)",
+        "--- FAIL: TestCompletePlatformBinaries/linux-amd64 (0.20s)",
+        "platform_test.go:49: accepted wrong architecture",
+        "--- FAIL: TestCompletePlatformBinaries/linux-arm64 (0.20s)",
+        "platform_test.go:49: accepted wrong architecture",
+        "--- FAIL: TestCompletePlatformBinaries/darwin-amd64 (0.19s)",
+        "platform_test.go:49: accepted wrong architecture",
+        "--- FAIL: TestCompletePlatformBinaries/darwin-arm64 (0.19s)",
+        "platform_test.go:49: accepted wrong architecture"
+      ]
+    },
+    {
+      "guard": "exclusive-version-publication",
+      "test": "TestInstallRetainsImmutableVersions",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestInstallRetainsImmutableVersions (0.10s)",
+        "store_test.go:96: reinstall rewrote old executable"
+      ]
+    },
+    {
+      "guard": "refuse-unregistered-work",
+      "test": "TestInstallRefusesAdoptionAndLinks/unregistered",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestInstallRefusesAdoptionAndLinks (0.04s)",
+        "--- FAIL: TestInstallRefusesAdoptionAndLinks/unregistered (0.03s)",
+        "store_test.go:219: nonempty prefix was not refused before adoption: <nil>"
+      ]
+    },
+    {
+      "guard": "pinned-trust-key",
+      "test": "TestInstallFailuresPreserveSelectionAndVersions/trust_key",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.08s)",
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions/trust_key (0.07s)",
+        "store_test.go:185: unsafe installation accepted"
+      ]
+    },
+    {
+      "guard": "exclusive-installer",
+      "test": "TestInstallFailuresPreserveSelectionAndVersions/busy",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions (0.07s)",
+        "--- FAIL: TestInstallFailuresPreserveSelectionAndVersions/busy (0.06s)",
+        "store_test.go:185: unsafe installation accepted"
+      ]
+    },
+    {
+      "guard": "reverify-selected-executable",
+      "test": "TestSelectedRefusesChangedBinary",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestSelectedRefusesChangedBinary (0.03s)",
+        "store_test.go:280: selected modified executable"
+      ]
+    },
+    {
+      "guard": "systemd-detached-host-preservation",
+      "test": "TestExplicitServiceTemplatesKeepHosts",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestExplicitServiceTemplatesKeepHosts (0.00s)",
+        "service_test.go:15: unsafe user-service template: [Unit]"
+      ]
+    },
+    {
+      "guard": "launchagent-detached-host-preservation",
+      "test": "TestExplicitServiceTemplatesKeepHosts",
+      "exit": 1,
+      "regression_failed": true,
+      "failure_lines": [
+        "--- FAIL: TestExplicitServiceTemplatesKeepHosts (0.00s)",
+        "service_test.go:27: unsafe launch-agent template: <?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+      ]
+    }
+  ],
+  "sources_restored": true
+}

@@ -40,7 +40,7 @@ type Manifest struct {
 }
 
 var releaseID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$`)
-var protocolID = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+var protocolID = regexp.MustCompile(`^[1-9][0-9]{0,5}\.(0|[1-9][0-9]{0,5})$`)
 
 func supported(p Platform) bool {
 	return (p.OS == "linux" || p.OS == "darwin") && (p.Arch == "amd64" || p.Arch == "arm64")
