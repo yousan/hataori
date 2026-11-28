@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
 
 permissions:
   contents: read
@@ -21,7 +22,7 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      code: ${{ steps.filter.outputs.code }}
+      code: ${{ steps.filter.outputs.code == 'true' || steps.filter.outputs.policy == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
@@ -30,14 +31,36 @@ jobs:
           # PRs use their complete diff; pushes use the entire pushed range.
           base: ${{ github.event.before || github.ref }}
           predicate-quantifier: every
-          filters: |
-            code:
-              - '!**/*.{md,markdown,MD,MARKDOWN}'
-              - '!docs/**'
-              - '!site/**'
-              - '!LICENSE'
+          filters: .github/filters.yml
+
+  # Development feedback, including test compilation without executing a
+  # test binary. A green check here is not a full-suite result.
+  check:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - name: build without cgo
+        run: CGO_ENABLED=0 go build ./...
+      - name: compile tests without running them
+        run: go test -exec /bin/true ./...
 
   test:
+    needs: [changes, check]
+    if: needs.changes.outputs.code == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,19 +78,8 @@ jobs:
       # The hataori connect tests start an sshd of their own, as this user.
       - name: install sshd
         run: test -x /usr/sbin/sshd || { sudo apt-get update && sudo apt-get install -y openssh-server; }
-      - name: gofmt
-        run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "These files need gofmt:"
-            echo "$unformatted"
-            exit 1
-          fi
-      - run: go vet ./...
       - name: isolated worker SSH scenarios
         run: go test -v -count=1 -timeout 2m ./internal/workerssh
-      - name: build without cgo
-        run: CGO_ENABLED=0 go build ./...
       # cmd/hataori runs the daemon, session hosts and a browser for each
       # end-to-end test, and takes close to go test's default of ten minutes
       # per package on macOS (#625).
@@ -75,9 +87,9 @@ jobs:
 
   # The same code runs on macOS (design, section 6.4).
   test-macos:
-    needs: changes
-    # Keep the check name present even when no macOS runner is needed.
-    if: needs.changes.outputs.code == 'true'
+    needs: [changes, check]
+    # Keep the check name present; draft skips are not final validation.
+    if: needs.changes.outputs.code == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -121,6 +133,8 @@ jobs:
   # hataori for macOS, where `hataori connect` runs on the person's
   # machine: both architectures, kept as artifacts of the run.
   build-macos:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -143,6 +157,8 @@ jobs:
   # The dashboard's page (design, section 7.2): its built files are
   # committed, so this builds them again and fails when they differ.
   web:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
