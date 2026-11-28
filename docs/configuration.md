@@ -674,8 +674,10 @@ query. Private threads never appear in those lists. Cursors for active threads
 are message ids; archived cursors are archive timestamps. Treat both as opaque
 and reuse them only for the same channel and query kind. History reads accept
 before, after, or the last 1–100 messages, return them chronologically, and keep
-pagination moving past omitted system notices. The service's thread type is
-reported on both paged and single-message reads, including private threads.
+pagination moving past omitted system notices. Public thread type is reported
+on both paged and single-message reads. Discord refuses private threads and
+unsupported conversation types before reading any messages, even when its bot
+account can see them. Supplying a private thread id directly does not grant access.
 Files and forwarded files are metadata only: no content is fetched. Own posts
 retain their conversation and message id so the caller can identify their link;
 the driver does not know work-thread numbers.

@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/disgoorg/disgo/rest"
 	"net/url"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/disgoorg/disgo/rest"
+	"github.com/disgoorg/snowflake/v2"
 
 	"github.com/yousan/hataori/internal/surface"
 )
@@ -26,9 +28,12 @@ func TestHistoryCapturedMessages(t *testing.T) {
 				t.Fatal(err)
 			}
 			r := newFakeREST(t)
-			self := w.Author.ID
-			if strings.Contains(name, "webhook") {
-				self = botID(t)
+			self := botID(t)
+			wantOwn := strings.HasPrefix(name, "commands/") || strings.HasPrefix(name, "bot/")
+			if strings.HasPrefix(name, "commands/") {
+				self = w.Author.ID // this capture set has its own id mapping
+			} else if strings.HasPrefix(name, "calls/") {
+				self = snowflake.MustParse(id(payload(t, "calls/rest-me.json")["id"]))
 			}
 			d := testDriver(t, self, r, nil)
 			conv := surface.Conversation{Channel: w.ChannelID.String()}
@@ -39,12 +44,15 @@ func TestHistoryCapturedMessages(t *testing.T) {
 			if got.Ref.ID != w.ID.String() || got.Ref.Conv != conv || got.Text != w.Content || got.Time != w.Timestamp {
 				t.Fatalf("lost message fields: %+v", got)
 			}
+			if got.Author.ID != w.Author.ID.String() || got.Own != wantOwn {
+				t.Fatalf("author/own identity: %+v; want own=%v", got, wantOwn)
+			}
 			if strings.Contains(name, "webhook") {
 				if got.Author.Kind != surface.Webhook || got.Own {
 					t.Fatalf("webhook: %+v", got)
 				}
-			} else if !got.Own {
-				t.Fatalf("own post: %+v", got)
+			} else if strings.HasPrefix(name, "calls/") && got.Author.Kind != surface.Person {
+				t.Fatalf("person's history was not attributed to that person: %+v", got)
 			}
 			if w.Type == typeReply && (got.ReplyTo == nil || got.ReplyTo.ID != w.MessageReference.MessageID.String()) {
 				t.Fatalf("reply: %+v", got)
@@ -64,7 +72,7 @@ func TestHistoryCapturedMessages(t *testing.T) {
 	}
 }
 
-func TestHistoryPagingCapturedMessages(t *testing.T) {
+func TestHistoryComposedPagingMessages(t *testing.T) {
 	thread := payload(t, "unbroken/rest-thread-for-pages.json")
 	conv := surface.Conversation{Channel: id(thread["parent_id"]), Thread: id(thread["id"])}
 	var messages []any

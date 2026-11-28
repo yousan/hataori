@@ -65,6 +65,14 @@ func (d *Driver) historyChannel(ctx context.Context, conv surface.Conversation) 
 	if c.ID != ch {
 		return c, fmt.Errorf("discord: the service returned another conversation")
 	}
+	// A bot's membership of a private thread is not permission to give its
+	// contents to a history caller. Refuse before any message endpoint is read.
+	switch c.Type {
+	case 0, 1, 2, 3, 5, 10, 11, 13, 15, 16:
+		// Known server channels, direct conversations and public threads.
+	default:
+		return c, fmt.Errorf("%w: discord: private or unsupported conversation type %d", surface.ErrRefused, c.Type)
+	}
 	if conv.Thread != "" && (!isThread(c.Type) || c.ParentID.String() != conv.Channel) {
 		return c, fmt.Errorf("discord: the thread is not in the requested channel")
 	}

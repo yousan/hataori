@@ -40,6 +40,7 @@ type ChatThread struct {
 
 // MessageReader is optional. It reads service messages, including the
 // driver's own posts, but not service notices. It downloads no files.
+// A driver may refuse private or unsupported conversations before reading.
 // A Driver without it cannot read history or an individual message.
 type MessageReader interface {
 	ReadMessages(ctx context.Context, conv Conversation, q MessageQuery) (MessagePage, error)
