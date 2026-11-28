@@ -1,3 +1,4 @@
+import { visibleState } from "./machine";
 import { useEffect, useRef, useState } from "react";
 import { act, answerPath, newKey, sendPath } from "./act";
 import type { OpenRequest } from "./Answers";
@@ -48,13 +49,13 @@ export function InputBox({ x, question }: { x: ThreadInfo; question?: OpenReques
   };
 
   return (
-    <div className="input-box" data-input-box={x.id} data-box-running={x.state === "running" ? "yes" : "no"}>
+    <div className="input-box" data-input-box={x.id} data-box-running={visibleState(x) === "running" ? "yes" : "no"}>
       {question && !question.approval ? (
         <p className="box-note" data-box-answers="">
           {t("box.answers")}
         </p>
       ) : (
-        x.state === "running" && <p className="box-note">{t("box.running")}</p>
+        visibleState(x) === "running" && <p className="box-note">{t("box.running")}</p>
       )}
       <div className="box-row">
         <textarea

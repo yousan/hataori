@@ -23,7 +23,23 @@ export interface ThreadLink extends LinkRef {
   opened?: boolean;
 }
 
+// Machine status is a scoped observation, never a current session-state claim.
+export interface MachineAvailability {
+  state: string;
+  at: string;
+  reason?: string;
+  last_known_state?: State;
+  last_known_at?: string;
+}
+
 export interface ThreadInfo {
+  // Page-only metadata set by useDashboard, never a protocol field.
+  snapshotReadAt?: string;
+  machine?: string;
+  placement_pending?: boolean;
+  placement_reason?: string;
+  availability?: MachineAvailability;
+  io_paused?: string;
   id: ThreadID;
   scope: string;
   links: ThreadLink[];

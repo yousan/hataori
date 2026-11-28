@@ -1,3 +1,5 @@
+import { MachineStatus } from "./MachineStatus";
+import { stateSince, threadStateName, unavailable, visibleState } from "./machine";
 import { useEffect, useState } from "react";
 import { type Event, hasTerminal, type ThreadID, type ThreadInfo } from "./api";
 import type { AttachState } from "./attach";
@@ -6,7 +8,7 @@ import { chosenLine } from "./chosen";
 import { Conversation } from "./Conversation";
 import { who } from "./conversation";
 import { FailedStartView, useStart } from "./FailedStart";
-import { age, stateName } from "./format";
+import { age } from "./format";
 import { InputBox } from "./InputBox";
 import { Answers, useOpenRequests } from "./Answers";
 import { StopButton } from "./StopButton";
@@ -31,6 +33,8 @@ export function defaultView(x: ThreadInfo): View {
 export interface AttachSwitch {
   state?: AttachState;
   onSwitch: () => void;
+  canSwitch?: boolean;
+  disabled?: boolean;
 }
 
 // attachEndKey is the catalog's words for why an attachment ended.
@@ -52,7 +56,7 @@ function attachEndKey(s: AttachState): Key {
     case "refused":
       return "attach.end.refused";
   }
-  return "attach.end.lost";
+  return "machine.attachmentLost";
 }
 
 // Switch is the switch that attaches the terminal on the web listener.
@@ -61,9 +65,9 @@ function Switch({ a }: { a: AttachSwitch }) {
   const on = s?.phase === "on" || s?.phase === "starting";
   return (
     <div className="attach" data-attach={s ? s.phase : "off"}>
-      <button type="button" role="switch" aria-checked={on} onClick={a.onSwitch} title={t(on ? "attach.offTitle" : "attach.onTitle")}>
+      {a.canSwitch !== false && <button type="button" role="switch" disabled={a.disabled && !on} aria-checked={on} onClick={a.onSwitch} title={t(on ? "attach.offTitle" : "attach.onTitle")}>
         {t("attach.switch")}
-      </button>
+      </button>}
       {s?.phase === "starting" && <span className="attach-note">{t("attach.starting")}</span>}
       {s?.phase === "on" && <span className="attach-note">{t("attach.on")}</span>}
       {s?.phase === "ended" && (
@@ -80,9 +84,9 @@ function Switch({ a }: { a: AttachSwitch }) {
 // from the controls beside it, which are actions.
 function PaneState({ x, now }: { x: ThreadInfo; now: number }) {
   return (
-    <span className={`pane-state state-${x.state}`} data-pane-state={x.state}>
+    <span className={`pane-state state-${visibleState(x)}`} data-pane-state={visibleState(x)}>
       <span className="pane-state-dot" aria-hidden="true" />
-      {t("pane.state", { state: stateName(x.state), age: age(x.updated, now) })}
+      {t("pane.state", { state: threadStateName(x), age: age(stateSince(x), now) })}
     </span>
   );
 }
@@ -112,8 +116,12 @@ export function ThreadPane(props: {
   onOpen?: (id: ThreadID) => void; // opens another thread
 }) {
   const { x, now, subscribe, opens, fit, onView, typing, attach, mayAct, narrow, onOpen } = props;
-  const [terminal, setTerminal] = useState<boolean | null>(null);
+  const [capability, setCapability] = useState<{ id: number; present: boolean }>({ id: 0, present: false });
+  // A different thread's answer says nothing about this terminal. Unknown
+  // remains distinct from a successful probe that confirmed pipes.
+  const terminal = capability.id === x.id ? capability.present : null;
   const id = x.id;
+  const blocked = unavailable(x) || !!x.placement_pending;
   // Each open question's and approval's buttons, for a person who may act;
   // a refused answer's reason stays after them, until another request
   // opens. The box answers the open question, if any.
@@ -130,10 +138,10 @@ export function ThreadPane(props: {
   useEffect(() => {
     let gone = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
-    setTerminal(null);
+    if (blocked) return;
     const probe = () =>
       hasTerminal(id)
-        .then((ok) => !gone && setTerminal(ok))
+        .then((ok) => !gone && setCapability({ id, present: ok }))
         .catch(() => {
           if (!gone) retry = setTimeout(probe, probeRetry);
         });
@@ -142,16 +150,16 @@ export function ThreadPane(props: {
       gone = true;
       clearTimeout(retry);
     };
-  }, [id]);
+  }, [id, blocked]);
 
-  if (terminal === null) return null;
-  const view: View = terminal ? (props.view ?? defaultView(x)) : "conversation";
+  const view: View = terminal === false ? "conversation" : (props.view ?? (x.placement_pending ? "conversation" : defaultView(x)));
   return (
     <div className="thread-pane" data-view={view}>
       <div className="pane-head">
         <PaneState x={x} now={now} />
+        <MachineStatus x={x} now={now} />
         <div className="pane-controls">
-          {terminal && (
+          {terminal !== false && (
             <div className="view-switch" role="group" aria-label={t("view.label")}>
               {(["terminal", "conversation"] as const).map((v) => (
                 <button key={v} type="button" data-view={v} aria-pressed={view === v} onClick={() => onView?.(v)}>
@@ -160,7 +168,7 @@ export function ThreadPane(props: {
               ))}
             </div>
           )}
-          {terminal && view === "terminal" && attach && <Switch a={attach} />}
+          {terminal !== false && view === "terminal" && attach && <Switch a={attach} />}
           {mayAct && <StopButton x={x} subscribe={subscribe} opens={opens} />}
         </div>
       </div>
@@ -178,12 +186,13 @@ export function ThreadPane(props: {
       {view === "terminal" ? (
         <TerminalView
           x={x}
+          now={now}
           fit={fit}
           typing={terminal ? typing : undefined}
-          offer={terminal && attach && !typing?.allowed ? attach.onSwitch : undefined}
+          offer={terminal && attach && attach.canSwitch !== false && !blocked && !typing?.allowed ? attach.onSwitch : undefined}
         />
       ) : (
-        <Conversation x={x} subscribe={subscribe} opens={opens} />
+        <Conversation x={x} now={now} subscribe={subscribe} opens={opens} />
       )}
       {mayAct &&
         requests.map((r) => (

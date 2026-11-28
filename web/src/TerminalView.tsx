@@ -1,3 +1,5 @@
+import { age, when } from "./format";
+import { unavailable } from "./machine";
 import "@xterm/xterm/css/xterm.css";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
@@ -63,13 +65,15 @@ const resizeQuiet = 250;
 // input on (the web listener's switch), starts that: a key or a click in
 // the terminal shows, over it, one line whose button calls offer. Nothing
 // is sent meanwhile.
-export function TerminalView({ x, fit, typing, offer }: { x: ThreadInfo; fit?: boolean; typing?: Typing; offer?: () => void }) {
+export function TerminalView({ x, now, fit, typing, offer }: { x: ThreadInfo; now: number; fit?: boolean; typing?: Typing; offer?: () => void }) {
   const host = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const termRef = useRef<ReturnType<typeof openReadOnly> | null>(null);
   const toPane = useRef<(() => void) | null>(null); // gives the session the pane's size, after a quiet spell
   const live = useRef(typing); // what the terminal's listeners read
   live.current = typing;
+  const [lost, setLost] = useState(false);
+  const [lastOutput, setLastOutput] = useState<string | null>(null);
   const [noProcess, setNoProcess] = useState(false);
   const offered = useRef(offer); // what the terminal's listeners read
   offered.current = offer;
@@ -126,7 +130,10 @@ export function TerminalView({ x, fit, typing, offer }: { x: ThreadInfo; fit?: b
     };
     toPane.current = fit ? sizeToPane : null;
     const fitting = fit && box.current ? fitted(term, box.current, sizeToPane) : null;
-    const source = new Stream(terminalPath(id));
+    let source: Stream;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    setLastOutput(null);
+    setLost(false);
     // xterm.js parses what it is given later, while reset and resize act at
     // once: each chunk waits for the bytes before it to be drawn, so a reset
     // never lands under output that came before it.
@@ -135,6 +142,8 @@ export function TerminalView({ x, fit, typing, offer }: { x: ThreadInfo; fit?: b
     const draw = (c: TerminalChunk) =>
       new Promise<void>((done) => {
         if (gone) return done();
+        setLastOutput(new Date().toISOString());
+        setLost(false);
         if (c.reset) term.reset(); // the end of the log, not a continuation: draw it afresh
         if (c.cols > 0 && c.rows > 0 && (c.cols !== term.cols || c.rows !== term.rows)) {
           term.resize(c.cols, c.rows); // the page's copy only: nothing goes to the session
@@ -146,15 +155,27 @@ export function TerminalView({ x, fit, typing, offer }: { x: ThreadInfo; fit?: b
         if (b.length > 0) term.write(b, done);
         else done();
       });
-    source.onmessage = (m) => {
-      let c: TerminalChunk;
-      try {
-        c = JSON.parse(m.data) as TerminalChunk;
-      } catch {
-        return;
-      }
-      drawn = drawn.then(() => draw(c));
+    const connect = () => {
+      if (gone) return;
+      source = new Stream(terminalPath(id));
+      source.onerror = () => {
+        if (gone) return;
+        setLost(true);
+        // A non-stream response (including an away refusal) stops Stream's
+        // own retries. Retry reads only; retain the existing terminal grid.
+        if (source.readyState === Stream.CLOSED) retry = setTimeout(connect, 2000);
+      };
+      source.onmessage = (m) => {
+        let c: TerminalChunk;
+        try {
+          c = JSON.parse(m.data) as TerminalChunk;
+        } catch {
+          return;
+        }
+        drawn = drawn.then(() => draw(c));
+      };
     };
+    connect();
     return () => {
       gone = true;
       clearTimeout(quiet);
@@ -169,6 +190,7 @@ export function TerminalView({ x, fit, typing, offer }: { x: ThreadInfo; fit?: b
       leave();
       unmute();
       fitting?.stop();
+      clearTimeout(retry);
       source.close();
       term.dispose();
     };
@@ -190,8 +212,12 @@ export function TerminalView({ x, fit, typing, offer }: { x: ThreadInfo; fit?: b
   // An asleep session has no process. A stream that was open when its host
   // ended sends nothing more until the next run, so the thread's state says
   // so; a stream opened later starts with the last run's log and no run.
+  const stale = lost || unavailable(x) || !!x.io_paused || !!x.placement_pending;
   return (
     <div className={fit ? "terminal-view fit" : "terminal-view"} data-terminal={x.id} data-typing={allowed ? "on" : "off"}>
+      {stale && <p className="cached" role="status" data-output-unavailable="">{lastOutput
+        ? t("machine.outputCached", { age: age(lastOutput, now), time: when(lastOutput) })
+        : t("machine.outputUnavailable")}</p>}
       {(noProcess || x.state === "asleep") && (
         <p className="no-process" data-no-process="">
           {t("pane.noProcess")}

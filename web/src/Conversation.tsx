@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type Event, sameThread, type ThreadInfo, threadEvents } from "./api";
 import { t } from "./catalog";
+import { age, when } from "./format";
+import { unavailable } from "./machine";
 import { chosenLine } from "./chosen";
 import { conversationKinds, type Entry, entries, merge } from "./conversation";
 
@@ -45,7 +47,7 @@ function turnBy(e: Extract<Entry, { kind: "turn_started" }>): string {
   return e.who ?? t("conv.someone");
 }
 
-function Line({ e }: { e: Entry }) {
+function Line({ e, blocked }: { e: Entry; blocked: boolean }) {
   switch (e.kind) {
     case "turn_started":
       return (
@@ -115,7 +117,7 @@ function Line({ e }: { e: Entry }) {
                     ended: clock(e.ended),
                     seconds: ((Date.parse(e.ended) - Date.parse(e.time)) / 1000).toFixed(1),
                   })
-                : t("conv.toolRunning", { started: clock(e.time) })}
+                : t(blocked ? "conv.toolUnobserved" : "conv.toolRunning", { started: clock(e.time) })}
               {e.parent && <> {t("conv.toolIn", { parent: e.parent })}</>}
             </p>
           </details>
@@ -130,10 +132,14 @@ function Line({ e }: { e: Entry }) {
 // time the stream opens again it reads back from the newest event to what
 // it holds, so a reconnect leaves no gap; each event is kept once, by its
 // position, so nothing repeats.
-export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) => void) => () => void; opens: number }) {
-  const { x, subscribe, opens } = props;
+export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) => void) => () => void; opens: number; now: number }) {
+  const { x, subscribe, opens, now } = props;
+  const blocked = unavailable(x) || !!x.placement_pending || !!x.io_paused;
   const id = x.id;
   const [events, setEvents] = useState<Event[]>([]);
+  // Receipt time in this browser, not the historical event timestamp.
+  const [observedAt, setObservedAt] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   const [start, setStart] = useState(false); // the thread's first event is read
   const [loading, setLoading] = useState(false);
   // reads counts the reads of history: a page of events this view does not
@@ -154,9 +160,11 @@ export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) =
     if (next !== held.current) {
       held.current = next;
       setEvents(next);
+      setObservedAt(new Date().toISOString());
     }
   };
   const read = (evs: readonly Event[]) => {
+    setFailed(false);
     if (evs.length > 0) oldest.current = oldest.current === 0 ? evs[0].pos : Math.min(oldest.current, evs[0].pos);
     add(evs);
     if (evs.length < page) setStart(true);
@@ -168,6 +176,8 @@ export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) =
     held.current = [];
     oldest.current = 0;
     setEvents([]);
+    setObservedAt(null);
+    setFailed(false);
     setStart(false);
     return subscribe((e) => {
       if (sameThread(e.thread, id) && conversationKinds.has(e.kind)) add([e]);
@@ -192,11 +202,17 @@ export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) =
             return;
           }
           add(evs);
-          if (evs[0].pos <= newest) return;
+          if (evs[0].pos <= newest) {
+            setFailed(false);
+            return;
+          }
           before = evs[0].pos;
         }
       } catch {
-        if (!gone) retry = setTimeout(catchUp, retryDelay);
+        if (!gone) {
+          setFailed(true);
+          retry = setTimeout(catchUp, retryDelay);
+        }
       }
     };
     catchUp();
@@ -226,6 +242,7 @@ export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) =
         read(evs);
       })
       .catch(() => {
+        setFailed(true);
         anchor.current = null; // the next scroll to the top tries again
       })
       .finally(() => {
@@ -261,13 +278,20 @@ export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) =
   const list = useMemo(() => entries(events), [events]);
   return (
     <div className="conversation" data-conversation={id} data-start={start ? "yes" : "no"} ref={box} onScroll={onScroll}>
+      {(blocked || failed) && (
+        <p className="cached" role="status" data-output-unavailable="" data-history-observed={observedAt ?? undefined}>
+          {list.length > 0 && observedAt
+            ? t("machine.historyCached", { age: age(observedAt, now), time: when(observedAt) })
+            : t("machine.outputUnavailable")}
+        </p>
+      )}
       <p className={start ? "conv-top conv-start" : loading ? "conv-top conv-loading" : "conv-top"}>
         {start ? t("conv.start") : loading ? t("conv.loading") : null}
       </p>
       {start && list.length === 0 && <p className="conv-empty">{t("conv.empty")}</p>}
       <ol className="conv-list">
         {list.map((e) => (
-          <Line key={e.pos} e={e} />
+          <Line key={e.pos} e={e} blocked={blocked || failed} />
         ))}
       </ol>
     </div>
