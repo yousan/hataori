@@ -94,35 +94,25 @@ func (r *Runner) codecInput(lv *live, in agent.Input) (agent.Actions, error) {
 	return lv.codec.Input(in)
 }
 
+type deferredFailure struct{ codecID, reason string }
+
 func (r *Runner) failDeferred(lv *live, input, reason string) error {
 	codecID := input
-	if strings.HasPrefix(input, core.DeferredKeyPrefix) {
-		slot, bound, err := r.Deferred.CodecSlot(context.Background(), r.Store.DB, lv.id, input)
-		if err != nil {
-			return err
-		}
-		input = slot
-		if !bound {
-			input = ""
-		}
-	} else {
+	if !strings.HasPrefix(input, core.DeferredKeyPrefix) {
 		b, bound, err := r.Deferred.Input(context.Background(), lv.id, input)
 		if err != nil {
 			return err
 		}
-		if bound {
-			codecID = fmt.Sprintf("%s%d", core.DeferredKeyPrefix, b.Number)
+		if !bound {
+			return nil // the original slot has already been consumed or replaced
 		}
+		codecID = fmt.Sprintf("%s%d", core.DeferredKeyPrefix, b.Number)
 	}
-	if input != "" {
-		if err := r.Store.Update(context.Background(), func(tx *store.Tx) error { return r.Deferred.FailTx(context.Background(), tx, lv.id, input, reason) }); err != nil {
-			return err
-		}
-	}
+	failure := &deferredFailure{codecID: codecID, reason: reason}
 	if c, ok := lv.codec.(agent.InputRefuser); ok {
-		return r.commitDeferredRestore(lv, c.RefuseInput([]string{codecID}, agent.NotDelivered))
+		return r.commitDeferredOutcome(lv, c.RefuseInput([]string{codecID}, agent.NotDelivered), failure)
 	}
-	return r.commitDeferredRestore(lv, agent.Actions{Events: []agent.Event{{Kind: agent.TurnEnded, Input: codecID, Status: agent.Failed, Reason: agent.NotDelivered}}})
+	return r.commitDeferredOutcome(lv, agent.Actions{Events: []agent.Event{{Kind: agent.TurnEnded, Input: codecID, Status: agent.Failed, Reason: agent.NotDelivered}}}, failure)
 }
 
 // actDeferred returns handled even on a refusal: an opt-in instruction can
@@ -392,13 +382,17 @@ func (r *Runner) restoreWrittenInput(lv *live, in agent.Input) {
 // propagate: the codec has consumed that ACK and must reconstruct it again.
 // The ordinary do path and its existing error behavior are unchanged.
 func (r *Runner) commitDeferredRestore(lv *live, a agent.Actions) error {
+	return r.commitDeferredOutcome(lv, a, nil)
+}
+
+func (r *Runner) commitDeferredOutcome(lv *live, a agent.Actions, failure *deferredFailure) error {
 	if len(a.Keys) > 0 || len(a.Write) > 0 || len(a.Reply) > 0 {
 		return errors.New("deferred event restoration attempted new I/O")
 	}
-	if len(a.Events) == 0 {
+	if len(a.Events) == 0 && failure == nil {
 		return nil
 	}
-	b := batch{events: a.Events, offset: lv.offset, screenOffset: lv.seenTo, files: map[string]int64{}}
+	b := batch{events: a.Events, deferredFailure: failure, offset: lv.offset, screenOffset: lv.seenTo, files: map[string]int64{}}
 	for p, o := range lv.files {
 		b.files[p] = o
 	}

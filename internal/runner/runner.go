@@ -1677,13 +1677,14 @@ func (r *Runner) loop(lv *live) {
 
 // batch is what one read of the logs produced.
 type batch struct {
-	events       []agent.Event
-	actions      []agent.Actions
-	offset       int64
-	files        map[string]int64
-	reads        []readRange // what was given to the codec, in order
-	err          error
-	screenOffset uint64
+	deferredFailure *deferredFailure // receipt failure and input cleanup commit atomically
+	events          []agent.Event
+	actions         []agent.Actions
+	offset          int64
+	files           map[string]int64
+	reads           []readRange // what was given to the codec, in order
+	err             error
+	screenOffset    uint64
 }
 
 // readRange is complete lines of the host's log (path "") or of a followed
@@ -1794,7 +1795,9 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 		if len(b.events) != 0 {
 			return true
 		}
-		r.exit(lv)
+		if err := r.exit(lv); err != nil {
+			return true // retain the drain/follower until terminal state is durable
+		}
 		r.finishSessionCatchup(lv)
 		return false
 	}
@@ -2026,6 +2029,17 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		ctx := context.Background()
 		seq = lv.seq
 		first, rep, slept = nil, nil, false
+		if f := b.deferredFailure; f != nil {
+			input, bound, err := r.Deferred.CodecSlot(ctx, tx, lv.id, f.codecID)
+			if err != nil {
+				return err
+			}
+			if bound {
+				if err := r.Deferred.FailTx(ctx, tx, lv.id, input, f.reason); err != nil {
+					return err
+				}
+			}
+		}
 
 		noReplacement := lv.deferredDrain
 		if r.Deferred != nil && !lv.deferredDrain && cannotResume(b.events) {
@@ -2404,7 +2418,7 @@ func (r *Runner) act(lv *live, a agent.Actions) error {
 }
 
 // exit records that the agent's process ended.
-func (r *Runner) exit(lv *live) {
+func (r *Runner) exit(lv *live) error {
 	if lv.taken != nil {
 		// The relay host ended: nothing points at the window any more.
 		if err := r.letGo(context.Background(), lv.id, lv.dir, *lv.taken, nil); err != nil {
@@ -2434,7 +2448,9 @@ func (r *Runner) exit(lv *live) {
 	}
 	if err := r.Machine.Apply(context.Background(), lv.id, in); err != nil && !errors.Is(err, session.ErrRefused) {
 		r.Log.Error("exit", "session", lv.id, "err", err)
+		return err
 	}
+	return nil
 }
 
 // checkIdle puts the session to sleep when it has been idle for the idle

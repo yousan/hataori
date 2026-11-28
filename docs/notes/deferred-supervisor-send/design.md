@@ -336,6 +336,12 @@ an ACK removes the handoff; recheck ended status on every further step. An empty
 committed drain reaches normal Exit, failing only still-unconfirmed receipts.
 No receipt absence or dead receiver authorizes input to a different run. Failure
 cleanup commits event-only actions directly and rejects any attempted new I/O.
+Receipt failure and generation-bound refusal/input cleanup share that same
+transaction. A store fault rolls both back and reconstructs from the original
+run/key; a terminal receipt cannot strand an unresolved Written input whose
+physical-write clock has not started.
+The terminal drain also retains its follower if the normal Exit transaction
+fails; only a durable terminal state allows that follower to finish.
 
 Fake pipes also separate ordinary input before an IdleOnly input in the held
 queue. The latter remains ineligible while any earlier ordinary request awaits

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -388,14 +389,67 @@ func TestDeferredFailureWithoutReceiver(t *testing.T) {
 func TestDeferredFailurePropagatesCommitError(t *testing.T) {
 	f := newDeferredProgress(t, "start", agent.AllowAll)
 	f.queueCrash("deferred frozen")
+	f.p.refuse = true // repeatable real receiver refusal, never a new arbitrary decision
+	r, lv := f.x.r, f.x.lv
+	r.warm(lv)
+	lv.warmPending = false
+	r.handOverWritten(lv)
 	if _, e := f.x.r.Store.DB.Exec(`CREATE TRIGGER fixture_refusal_fault BEFORE UPDATE OF last_seq ON sessions WHEN NEW.id=1 AND NEW.last_seq!=OLD.last_seq BEGIN SELECT RAISE(ABORT,'fixture refusal commit failure'); END`); e != nil {
 		t.Fatal(e)
 	}
-	if e := f.x.r.failDeferred(f.x.lv, "deferred:1", "fixture terminal failure"); e == nil {
+	if e := r.reconcileDeferred(lv); e == nil {
 		t.Fatal("refusal event commit failure was swallowed")
 	}
 	if !f.x.lv.warmPending || !f.x.lv.deferredBlocked {
 		t.Fatal("consumed refusal was not fenced for reconstruction")
+	}
+	if f.state() != "handoff" {
+		t.Fatal("failed cleanup committed receipt separately", f.state())
+	}
+	if _, e := f.x.r.Store.DB.Exec(`DROP TRIGGER fixture_refusal_fault`); e != nil {
+		t.Fatal(e)
+	}
+	// The same original receiver now explicitly refuses, without writing.
+	// Normal step reconstruction must retry and atomically finish cleanup.
+	f.x.r.step(f.x.lv)
+	f.x.r.step(f.x.lv)
+	var pending int
+	var state string
+	if e := f.x.r.Store.DB.QueryRow(`SELECT count(*) FROM pending_inputs WHERE session_id=1`).Scan(&pending); e != nil {
+		t.Fatal(e)
+	}
+	if e := f.x.r.Store.DB.QueryRow(`SELECT state FROM sessions WHERE id=1`).Scan(&state); e != nil {
+		t.Fatal(e)
+	}
+	if f.state() != "failed" || pending != 0 || state != "idle" || f.p.count() != 0 {
+		t.Fatal("fault-cleared refusal did not recover atomically", f.state(), pending, state, f.p.count())
+	}
+	q, e := f.api.DeferredSend(context.Background(), control.DeferredSendRequest{Action: "inspect", Number: f.q.Number})
+	if e != nil || !strings.Contains(q.Reason, "receiver explicitly refused") {
+		t.Fatal("recovered refusal lost actual reason", q.Reason, e)
+	}
+}
+
+func TestDeferredEndedDrainRetriesExitCommit(t *testing.T) {
+	f := newDeferredProgress(t, "start", agent.AllowAll)
+	f.queueCrash("deferred frozen")
+	if e := f.p.closePeer(); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(f.x.lv.dir, host.StatusFile), []byte(`{"exit_code":0}`), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := f.x.r.Store.DB.Exec(`CREATE TRIGGER fixture_exit_fault BEFORE UPDATE ON deferred_sends WHEN NEW.state='failed' BEGIN SELECT RAISE(ABORT,'fixture exit commit failure'); END`); e != nil {
+		t.Fatal(e)
+	}
+	if !f.x.r.step(f.x.lv) || f.x.lv.ended || f.state() != "handoff" {
+		t.Fatal("follower ended before terminal transaction committed")
+	}
+	if _, e := f.x.r.Store.DB.Exec(`DROP TRIGGER fixture_exit_fault`); e != nil {
+		t.Fatal(e)
+	}
+	if f.x.r.step(f.x.lv) || !f.x.lv.ended || f.state() != "failed" || f.p.count() != 0 {
+		t.Fatal("terminal transaction did not recover without I/O")
 	}
 }
 
