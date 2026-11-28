@@ -1,10 +1,12 @@
 # Integration-policy implementation
 
 [#1107](https://github.com/yousan/hataori/pull/1107) implements components of
-[#1103](https://github.com/yousan/hataori/issues/1103), explicitly stacked on
-unmerged phase-one #1102 at `a4942c86`. See [the policy design](ci-policy.md).
-The parent's actual macOS failure and #965/#1100/#1105 repairs retain their
-existing owners. This PR does not close #1103.
+[#1103](https://github.com/yousan/hataori/issues/1103), following phase-one
+#1102 merged as `86ee315d`. See [the policy design](ci-policy.md). The parent's
+exact ready head passed full Linux/macOS and compatibility gates; its separate
+merged-main evidence is recorded on that PR. That evidence does not validate
+this new control or prove a trusted dispatch. #965/#1100/#1105 and release/operator
+work retain their existing owners. This PR does not close #1103.
 
 `internal/cipolicy` now includes GitHub provenance verification, a durable
 SQLite coordinator/outbox, and complete Git-object change selection. No
@@ -113,6 +115,17 @@ already-bound proof to finish, then an explicit approved control transition.
 
 ## Conservative complete-diff selection
 
+The ordinary CI and compatibility classifiers also force the pinned paths-filter
+action's Git path with an empty token. They compare the immutable PR base SHA
+against the checked-out event revision, or the entire pushed main range. The PR
+files REST API can return at most 3,000 entries and cannot prove completeness;
+it is not used for classification. Missing/malformed comparison identity fails
+the classifier rather than silently selecting the last commit. Job names,
+heavy suite bodies, concurrency and Pages remain unchanged. This is a correction
+to phase one's earlier unqualified complete-diff claim, not activation of an
+integration lane. Large docs-only ranges remain cheap; any executable contract,
+unknown path or code beyond that API limit still selects applicable validation.
+
 `CompleteDiff` requires immutable base/head IDs, verifies Git object type and
 SHA-1/SHA-256 content hashes, and walks both complete trees. It does not checkout
 candidate files, execute their tools/hooks, or use their diff drivers. Renames
@@ -151,8 +164,9 @@ The callable trusted coordinator, repository execution closure, owner opt-in
 admission/Done boundary and metadata summary are now implemented. See [entry
 point, inactive activation bundle and rollback](ci-coordinator-activation.md).
 No live root/key/credential, workflow dispatch or compatible owner hook is
-provisioned here. Actual registration/dispatch and parent/owner compatibility
-remain unproved; activation stays off. Existing main targets, upgrade requirements,
+provisioned here. Actual registration/dispatch and compatible owner integration
+remain unproved; the parent's full checks cannot substitute for them. Activation
+stays off. Existing main targets, upgrade requirements,
 gates and provider reviews remain unchanged. #1104 and existing operator owners
 retain release/main provenance and publication checks. Exact full ready-head and
 actual merged-main CI remain required before claiming a merged/complete rollout.

@@ -25,11 +25,18 @@ jobs:
       code: ${{ steps.filter.outputs.code == 'true' || steps.filter.outputs.policy == 'true' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Require complete diff base
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: '[[ "$BASE_SHA" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]'
       - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         id: filter
         with:
-          # PRs use their complete diff; pushes use the entire pushed range.
-          base: ${{ github.event.before || github.ref }}
+          # The PR files API truncates at 3,000 entries. Use Git for every
+          # event; compare PRs to their frozen base, pushes to the full range.
+          token: ''
+          base: ${{ github.event.pull_request.base.sha || github.event.before || github.ref }}
           predicate-quantifier: every
           filters: .github/filters.yml
 

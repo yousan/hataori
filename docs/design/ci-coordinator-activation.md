@@ -1,8 +1,10 @@
 # Trusted coordinator and inactive activation bundle
 
 Implementation: #1103 / stacked draft #1107. This is a callable repository
-increment, not an installation or adoption record. The parent #1102 is still
-unmerged with an actual failed macOS full gate. Profiles, schedules and routing
+increment, not an installation or adoption record. Parent #1102 merged as
+`86ee315d` after exact ready-head full Linux/macOS and compatibility success;
+its separate actual merged-main evidence is recorded on that PR. Parent evidence
+is not validation of this control or its dispatch. Profiles, schedules and routing
 remain off. Existing main-targeted PRs, full ready-head and actual merged-main
 proof, provider reviews, Pages and upgrade source remain unchanged.
 
@@ -65,9 +67,11 @@ the same authenticated scope; root expiry needs a signed expiry renewal.
 ## Repository execution closure
 
 `.github/workflows/integration-proof.yml` has only `workflow_dispatch`. It has no
-PR/main/schedule/workflow-run trigger or cancellation group. Existing workflows,
-including Pages, are byte-identical to the explicit parent. Merely adding this
-file on a branch does not register or activate a live coordinator route.
+PR/main/schedule/workflow-run trigger or cancellation group. Existing CI and tmux
+classifiers now use complete Git ranges rather than the capped PR-files API;
+their heavy suites, names, concurrency and other triggers are unchanged. Pages is
+byte-identical to the parent. Merely adding the proof workflow on a branch does
+not register or activate a live coordinator route.
 
 The dispatcher sends nine exact inputs: `intent`, `from`, `target`, `control`,
 `digest`, `authority`, `scope`, `title`, `purpose`. Run name is the frozen sweep
@@ -183,9 +187,10 @@ and candidate runners.
 
 Actual dispatch cannot yet be proved for a new workflow absent from the default
 branch's registered workflows and an independently approved compatible control,
-root, target execution closure and real baseline. Parent #1102's failed macOS
-full gate also prevents claiming compatible adoption. These are precise live
-proof prerequisites; they do not block code, deterministic tests or review.
+root, target execution closure and real baseline. Parent #1102's
+ready/main gates cannot substitute for this new closure or owner compatibility.
+These are precise live proof prerequisites; they do not block code, deterministic
+tests or review.
 No queued macOS job is retried, no sole proof cancelled, and no skipped result
 is called full validation. The minimum actual contract/promotion evidence is
 needed; there is no arbitrary sample count or repeated full-suite quota.

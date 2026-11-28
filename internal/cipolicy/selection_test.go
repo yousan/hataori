@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -125,5 +126,37 @@ func TestParseFailureUnknownGoAndMissingSmokeEscalate(t *testing.T) {
 				t.Fatal(kind, p)
 			}
 		})
+	}
+}
+
+func TestCompleteDiffBeyondPullFilesAPICap(t *testing.T) {
+	repo, git, write := sourceRepo(t)
+	base := git("rev-parse", "HEAD")
+	for i := range 3005 {
+		write("docs/page-"+strconv.Itoa(i)+".md", "ordinary prose\n")
+	}
+	git("add", ".")
+	git("commit", "-qm", "large documentation change")
+	changes, err := CompleteDiff(repo, base, git("rev-parse", "HEAD"))
+	if err != nil || len(changes) != 3005 || !Classify(changes, true).DocsOnly {
+		t.Fatal("large complete documentation range", len(changes), err)
+	}
+	// Sorting after every docs path reproduces the unsafe REST-cap boundary.
+	// The final prose commit must not hide that earlier executable change.
+	write("zz-runtime.go", "package runtime\n")
+	git("add", ".")
+	git("commit", "-qm", "late-sorted executable change")
+	write("README.md", "final prose\n")
+	git("add", ".")
+	git("commit", "-qm", "final documentation")
+	changes, err = CompleteDiff(repo, base, git("rev-parse", "HEAD"))
+	if err != nil || len(changes) != 3007 || changes[len(changes)-1].Path != "zz-runtime.go" {
+		t.Fatal("complete range truncated", len(changes), err)
+	}
+	if p := Classify(changes, true); p.DocsOnly || !p.Full || !p.HighRisk {
+		t.Fatal("code beyond API cap skipped", p)
+	}
+	if p := Select(repo, base, git("rev-parse", "HEAD")); p.DocsOnly || !p.Full {
+		t.Fatal("selector lost full immutable range", p)
 	}
 }
