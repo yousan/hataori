@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -34,8 +35,11 @@ func TestInspectPinsOnlyVerifiedDashboard(t *testing.T) {
 				if err == nil {
 					t.Fatal("adopted a mismatching server")
 				}
-			} else if err != nil || got != cfg {
-				t.Fatalf("binding: %+v %v", got, err)
+			} else {
+				canonical, canonicalErr := filepath.EvalSymlinks(cfg.Root)
+				if canonicalErr != nil || err != nil || got.Root != canonical || got.Instance != cfg.Instance || got.Version != cfg.Version || got.RuntimeDir != cfg.RuntimeDir {
+					t.Fatalf("binding: %+v %v; canonical root %q %v", got, err, canonical, canonicalErr)
+				}
 			}
 			if _, err := Inspect(ctx, cfg.Root, "incompatible-version"); err == nil {
 				t.Fatal("adopted an incompatible daemon")

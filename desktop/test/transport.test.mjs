@@ -79,3 +79,15 @@ test('duplex uses private connection, preserves message order and never replays 
   assert.throws(() => transport.socket('/api/attach', () => {}));
   assert.equal(calls(), 1);
 });
+
+test('closing transport cancels a held request body before any connection or owner write', async () => {
+  let connections = 0, canceled = 0;
+  const transport = new NativeTransport('', {}, () => { connections++; throw new Error('must not connect'); });
+  const body = new ReadableStream({ cancel() { canceled++; } });
+  const request = new Request(origin + '/api/send', { method: 'POST', body, duplex: 'half' });
+  const pending = transport.fetch(request);
+  transport.close();
+  await assert.rejects(pending, /Private request ended/u);
+  assert.equal(canceled, 1);
+  assert.equal(connections, 0);
+});

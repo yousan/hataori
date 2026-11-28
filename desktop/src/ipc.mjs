@@ -4,6 +4,7 @@ import { duplex, maxMessage, senderOK } from './policy.mjs';
 // binary, URL, identity or socket pathname from the renderer.
 export function installIPC(ipc, contents, transport) {
   const streams = new Map();
+  let generation = 0;
   const names = [];
   const guard = event => {
     if (!senderOK(event, contents)) throw new Error('Refused IPC sender');
@@ -19,11 +20,11 @@ export function installIPC(ipc, contents, transport) {
   };
   handle('hataori:native:open', (event, id, path) => {
     if (!Number.isSafeInteger(id) || id < 1 || streams.has(id) || streams.size >= 16 || !duplex.has(path)) throw new Error('Refused stream');
-    const stream = { frame: event.senderFrame, socket: null, sequence: 0, unacked: new Map(), bytes: 0, writing: false };
+    const stream = { frame: event.senderFrame, generation, socket: null, sequence: 0, unacked: new Map(), bytes: 0, writing: false };
     streams.set(id, stream);
     try {
       stream.socket = transport.socket(path, data => {
-        if (!streams.has(id) || contents.isDestroyed()) return;
+        if (streams.get(id) !== stream || stream.generation !== generation || stream.frame !== contents.mainFrame || contents.isDestroyed()) return;
         const bytes = typeof data.data === 'string' ? Buffer.byteLength(data.data) : 0;
         stream.bytes += bytes;
         if (stream.bytes > maxMessage * 4 || stream.unacked.size >= 128) {
@@ -58,6 +59,7 @@ export function installIPC(ipc, contents, transport) {
     stream.socket.close();
   });
   const drop = () => {
+    generation++;
     for (const stream of streams.values()) stream.socket?.close();
     streams.clear();
   };

@@ -13,14 +13,21 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/desktopstate"
+	"github.com/yousan/hataori/internal/version"
 )
 
 func desktopMain(ctx context.Context, args []string, input io.ReadCloser, output, stderr io.Writer) int {
 	if len(args) == 0 {
 		return exitUsage
 	}
+	if args[0] == "metadata" && len(args) == 1 {
+		if json.NewEncoder(output).Encode(desktopMetadata()) != nil {
+			return exitError
+		}
+		return 0
+	}
 	switch args[0] {
-	case "child", "launcher", "register", "select", "start", "stop", "status":
+	case "child", "launcher", "register", "select", "start", "stop", "status", "setup", "stage", "login-install", "login-info":
 	default:
 		return exitUsage
 	}
@@ -29,10 +36,18 @@ func desktopMain(ctx context.Context, args []string, input io.ReadCloser, output
 	root := fs.String("root", "", "the explicitly selected private instance root")
 	binary := fs.String("binary", "", "the verified immutable versioned daemon")
 	selected := fs.String("version", "", "the verified bundled version")
+	resources := fs.String("resources", "", "the selected matching application's resources")
+	loginDir := fs.String("login-directory", "", "the user's LaunchAgents directory")
 	if fs.Parse(args[1:]) != nil || fs.NArg() != 0 || *root == "" {
 		return exitUsage
 	}
 	if args[0] != "register" && args[0] != "select" && (*binary != "" || *selected != "") {
+		return exitUsage
+	}
+	if args[0] != "stage" && *resources != "" || args[0] == "stage" && *resources == "" {
+		return exitUsage
+	}
+	if args[0] != "login-install" && *loginDir != "" || args[0] == "login-install" && *loginDir == "" {
 		return exitUsage
 	}
 	var err error
@@ -47,12 +62,36 @@ func desktopMain(ctx context.Context, args []string, input io.ReadCloser, output
 		err = desktopChild(ctx, *root, input, func(ctx context.Context, root string) int {
 			return command(ctx, "run", []string{"--root", root, "--native"}, output, stderr)
 		})
+	} else if args[0] == "setup" {
+		err = desktopSetupMain(ctx, *root, input, output)
 	} else {
 		var s *desktopstate.State
 		s, err = desktopstate.Open(ctx, *root)
 		if err == nil {
 			defer s.Close()
 			switch args[0] {
+			case "login-info", "login-install":
+				var reg desktopstate.Registration
+				if args[0] == "login-info" {
+					reg, err = s.ReadLogin(ctx)
+				} else {
+					env := map[string]string{}
+					for _, key := range []string{"HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG", "LC_ALL"} {
+						if value, ok := os.LookupEnv(key); ok {
+							env[key] = value
+						}
+					}
+					reg, err = s.InstallLogin(ctx, *loginDir, env)
+				}
+				if err == nil {
+					err = json.NewEncoder(output).Encode(reg)
+				}
+			case "stage":
+				var d desktopstate.Selection
+				d, err = s.Stage(ctx, *resources, version.Version)
+				if err == nil {
+					err = json.NewEncoder(output).Encode(d)
+				}
 			case "register":
 				err = s.Register(ctx, desktopstate.Selection{Intent: desktopstate.Stopped, Version: *selected, Binary: *binary})
 			case "select":
@@ -123,6 +162,9 @@ func desktopLauncher(ctx context.Context, root string, s *desktopstate.State) (e
 	}
 	defer lease.Close()
 	c := &desktopstate.Controller{Read: s.Read, Launch: func(_ context.Context, d desktopstate.Selection) (desktopstate.Child, error) {
+		if err := s.VerifySelection(ctx, d); err != nil {
+			return nil, err
+		}
 		cmd := exec.Command(d.Binary, "desktop", "child", "--root", root)
 		// Inherit the explicit LaunchAgent GUI environment, including absolute
 		// configured agent paths. Never query a login shell or copy credentials.

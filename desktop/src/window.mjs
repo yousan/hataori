@@ -12,7 +12,7 @@ export async function createWindow(electron, transport, preload) {
   privateSession.setDevicePermissionHandler(() => false);
   privateSession.on('will-download', event => event.preventDefault());
   privateSession.webRequest.onBeforeRequest((details, reply) => {
-    try { route(details.url, details.method); reply({ cancel: false }); }
+    try { route(details.url, details.method, false, transport.setup); reply({ cancel: false }); }
     catch { reply({ cancel: true }); }
   });
   await privateSession.protocol.handle(scheme, request => transport.fetch(request));

@@ -35,6 +35,13 @@ test('IPC rejects foreign frames, unexpected routes, unknown streams and unbound
   invoke('open', event, 2, '/api/operate');
   contents.emit('did-start-navigation', {}, origin + '/', false, true);
   assert.equal(closes, 2);
+  invoke('open', event, 1, '/api/attach');
+  const previousCount = events.length;
+  callbacks[0]({ type: 'message', data: 'old document' });
+  callbacks[0]({ type: 'close', code: 1006 });
+  assert.equal(events.length, previousCount);
+  await invoke('write', event, 1, 'new document owns this stream');
+  assert.equal(writes.at(-1), 'new document owns this stream');
   dispose();
   assert.equal(handlers.size, 0);
 });

@@ -24,13 +24,16 @@ func TestStoppedSurvivesSelectionAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Register(ctx, Selection{Intent: Running, Version: "v1", Binary: filepath.Join(root, "bin/v1/hataori")}); err != nil {
+	one := stagedFixture(t, s, "1.0.0")
+	one.Intent = Running
+	if err := s.Register(ctx, one); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SetIntent(ctx, Stopped); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Select(ctx, "v2", filepath.Join(root, "bin/v2/hataori")); err != nil {
+	two := stagedFixture(t, s, "2.0.0")
+	if err := s.Select(ctx, two.Version, two.Binary); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
@@ -40,10 +43,10 @@ func TestStoppedSurvivesSelectionAndReopen(t *testing.T) {
 	}
 	defer s.Close()
 	got, err := s.Read(ctx)
-	if err != nil || got.Intent != Stopped || got.Version != "v2" {
+	if err != nil || got.Intent != Stopped || got.Version != "2.0.0" {
 		t.Fatalf("stop was undone: %+v %v", got, err)
 	}
-	if err := s.Register(ctx, Selection{Intent: Running, Version: "v2", Binary: got.Binary}); err == nil {
+	if err := s.Register(ctx, Selection{Intent: Running, Version: "2.0.0", Binary: got.Binary}); err == nil {
 		t.Fatal("app restart re-registered and overwrote persisted intent")
 	}
 	if err := s.SetIntent(ctx, Running); err != nil {

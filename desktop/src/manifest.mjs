@@ -7,6 +7,7 @@ export async function verifyManifest(resources, version, arch = process.arch) {
   const manifest = JSON.parse(await readFile(path.join(resources, 'desktop-manifest.json'), 'utf8'));
   if (manifest.format !== 1 || manifest.platform !== 'darwin' || manifest.arch !== arch ||
       manifest.version !== version || !/^[0-9a-f]{40}$/u.test(manifest.commit) ||
+      !Number.isSafeInteger(manifest.schema) || manifest.schema < 1 || !/^[1-9][0-9]*\.[0-9]+$/u.test(manifest.control_protocol) || manifest.host_capability !== 'input-batch-v1' ||
       !manifest.files || Object.keys(manifest.files).sort().join() !== [...names].sort().join()) throw new Error('Incompatible desktop manifest');
   for (const name of names) {
     const file = path.join(resources, name);

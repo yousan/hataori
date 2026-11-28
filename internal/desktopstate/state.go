@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -44,6 +45,9 @@ const (
 // separate database gives transactional intent without replacing configuration
 // or a daemon database, and leaves SQLite's recovery journal intact on a crash.
 func Open(ctx context.Context, path string) (_ *State, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s := &State{}
 	defer func() {
 		if err != nil {
@@ -75,6 +79,10 @@ func Open(ctx context.Context, path string) (_ *State, err error) {
 	}
 	_, found := s.desktop.Lstat("launcher.sqlite")
 	fresh := errors.Is(found, os.ErrNotExist)
+	ownedInitialization, err := s.initializationMarker(fresh)
+	if err != nil {
+		return nil, err
+	}
 	flags := os.O_RDWR
 	if fresh {
 		flags |= os.O_CREATE | os.O_EXCL
@@ -85,11 +93,17 @@ func Open(ctx context.Context, path string) (_ *State, err error) {
 	}
 	if !fresh {
 		var header [72]byte
-		_, err = f.ReadAt(header[:], 0)
-		if err != nil || string(header[:16]) != "SQLite format 3\x00" || binary.BigEndian.Uint32(header[68:]) != 0x48544453 {
+		n, readErr := f.ReadAt(header[:], 0)
+		recognized := readErr == nil && string(header[:16]) == "SQLite format 3\x00" && binary.BigEndian.Uint32(header[68:]) == 0x48544453
+		// A permanent private marker reserves this database before its first
+		// creation. Empty/interrupted SQLite initialization can be retried;
+		// an unknown pre-existing file without that provenance stays intact.
+		initial := ownedInitialization && (n == 0 && errors.Is(readErr, io.EOF) || n == len(header) && string(header[:16]) == "SQLite format 3\x00" && binary.BigEndian.Uint32(header[68:]) == 0)
+		if !recognized && !initial {
 			f.Close()
 			return nil, errors.New("desktop: existing state is not a recognized launcher database")
 		}
+		fresh = initial
 	}
 	f.Close()
 	// SQLite opens its recovery files by pathname too. Refuse an inherited
@@ -130,7 +144,47 @@ func Open(ctx context.Context, path string) (_ *State, err error) {
 	if err != nil {
 		return nil, err
 	}
+	_, err = s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS login (id INTEGER PRIMARY KEY CHECK(id=1), path TEXT NOT NULL, plist BLOB NOT NULL)`)
+	if err != nil {
+		return nil, err
+	}
 	return s, nil
+}
+
+const initializationMagic = "hataori desktop launcher initialization v1\n"
+
+func (s *State) initializationMarker(create bool) (bool, error) {
+	const name = "launcher.initialization"
+	if err := RefuseCollision(s.desktop.Name(), name); err != nil {
+		return false, err
+	}
+	if create {
+		f, err := nativehttp.OpenPrivateFile(s.desktop, name, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+		if err == nil {
+			_, err = io.WriteString(f, initializationMagic)
+			if err == nil {
+				err = f.Sync()
+			}
+			f.Close()
+			return err == nil, err
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return false, err
+		}
+	}
+	f, err := nativehttp.OpenPrivateFile(s.desktop, name, os.O_RDONLY)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, 128))
+	if err != nil || string(data) != initializationMagic {
+		return false, errors.New("desktop: unrecognized initialization marker was preserved")
+	}
+	return true, nil
 }
 
 // RefuseCollision catches aliases even on a case-sensitive CI filesystem.
@@ -153,7 +207,7 @@ func RefuseCollision(parent, wanted string) error {
 // Register is explicit first-run adoption of an app-managed instance. Reading
 // an existing root or replacing an app must never call it implicitly.
 func (s *State) Register(ctx context.Context, selection Selection) error {
-	if err := validSelection(selection); err != nil {
+	if err := s.VerifySelection(ctx, selection); err != nil {
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO desired(id,intent,version,binary) VALUES(1,?,?,?)`, selection.Intent, selection.Version, selection.Binary)
@@ -189,7 +243,7 @@ func (s *State) SetIntent(ctx context.Context, intent string) error {
 // Select atomically stages a replacement without changing persisted intent.
 // Compatibility and the immutable binary's manifest are checked by the caller.
 func (s *State) Select(ctx context.Context, version, binary string) error {
-	if err := validSelection(Selection{Intent: Stopped, Version: version, Binary: binary}); err != nil {
+	if err := s.VerifySelection(ctx, Selection{Intent: Stopped, Version: version, Binary: binary}); err != nil {
 		return err
 	}
 	r, err := s.db.ExecContext(ctx, `UPDATE desired SET version=?,binary=? WHERE id=1`, version, binary)

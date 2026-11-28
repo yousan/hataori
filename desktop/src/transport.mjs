@@ -30,15 +30,17 @@ export function openPipe(helper, binding, spawnChild = spawn) {
 }
 
 export class NativeTransport {
-  constructor(helper, binding, connect = () => openPipe(helper, binding)) {
+  constructor(helper, binding, connect = () => openPipe(helper, binding), setup = false) {
     this.connect = connect;
     this.pending = new Set();
+    this.bodyReaders = new Set();
     this.closed = false;
+    this.setup = setup;
   }
 
   async fetch(request) {
     if (this.closed) throw new Error('Transport closed');
-    const target = route(request.url, request.method);
+    const target = route(request.url, request.method, false, this.setup);
     const suppliedOrigin = request.headers.get('origin');
     if (suppliedOrigin && suppliedOrigin !== origin) throw new Error('Refused origin');
     // Chromium never selects the native identity or forwards browser tokens.
@@ -46,7 +48,8 @@ export class NativeTransport {
     for (const [name, value] of request.headers) {
       if (requestHeaders.has(name.toLowerCase())) headers[name] = value;
     }
-    const body = request.body ? Buffer.from(await limitedBody(request.body)) : null;
+    const body = request.body ? Buffer.from(await limitedBody(request.body, this.bodyReaders, request.signal)) : null;
+    if (this.closed || request.signal.aborted) throw new Error('Private request ended');
     if (body) headers['Content-Length'] = String(body.length);
     return new Promise((resolve, reject) => {
       const req = http.request({ host: 'instance', port: 80, path: target, method: request.method,
@@ -85,7 +88,7 @@ export class NativeTransport {
   }
 
   socket(path, onEvent) {
-    if (this.closed) throw new Error('Transport closed');
+    if (this.closed || this.setup) throw new Error('Duplex transport unavailable');
     route(origin + path, 'GET', true);
     const ws = new WebSocket('ws://instance' + path, {
       origin, headers: { Host: 'instance' }, followRedirects: false,
@@ -116,6 +119,7 @@ export class NativeTransport {
 
   close() {
     this.closed = true;
+    for (const reader of this.bodyReaders) reader.cancel().catch(() => {});
     for (const connection of this.pending) {
       if (typeof connection.terminate === 'function') connection.terminate();
       else connection.destroy();
@@ -124,8 +128,12 @@ export class NativeTransport {
   }
 }
 
-async function limitedBody(stream) {
+async function limitedBody(stream, readers, signal) {
   const reader = stream.getReader();
+  readers.add(reader);
+  const abort = () => reader.cancel().catch(() => {});
+  signal.addEventListener('abort', abort, { once: true });
+  if (signal.aborted) abort();
   const chunks = [];
   let length = 0;
   try {
@@ -139,5 +147,9 @@ async function limitedBody(stream) {
   } catch (error) {
     await reader.cancel().catch(() => {});
     throw error;
-  } finally { reader.releaseLock(); }
+  } finally {
+    readers.delete(reader);
+    signal.removeEventListener('abort', abort);
+    reader.releaseLock();
+  }
 }

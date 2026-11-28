@@ -3,7 +3,7 @@
 import packager from '@electron/packager';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, mkdtemp, cp } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyManifest } from '../src/manifest.mjs';
@@ -28,19 +28,35 @@ for (const [name, command] of [['hataori', './cmd/hataori'], ['hataori-desktop-t
   });
   manifest.files[name] = createHash('sha256').update(await readFile(target)).digest('hex');
 }
+const metadata = JSON.parse(execFileSync(path.join(resources, 'hataori'), ['desktop', 'metadata'], { encoding: 'utf8' }));
+if (metadata.version !== version || metadata.commit !== commit) throw new Error('Daemon build identity mismatch');
+Object.assign(manifest, { schema: metadata.schema, control_protocol: metadata.control_protocol, host_capability: metadata.host_capability });
 await writeFile(path.join(resources, 'desktop-manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
 await verifyManifest(resources, version, arch);
 const pkg = JSON.parse(await readFile(path.join(desktop, 'package.json'), 'utf8'));
-const output = await packager({ dir: desktop, name: 'hataori', platform: 'darwin', arch,
+// Electron reads package.json.version at runtime. appVersion alone only stamps
+// platform metadata, so stamp a private package copy from the same value too.
+await mkdir(path.join(desktop, 'out'), { recursive: true });
+const staged = await mkdtemp(path.join(desktop, 'out', 'source-'));
+await cp(path.join(desktop, 'src'), path.join(staged, 'src'), { recursive: true });
+await mkdir(path.join(staged, 'node_modules'), { recursive: true });
+await cp(path.join(desktop, 'node_modules/ws'), path.join(staged, 'node_modules/ws'), { recursive: true });
+const stagedPackage = { ...pkg, version };
+delete stagedPackage.devDependencies;
+delete stagedPackage.scripts;
+await writeFile(path.join(staged, 'package.json'), JSON.stringify(stagedPackage, null, 2) + '\n', { flag: 'wx' });
+const output = await packager({ dir: staged, name: 'hataori', platform: 'darwin', arch,
   out: path.join(desktop, 'out'), appVersion: version, buildVersion: tag ? version : '0.0.0',
   electronVersion: pkg.devDependencies.electron, appBundleId: 'io.hataori.desktop',
-  asar: true, prune: true, osxSign: false, osxNotarize: false,
+  asar: true, prune: false, osxSign: false, osxNotarize: false,
   extraResource: ['hataori', 'hataori-desktop-transport', 'desktop-manifest.json'].map(name => path.join(resources, name)),
   ignore: [/^\/out(?:\/|$)/u, /^\/resources(?:\/|$)/u, /^\/test(?:\/|$)/u, /^\/scripts(?:\/|$)/u],
 });
 if (output.length !== 1) throw new Error('Expected one architecture-specific app');
 const app = path.join(output[0], 'hataori.app');
 await verifyManifest(path.join(app, 'Contents/Resources'), version, arch);
+const runtimeVersion = execFileSync(path.join(app, 'Contents/MacOS/hataori'), ['--version'], { encoding: 'utf8' }).trim();
+if (runtimeVersion !== version) throw new Error('Packaged runtime/package/manifest version mismatch');
 const dmg = path.join(desktop, 'out', `hataori-${version}-${arch}.dmg`);
 execFileSync('/usr/bin/hdiutil', ['create', '-volname', 'hataori', '-srcfolder', app, '-format', 'UDZO', dmg], { stdio: 'inherit' });
 const digest = createHash('sha256').update(await readFile(dmg)).digest('hex');

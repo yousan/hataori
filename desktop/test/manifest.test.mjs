@@ -9,7 +9,7 @@ import { verifyManifest } from '../src/manifest.mjs';
 test('bundled version, architecture, file set and checksums are checked before execution', async t => {
   const dir = await mkdtemp(path.join(tmpdir(), 'desktop-manifest-'));
   t.after(() => rm(dir, { recursive: true }));
-  const manifest = { format: 1, version: '1.0.0', commit: '1'.repeat(40), platform: 'darwin', arch: 'arm64', files: {} };
+  const manifest = { format: 1, version: '1.0.0', commit: '1'.repeat(40), platform: 'darwin', arch: 'arm64', schema: 1, control_protocol: '4.0', host_capability: 'input-batch-v1', files: {} };
   for (const name of ['hataori', 'hataori-desktop-transport']) {
     await writeFile(path.join(dir, name), name, { mode: 0o700 });
     manifest.files[name] = createHash('sha256').update(name).digest('hex');

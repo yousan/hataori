@@ -16,7 +16,7 @@ const writes = new Set([
 ]);
 export const duplex = new Set(['/api/operate', '/api/attach']);
 
-export function route(raw, method = 'GET', socket = false) {
+export function route(raw, method = 'GET', socket = false, setup = false) {
   if (typeof raw !== 'string' || raw.length > 8192 || /[\\\x00-\x20\x7f]/u.test(raw)) throw new Error('Refused route');
   // Validate before URL normalization can erase dot segments or credentials.
   if (!raw.startsWith(origin + '/') || raw.includes('#')) throw new Error('Refused origin');
@@ -25,6 +25,10 @@ export function route(raw, method = 'GET', socket = false) {
   if (pathname.includes('%') || pathname.includes('//') || pathname.split('/').some(p => p === '.' || p === '..')) throw new Error('Refused path');
   const url = new URL(raw);
   if (url.protocol !== scheme + ':' || url.host !== 'instance' || url.username || url.password) throw new Error('Refused origin');
+  if (setup) {
+    if (socket || !((method === 'GET' || method === 'HEAD') && (pathname === '/' || pathname === '/api/native' || pathname === '/api/setup' || /^\/assets\/[A-Za-z0-9_.-]+$/u.test(pathname))) && !(method === 'POST' && pathname === '/api/setup')) throw new Error('Refused setup route');
+    return target;
+  }
   if (socket) {
     if (method !== 'GET' || url.search || !duplex.has(pathname)) throw new Error('Refused duplex route');
   } else if (!((method === 'GET' || method === 'HEAD') &&
