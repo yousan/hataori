@@ -1,0 +1,612 @@
+{
+  "scope": "Unintegrated native Unix transport only; not desktop support or full issue acceptance.",
+  "source_sha256": {
+    "internal/nativehttp/acl.go": "52b26c677e84be96426f524f7e1f76e7bba6fca3130b7c2719dfcfe88b1cba6f",
+    "internal/nativehttp/acl_darwin.go": "3c03c7e771dc68e5ca8e611c1afb5899eeb7300e6526ece253fd64233550b7f4",
+    "internal/nativehttp/acl_darwin_test.go": "74f9550bbe17fbc4cbf02230e518ec5e95d7aeecebf5b3557c2685acef77b2ed",
+    "internal/nativehttp/acl_linux.go": "823f112146fce24686d9c34accaa55d2c3f4ced23164ef2acae3692c3a019f30",
+    "internal/nativehttp/acl_nocgo_darwin.go": "7295ee6a6d10ff2e317f79aa0cd434e3506630180c019570b6ef0bfd250af6c5",
+    "internal/nativehttp/acl_nocgo_darwin_test.go": "df1c31175196d5413822a3c73008074b9f1eec45b16391f9d7515a3927fc15ef",
+    "internal/nativehttp/crossuser_test.go": "47f682e9c35335c46a07b906892c7fe7d7bb4007db2dc4c054a699b73608102a",
+    "internal/nativehttp/discovery.go": "56dc8c0490201d32ccf26e3e431ce57f70b8ae99851f78c2dae6e935d3bbbb74",
+    "internal/nativehttp/listener.go": "058ee89b999633dcfaf9eb6566d078354e0a2d9e25f9b8bc579083f8a933b891",
+    "internal/nativehttp/listener_test.go": "2c73bebe69d1e53964eb508c215a55bcfb5ee02977927990e4f9640208ada8f4",
+    "internal/nativehttp/peer.go": "fe9ce3e474ac532451ce4c85a205a9efe4c786921a25f5e5f0b2c167d9c4bc54",
+    "internal/nativehttp/peer_darwin.go": "febb75c11472563ee39842f2e08af90d3849c37acb8647115dfeb9489a66fd27",
+    "internal/nativehttp/peer_linux.go": "25940c31a5e1a6b56e94a73d4fa8e223d1a7b98a860f5e97ed36d41051b0cb71",
+    "internal/nativehttp/peer_test.go": "b756c03c3ac5aa26fe9da029f6eb4eb362ddd28e438b7d8fc606fe22116da042",
+    "internal/nativehttp/private.go": "c839bd21e0e7b8eb755bd665b8dcdfc674e716dd43cfa3147dedbed10d486477",
+    "internal/nativehttp/private_test.go": "41841a77142daf5643b2efe79d6070d426a7b3ef6b35ffe345618ebbae37ba8e"
+  },
+  "negative_guards": [
+    {
+      "guard": "relative-in-root-links",
+      "file": "internal/nativehttp/private.go",
+      "test": "^TestDiscoveryRefusesChangedBindings/relative-link$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestDiscoveryRefusesChangedBindings (0.01s)",
+        "--- FAIL: TestDiscoveryRefusesChangedBindings/relative-link (0.01s)",
+        "listener_test.go:269: accepted changed discovery"
+      ]
+    },
+    {
+      "guard": "private-mode",
+      "file": "internal/nativehttp/private.go",
+      "test": "^TestRefusePrivateDirectoryFailures/root-mode$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestRefusePrivateDirectoryFailures (0.01s)",
+        "--- FAIL: TestRefusePrivateDirectoryFailures/root-mode (0.01s)",
+        "listener_test.go:193: accepted unsafe private state"
+      ]
+    },
+    {
+      "guard": "foreign-owner",
+      "file": "internal/nativehttp/private.go",
+      "test": "^TestPrivateRefusesForeignOrUnknownOwner$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestPrivateRefusesForeignOrUnknownOwner (0.00s)",
+        "private_test.go:30: accepted foreign or unknown owner metadata"
+      ]
+    },
+    {
+      "guard": "native-lease",
+      "file": "internal/nativehttp/listener.go",
+      "test": "^TestIncompatibleBusyInstancePreservesLockAndDiscovery$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestIncompatibleBusyInstancePreservesLockAndDiscovery (0.01s)",
+        "listener_test.go:426: busy incompatible listener: <nil>"
+      ]
+    },
+    {
+      "guard": "root-binding",
+      "file": "internal/nativehttp/discovery.go",
+      "test": "^TestDiscoveryRefusesChangedBindings/root$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestDiscoveryRefusesChangedBindings (0.01s)",
+        "--- FAIL: TestDiscoveryRefusesChangedBindings/root (0.01s)",
+        "listener_test.go:269: accepted changed discovery"
+      ]
+    },
+    {
+      "guard": "root-directory-identity",
+      "file": "internal/nativehttp/discovery.go",
+      "test": "^TestLongRootReplacementRefusesCopiedDiscovery$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestLongRootReplacementRefusesCopiedDiscovery (0.01s)",
+        "listener_test.go:399: replacement root used original directory's socket"
+      ]
+    },
+    {
+      "guard": "installation-binding",
+      "file": "internal/nativehttp/discovery.go",
+      "test": "^TestDiscoveryRefusesChangedBindings/installation$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestDiscoveryRefusesChangedBindings (0.03s)",
+        "--- FAIL: TestDiscoveryRefusesChangedBindings/installation (0.03s)",
+        "listener_test.go:269: accepted changed discovery"
+      ]
+    },
+    {
+      "guard": "version-binding",
+      "file": "internal/nativehttp/discovery.go",
+      "test": "^TestIncompatibleBusyInstancePreservesLockAndDiscovery$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestIncompatibleBusyInstancePreservesLockAndDiscovery (0.01s)",
+        "listener_test.go:420: version discovery: <nil>"
+      ]
+    },
+    {
+      "guard": "socket-redirection",
+      "file": "internal/nativehttp/discovery.go",
+      "test": "^TestDiscoveryRefusesChangedBindings/socket$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestDiscoveryRefusesChangedBindings (0.01s)",
+        "--- FAIL: TestDiscoveryRefusesChangedBindings/socket (0.01s)",
+        "listener_test.go:269: accepted changed discovery"
+      ]
+    },
+    {
+      "guard": "socket-inode",
+      "file": "internal/nativehttp/discovery.go",
+      "test": "^TestDiscoveryRefusesChangedBindings/inode$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestDiscoveryRefusesChangedBindings (0.03s)",
+        "--- FAIL: TestDiscoveryRefusesChangedBindings/inode (0.03s)",
+        "listener_test.go:269: accepted changed discovery"
+      ]
+    },
+    {
+      "guard": "replacement-cleanup",
+      "file": "internal/nativehttp/listener.go",
+      "test": "^TestSocketReplacementAndModesRefuse/regular$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestSocketReplacementAndModesRefuse (0.03s)",
+        "--- FAIL: TestSocketReplacementAndModesRefuse/regular (0.03s)",
+        "listener_test.go:363: Close removed replacement: lstat <fixture>: no such file or directory"
+      ]
+    },
+    {
+      "guard": "initialization-cleanup",
+      "file": "internal/nativehttp/listener.go",
+      "test": "^TestSocketInitializationFailureCleansItsOwnSocket$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestSocketInitializationFailureCleansItsOwnSocket (0.00s)",
+        "listener_test.go:125: failed initialization left socket: <nil>"
+      ]
+    },
+    {
+      "guard": "unavailable-peer-credentials",
+      "file": "internal/nativehttp/peer.go",
+      "test": "^TestKernelPeerUID$",
+      "exit_code": 1,
+      "behavioral_failure": true,
+      "evidence": [
+        "--- FAIL: TestKernelPeerUID (0.00s)",
+        "peer_test.go:41: accepted unavailable peer credentials"
+      ]
+    }
+  ],
+  "positive_runs": [
+    {
+      "command": "GOMAXPROCS=1 go test -json -p 1 -parallel 1 -count=1 ./internal/nativehttp",
+      "exit_code": 0,
+      "results": [
+        {
+          "Action": "skip",
+          "Test": "TestNativeCrossUserBoundary",
+          "Elapsed": 0
+        },
+        {
+          "Action": "skip",
+          "Test": "TestNativeCrossUserHelper",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestPrivateHTTPRoundTripAndLease",
+          "Elapsed": 0.02
+        },
+        {
+          "Action": "pass",
+          "Test": "TestSocketInitializationFailureCleansItsOwnSocket",
+          "Elapsed": 0.02
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/root-mode",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/root-link",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/state-mode",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/state-link",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/lease-mode",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/lease-link",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/lease-relative-link",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/lease-hardlink",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/discovery-link",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/discovery-relative-link",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/discovery-hardlink",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures",
+          "Elapsed": 0.02
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/root",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/installation",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/version",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/socket",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/inode",
+          "Elapsed": 0.02
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/generation",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/format",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/mode",
+          "Elapsed": 0.02
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/link",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/relative-link",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/hardlink",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/oversize",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/trailing",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/missing",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings",
+          "Elapsed": 0.14
+        },
+        {
+          "Action": "pass",
+          "Test": "TestLongRootUsesPrivateBoundRuntime",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestSocketReplacementAndModesRefuse/mode",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestSocketReplacementAndModesRefuse/regular",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestSocketReplacementAndModesRefuse/symlink",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestSocketReplacementAndModesRefuse/socket",
+          "Elapsed": 0.02
+        },
+        {
+          "Action": "pass",
+          "Test": "TestSocketReplacementAndModesRefuse",
+          "Elapsed": 0.05
+        },
+        {
+          "Action": "pass",
+          "Test": "TestLongRootReplacementRefusesCopiedDiscovery",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestIncompatibleBusyInstancePreservesLockAndDiscovery",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestKernelPeerUID",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestPrivateRefusesForeignOrUnknownOwner",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Elapsed": 0.286
+        }
+      ]
+    },
+    {
+      "command": "GOMAXPROCS=1 go test -json -p 1 -parallel 1 -count=1 -race ./internal/nativehttp",
+      "exit_code": 0,
+      "results": [
+        {
+          "Action": "skip",
+          "Test": "TestNativeCrossUserBoundary",
+          "Elapsed": 0
+        },
+        {
+          "Action": "skip",
+          "Test": "TestNativeCrossUserHelper",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestPrivateHTTPRoundTripAndLease",
+          "Elapsed": 0.03
+        },
+        {
+          "Action": "pass",
+          "Test": "TestSocketInitializationFailureCleansItsOwnSocket",
+          "Elapsed": 0.02
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/root-mode",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/root-link",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/state-mode",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/state-link",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/lease-mode",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/lease-link",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/lease-relative-link",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/lease-hardlink",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/discovery-link",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/discovery-relative-link",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures/discovery-hardlink",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestRefusePrivateDirectoryFailures",
+          "Elapsed": 0.02
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/root",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/installation",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/version",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/socket",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/inode",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/generation",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/format",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/mode",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/link",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/relative-link",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/hardlink",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/oversize",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/trailing",
+          "Elapsed": 0.02
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings/missing",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestDiscoveryRefusesChangedBindings",
+          "Elapsed": 0.15
+        },
+        {
+          "Action": "pass",
+          "Test": "TestLongRootUsesPrivateBoundRuntime",
+          "Elapsed": 0.02
+        },
+        {
+          "Action": "pass",
+          "Test": "TestSocketReplacementAndModesRefuse/mode",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Test": "TestSocketReplacementAndModesRefuse/regular",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestSocketReplacementAndModesRefuse/symlink",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestSocketReplacementAndModesRefuse/socket",
+          "Elapsed": 0.02
+        },
+        {
+          "Action": "pass",
+          "Test": "TestSocketReplacementAndModesRefuse",
+          "Elapsed": 0.04
+        },
+        {
+          "Action": "pass",
+          "Test": "TestLongRootReplacementRefusesCopiedDiscovery",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestIncompatibleBusyInstancePreservesLockAndDiscovery",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestKernelPeerUID",
+          "Elapsed": 0.01
+        },
+        {
+          "Action": "pass",
+          "Test": "TestPrivateRefusesForeignOrUnknownOwner",
+          "Elapsed": 0
+        },
+        {
+          "Action": "pass",
+          "Elapsed": 1.326
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Cross-user fixture skipped on this unprivileged runner; no sudo or host account changes.",
+    "Darwin libc ACL code and fixtures have not executed; no Mac access.",
+    "Darwin builds without cgo refuse native access; cross-build is not runtime acceptance.",
+    "HTTP authority/bootstrap/stream/WebSocket and daemon integration remain pending explicit handoff.",
+    "No local tmux or full-suite tests."
+  ]
+}

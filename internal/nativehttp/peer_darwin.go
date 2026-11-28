@@ -1,6 +1,7 @@
 package nativehttp
 
 import (
+	"errors"
 	"net"
 
 	"golang.org/x/sys/unix"
@@ -20,6 +21,11 @@ func peerUID(conn *net.UnixConn) (int, error) {
 	}
 	if credErr != nil {
 		return 0, credErr
+	}
+	// XUCRED_VERSION is 0 in Darwin's public sys/ucred.h. getpeereid
+	// rejects another layout before reading cr_uid too.
+	if cred.Version != 0 {
+		return 0, errors.New("unsupported kernel peer credential version")
 	}
 	return int(cred.Uid), nil
 }
