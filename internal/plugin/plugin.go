@@ -42,7 +42,7 @@ var points = map[string]Failure{
 
 // operations are the operations of the control protocol, as
 // docs/protocol.md lists them; a test keeps the two equal.
-var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "AttachWorker", "Clients", "Close", "End", "Events", "Files", "Forge", "HostKeys", "HostScreen", "HostTerminals", "HostView", "Layout", "Limits", "Link",
+var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "AttachWorker", "Clients", "Close", "DeferredSend", "End", "Events", "Files", "Forge", "HostKeys", "HostScreen", "HostTerminals", "HostView", "Layout", "Limits", "Link",
 	"OperateHost", "Release", "Remind", "Remove", "Reopen", "Scopes", "Send", "SetLayout", "SetName", "SignInLink", "Start", "StartWithoutSettings", "Stop", "TakeIn", "Terminal", "Thread", "ThreadEvents", "Threads", "Trust", "Trusts", "Untrust", "Workspace"}
 
 // never are the operations no plugin is given, whatever its manifest and
@@ -56,8 +56,9 @@ var operations = []string{"Answer", "AskInterrupt", "AttachTerminal", "AttachWor
 // directory, its alone too; trusting the files a start-up dialog
 // named, which lets a repository run commands, or withdrawing that; and
 // answering such a dialog otherwise, which a person does from chat.
+// Durable management sends also require the daemon's supervisor-only grant.
 var never = []string{"SignInLink", "HostTerminals", "HostScreen", "HostView", "OperateHost", "HostKeys", "End",
-	"AttachTerminal", "AttachWorker", "Close", "Remove", "Reopen", "TakeIn", "Release", "Forge", "Remind", "Files", "Trust", "Untrust", "StartWithoutSettings"}
+	"AttachTerminal", "AttachWorker", "Close", "Remove", "Reopen", "TakeIn", "Release", "Forge", "Remind", "Files", "Trust", "Untrust", "StartWithoutSettings", "DeferredSend"}
 
 // classes are the classes of Caller.May that the operations a plugin may
 // be given need; the core checks the operation's name besides

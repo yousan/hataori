@@ -19,7 +19,7 @@ func (c *codec) RefuseInput(ids []string, reason agent.Reason) agent.Actions {
 		delete(c.requests, s.request)
 		delete(c.steers, s.request)
 		if !s.steer {
-			c.running = false
+			c.running = s.input.IdleOnly && c.nativeTurn != ""
 		}
 	}
 	c.sent = kept

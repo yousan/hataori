@@ -27,7 +27,7 @@ import (
 
 // Version is the protocol version this build speaks: major.minor. Two
 // sides work together when their major numbers are equal (docs/protocol.md).
-const Version = "3.47"
+const Version = "3.48"
 
 type hello struct {
 	Version string `json:"version"`
@@ -186,6 +186,13 @@ type operation struct {
 // operations is every operation a client may send. docs/protocol.md
 // describes each, and a test keeps the two equal.
 var operations = map[string]operation{
+	"DeferredSend": {control.DeferredSendRequest{}, control.DeferredSend{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
+		var a control.DeferredSendRequest
+		if err := args(&a); err != nil {
+			return nil, err
+		}
+		return api.DeferredSend(ctx, a)
+	}},
 	"Threads": {threadsArgs{}, []control.ThreadInfo{}, func(ctx context.Context, api control.API, args func(any) error) (any, error) {
 		var a threadsArgs
 		if err := args(&a); err != nil {

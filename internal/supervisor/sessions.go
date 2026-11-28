@@ -536,3 +536,17 @@ func (s *Sessions) Dir(ctx context.Context, scope string) (string, error) {
 	}
 	return dir, nil
 }
+
+// DeferredPolicy returns current trusted policy without database I/O. The core
+// resolves the configured person again inside the eventual acceptance.
+func (s *Sessions) DeferredPolicy(scope string, thread control.ThreadID) (control.Caller, []string, error) {
+	sc, ok := s.Scopes[scope]
+	if !ok {
+		return control.Caller{}, nil, control.ErrForbidden
+	}
+	var repos []string
+	for _, r := range sc.Repos {
+		repos = append(repos, r.Address)
+	}
+	return Caller(scope, thread, sc.Autonomy), repos, nil
+}

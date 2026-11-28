@@ -306,6 +306,7 @@ type AgentDefaults struct{ Model, Effort string }
 // Core is the core of one instance. It has no operations of its own: use
 // As to get an API bound to a caller.
 type Core struct {
+	Deferred  *DeferredInputs
 	Placement *MachinePlacement
 	Away      *MachineAway
 
@@ -486,6 +487,7 @@ func (c *Core) AsFresh(caller control.Caller) control.API {
 var ErrAwake = errors.New("the thread is not asleep")
 
 type api struct {
+	deferredID   int64 // daemon-only dispatch; never restored from caller provenance
 	heldReplay   bool
 	heldActionID int64
 	c            *Core
@@ -2306,6 +2308,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 // earlier answer that took the input and recorded no outcome: nothing is
 // taken or interrupted then, and the caller decides again (#523).
 type sendGuard struct {
+	deferred                     int64
 	session, turn                int64
 	interrupted, ended, repeated bool
 	// proposal makes it an approved proposal's send instead (#650): a
@@ -2383,9 +2386,17 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		if err != nil {
 			return err
 		}
-		if (guard == nil || guard.proposal) && (state == control.Closed || state == control.Removed) {
+		if (guard == nil || guard.proposal || guard.deferred != 0) && (state == control.Closed || state == control.Removed) {
 			// Nothing is accepted: a message does not wake a closed thread.
 			return fmt.Errorf("core: send to %v: %w", id, ErrClosed)
+		}
+		if guard != nil && guard.deferred != 0 {
+			if a.c.Deferred == nil || a.deferredID != guard.deferred {
+				return ErrForbidden
+			}
+			if err := a.c.Deferred.guardTx(ctx, tx, guard.deferred, id); err != nil {
+				return err
+			}
 		}
 		if in.Link, err = a.c.ownLink(ctx, tx, id, in.Link, a.caller.From); err != nil {
 			return err
@@ -2421,7 +2432,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				return errGuardEnded
 			}
 		}
-		if guard != nil && !guard.proposal {
+		if guard != nil && !guard.proposal && guard.deferred == 0 {
 			var turn int64
 			err := tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1`, sid).Scan(&turn)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -2447,7 +2458,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			// The key is not taken: the transaction is rolled back.
 			return fmt.Errorf("core: send to %v: %s: %w", id, state, ErrAwake)
 		}
-		if !a.fresh && (guard == nil || guard.held) && (state == control.Creating || state == control.Idle || state == control.Running) {
+		if !a.fresh && (guard == nil || guard.held || guard.deferred != 0) && (state == control.Creating || state == control.Idle || state == control.Running) {
 			// A conversation of one input's own runs (AsFresh): this input is
 			// for the conversation it set aside, which the session resumes once
 			// that one ended. It is refused, not delivered into it; the chat
@@ -2474,7 +2485,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		}
 		marked := FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Link: in.Link,
 			Before: in.Before, After: in.After, Via: a.caller.Via}
-		if guard == nil || guard.held {
+		if guard == nil || guard.held || guard.deferred != 0 {
 			if waits, err = a.c.mustWait(ctx, tx, scope, id, state); err != nil {
 				return err
 			}
@@ -2525,6 +2536,14 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				return err
 			}
 			if accepted {
+				if guard != nil && guard.deferred != 0 {
+					if waits {
+						return ErrBusy
+					}
+					if err := a.c.Deferred.acceptedTx(ctx, tx, guard.deferred, sid, pending, wake); err != nil {
+						return err
+					}
+				}
 				return a.acceptHeld(ctx, tx, pending)
 			}
 			return nil
@@ -2696,9 +2715,9 @@ func (a *api) sendHooks(ctx context.Context, id control.ThreadID, scope, key str
 	if a.c.stateRead != nil {
 		a.c.stateRead()
 	}
-	guardedFailure := state == control.Failed && guard != nil && !guard.proposal
+	guardedFailure := state == control.Failed && guard != nil && !guard.proposal && guard.deferred == 0
 	if err == nil && (state == control.Closed || state == control.Removed || guardedFailure) {
-		if guard != nil && !guard.proposal {
+		if guard != nil && !guard.proposal && guard.deferred == 0 {
 			return in, false, nil
 		}
 		return in, false, fmt.Errorf("core: send to %v: %w", id, ErrClosed)

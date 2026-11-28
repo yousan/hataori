@@ -156,6 +156,9 @@ type API interface {
 	// is running. For a caller with Propose it gives nothing and returns a
 	// *Proposed (Caller.Propose).
 	Send(ctx context.Context, id ThreadID, key string, in Input, busy Busy) error
+	// DeferredSend explicitly queues, inspects or cancels a durable management
+	// instruction. It never changes Send's immediate/busy behavior.
+	DeferredSend(context.Context, DeferredSendRequest) (DeferredSend, error)
 	// Answer answers an open question, approval or proposal.
 	Answer(ctx context.Context, req RequestID, a Answer) error
 	// AskInterrupt asks a person to approve interrupting the running turn of
@@ -429,6 +432,9 @@ type Caller struct {
 	// interrupts it. A Send with Deliver or Interrupt to a running thread is
 	// refused with ErrBusy and logged.
 	RefuseBusy bool
+	// DeferInput is granted only by the daemon's management caller factory.
+	// Saved caller data never restores this grant.
+	DeferInput bool
 	// NoAnswer makes the caller's Send refused with ErrBusy, like one with
 	// Refuse to a running thread, when the thread waits on a question,
 	// instead of being its answer. The state is read in the transaction

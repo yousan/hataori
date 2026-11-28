@@ -20,12 +20,13 @@ import (
 // send's text, or a start's repository, agent, model, effort and first
 // text. The model and the effort are those the proposal showed.
 type proposalCall struct {
-	Machine string `json:"machine,omitempty"`
-	Text    string `json:"text"`
-	Repo    string `json:"repo,omitempty"`
-	Agent   string `json:"agent,omitempty"`
-	Model   string `json:"model,omitempty"`
-	Effort  string `json:"effort,omitempty"`
+	Deferred int64  `json:"deferred,omitempty"`
+	Machine  string `json:"machine,omitempty"`
+	Text     string `json:"text"`
+	Repo     string `json:"repo,omitempty"`
+	Agent    string `json:"agent,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
 	// Research is the start's (control.StartRequest.Research), kept from a
 	// caller that may ask for it.
 	Research bool `json:"research,omitempty"`
@@ -235,6 +236,12 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 	if err := json.Unmarshal([]byte(callJSON), &call); err != nil {
 		return fmt.Errorf("core: proposal %d: %w", number, err)
 	}
+	if call.Deferred != 0 {
+		if a.c.Deferred == nil {
+			return control.ErrNotSupported
+		}
+		return a.c.Deferred.answerProposal(ctx, a, req, ans, number, thread, call.Deferred)
+	}
 	// The outcome is written whatever the caller's context says by now.
 	record := func(outcome, reason string, allow bool, by decider, was string) error {
 		ctx := context.WithoutCancel(ctx)
@@ -374,6 +381,9 @@ const ProposalKeyPrefix = "proposal:"
 // proposalKey refuses key, a Start's or a Send's, when it is kept for the
 // calls of approved proposals and the caller is not making one.
 func (a *api) proposalKey(name, scope, key string) error {
+	if strings.HasPrefix(key, DeferredKeyPrefix) && (a.deferredID == 0 || key != fmt.Sprintf("%s%d", DeferredKeyPrefix, a.deferredID)) {
+		return a.refused(name, scope, "the key is kept for deferred instructions")
+	}
 	if strings.HasPrefix(key, ProposalKeyPrefix) && a.caller.Via != control.ViaProposal {
 		return a.refused(name, scope, "the key is kept for approved proposals")
 	}
@@ -479,6 +489,8 @@ func (c *Core) openProposals(ctx context.Context, id control.ThreadID, reqs []co
 					what = "a read-only research thread, without the repository's settings,"
 				}
 				r.Text = fmt.Sprintf("Proposal %d: start %s in %s? %s", number, what, repo, p.Text)
+			} else if p.Deferred != 0 {
+				r.Text = fmt.Sprintf("Proposal %d: queue deferred instruction %d for the same worker of thread %d? %s", number, p.Deferred, target.Int64, p.Text)
 			} else {
 				r.Text = fmt.Sprintf("Proposal %d: send to thread %d? %s", number, target.Int64, p.Text)
 			}

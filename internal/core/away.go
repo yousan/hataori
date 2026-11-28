@@ -35,6 +35,32 @@ type heldAction struct {
 // RevalidateInitial runs inside the read commit before unwritten initial
 // input. A ready event may have changed creating to idle during catch-up.
 func (c *Core) RevalidateInitial(ctx context.Context, tx *store.Tx, sid int64) error {
+	if c.Deferred != nil {
+		if err := c.Deferred.RevalidateTx(ctx, tx, sid, "first"); err != nil {
+			if !errors.Is(err, ErrForbidden) {
+				return err
+			}
+
+			var raw string
+			if e := tx.QueryRowContext(ctx, `SELECT first_input FROM sessions WHERE id=?`, sid).Scan(&raw); e != nil {
+				return e
+			}
+			var f FirstInput
+			if raw != "" && json.Unmarshal([]byte(raw), &f) == nil && f.Sent {
+				var seq uint64
+				if e := tx.QueryRowContext(ctx, `SELECT last_seq+1 FROM sessions WHERE id=?`, sid).Scan(&seq); e != nil {
+					return e
+				}
+				if e := c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.AgentEvent, Agent: agent.Event{Kind: agent.TurnEnded, Seq: seq, Input: "first", Status: agent.Failed, Reason: agent.NotDelivered}}); e != nil {
+					return e
+				}
+			}
+			if _, e := tx.ExecContext(ctx, `UPDATE sessions SET first_input='' WHERE id=?`, sid); e != nil {
+				return e
+			}
+			return ErrForbidden
+		}
+	}
 	if c.Away == nil {
 		return nil
 	}
@@ -137,6 +163,22 @@ func (c *Core) keepPendingAuthority(ctx context.Context, tx *store.Tx, pending i
 // RevalidatePending covers accepted-before-disconnection inputs, including the
 // race between a successful API readiness check and the first transport write.
 func (c *Core) RevalidatePending(ctx context.Context, sid, pending int64) error {
+	if c.Deferred != nil {
+		var refused error
+		err := c.Store.Update(ctx, func(tx *store.Tx) error {
+			refused = c.Deferred.RevalidateTx(ctx, tx, sid, fmt.Sprint(pending))
+			if errors.Is(refused, ErrForbidden) {
+				return nil
+			}
+			return refused
+		})
+		if err != nil {
+			return err
+		}
+		if refused != nil {
+			return refused
+		}
+	}
 	if c.Away == nil {
 		return nil
 	}

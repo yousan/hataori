@@ -1967,6 +1967,59 @@ All numbers are `yousan/c-lord` issues.
 
 Declared in `internal/control`, `internal/surface` and `internal/agent`; the packages hold the types this appendix leaves out. Names will move during phase 1; the split between the three packages should not. A pull request that changes one of the packages changes this appendix with it.
 
+### Durable deferred management input
+
+Protocol 3.48 adds `API.DeferredSend(context.Context, DeferredSendRequest)
+(DeferredSend, error)` for explicit queue/find/inspect/cancel. `Caller.DeferInput`
+is a daemon-only grant, never a socket argument. It is set for a configured
+supervisor in act/propose, and reconstructed from current trusted policy before
+delivery. Existing immediate `Send` semantics are unchanged. See
+[the approved design](../notes/deferred-supervisor-send/design.md) and
+[the operation contract](../protocol.md#operation-deferredsend).
+
+`agent.DeferredInputAdapter` is optional: `CanDeferInput() bool` and
+`ValidateDeferredInput(Actions) error` declare one complete pipe submission,
+idle-only hold and exact Written ACK reconstruction. Absence refuses queueing.
+The codec must also implement `DeferredInputCodec.DeferredInputReady` to
+recheck current native idle state before freezing an emitted action and before
+the first attempt when the original receiver proves a frozen key absent. An
+earlier emitted action or the logical session state alone is insufficient.
+`agent.Input.IdleOnly` survives acceptance and codec holding: it cannot steer
+or be acknowledged by equal text/a bare native turn notification.
+`agent.Input.Command [][]byte` is opaque frozen adapter command evidence for
+Written reconstruction; the generic core/runner do not parse provider RPCs.
+Deferred codec IDs carry the durable queue number, separately from reusable
+ordinary pending rowids and the `first` slot. Current origin keys are checked
+before translating an action/ACK back to its delivery slot; stale generations
+cannot write or acknowledge the next input.
+Codex restores the original turn/start request/thread association through
+warmIO; only its exact successful RPC response acknowledges this input.
+
+The owned host's private input-batch-v1 capability binds an opaque live run.
+It reserves each key/digest before writing the complete frozen batch and keeps
+128 receipts without eviction, refusing new keys at capacity; batches are at
+most 128 KiB/128 chunks. The durable frozen batch and ordinary Written marker
+commit together. Reconnect reconciles only that original run/key/bytes after
+retained-read/readiness checks; written clocks come from actual receiver
+completion and are preserved across reconstructions. Host receipt is not an
+agent ACK. A pending receipt fences later codec I/O; consumed later actions
+require reconstruction before writing. Later input/answer rows stay in the
+recovery horizon and wait before entering the codec, so an input held without
+an emitted action cannot be enqueued twice after recovery. A pending/unknown
+receipt is probed before new output is consumed. Proven absence allows ordinary
+native replies/ticks, rechecks questions before idle waiting, and suspends only
+the deferred input's pre-write deadline. Ordinary batch I/O completes before a
+subsequent fresh read can authorize absent bytes; an unfrozen input waits rather
+than acquiring a fence around remaining one-shot native responses.
+Cached exact ACK restoration propagates
+store failures and reconstructs again rather than losing the acknowledgement.
+A complete receiver rejection (including non-evicting capacity exhaustion) is
+terminal, distinct from an ambiguous connection failure. Global terminal holder
+preference does not exclude an existing owned pipe host; the actual holder is
+checked. Dead receivers/partial writes are explicit unconfirmed failure,
+without a replacement worker or a new-run retry. No claim is made for exactly
+once arbitrary pipe effects across receiver death.
+
 ### Machine session I/O
 
 `internal/machineio.Session` binds reads, metadata, pipes, hook replies and host

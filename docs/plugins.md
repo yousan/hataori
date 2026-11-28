@@ -57,6 +57,10 @@ This binds a plugin that connects with its token. It is not confinement: a proce
 
 A plugin calls as the id `plugin:<id>`. Its `Start`, `Send`, `Answer`, `Stop` and `Link` are refused like a guest's unless the operator lists that id under a person of the config and that person in the scope's `people` ([configuration.md, `people[]`](configuration.md#people)), as for a supervisor. `AskInterrupt` is refused in this version whatever the grant: a plugin has no thread to ask in.
 
+`DeferredSend` is never granted to plugins, in either manifest or config. Durable
+management sends require the daemon's supervisor-only authority and budget path;
+an operation name or a forged grant cannot acquire that capability.
+
 ## How a plugin runs
 
 hataori starts each plugin that is not `external` as a child process when the daemon starts, once the control socket listens.

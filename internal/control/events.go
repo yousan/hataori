@@ -46,10 +46,10 @@ var EventKinds = map[EventKind][]Field{
 	// proposal_made: a caller with Propose proposed a send or a start
 	// (Caller.Propose), in the thread it asks in. proposal_answered: a
 	// person decided it, and what came of it. Since 3.26.
-	"proposal_made": {req("request", String), req("number", Integer), req("action", String), opt("target", Integer),
+	"proposal_made": {opt("deferred", Integer), req("request", String), req("number", Integer), req("action", String), opt("target", Integer),
 		opt("question", String), opt("repo", String), opt("agent", String), opt("model", String), opt("effort", String),
 		text("text", String), opt("principal", String), opt("from", String), opt("research", Boolean), opt("machine", String)},
-	"proposal_answered": {req("request", String), req("number", Integer), req("action", String), req("allow", Boolean),
+	"proposal_answered": {opt("deferred", Integer), req("request", String), req("number", Integer), req("action", String), req("allow", Boolean),
 		req("outcome", String), opt("target", Integer), opt("reason", String), opt("principal", String), opt("from", String),
 		opt("link", Object), opt("via", String)},
 	// thread_created: kind is the thread's ThreadKind. Since 3.38.

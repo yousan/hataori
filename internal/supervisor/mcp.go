@@ -62,11 +62,14 @@ const Instructions = "Tools of this channel's supervisor, its development manage
 
 // The tools, in the order tools/list gives them.
 const (
-	ToolList      = "list_threads"
-	ToolRead      = "read_thread"
-	ToolSend      = "send_to_thread"
-	ToolInterrupt = "interrupt_thread"
-	ToolStart     = "start_thread"
+	ToolList           = "list_threads"
+	ToolRead           = "read_thread"
+	ToolSend           = "send_to_thread"
+	ToolDefer          = "defer_to_thread"
+	ToolDeferred       = "inspect_deferred_send"
+	ToolCancelDeferred = "cancel_deferred_send"
+	ToolInterrupt      = "interrupt_thread"
+	ToolStart          = "start_thread"
 
 	// The forge's reads (design, section 7.1), since protocol 3.27.
 	ToolIssues = "list_issues"
@@ -173,6 +176,10 @@ var tools = []tool{
 	{ToolSend, "Send a message to a thread of this channel. A thread that is running a turn refuses it with \"busy\"; " +
 		"its turn's end is told you as any, in a wake. A thread waiting on a question takes the message as the answer. Under the autonomy propose it is a proposal that a person approves first; under watch it is refused.",
 		object(map[string]any{"number": number, "text": map[string]any{"type": "string", "description": "the message"}}, "number", "text")},
+
+	{ToolDefer, "Explicitly queue one instruction for the same existing worker at a future idle boundary. Never interrupts or answers a question. Requires a capable owned pipe host; unsupported workers refuse before queue creation. Uses one send budget now, including a proposal under propose. Queued is not delivered. Reuse exactly the same key, number and text after a lost reply; changed payload is refused. Watch refuses.", object(map[string]any{"number": number, "key": map[string]any{"type": "string", "description": "stable retry key, at most 128 bytes"}, "text": map[string]any{"type": "string", "description": "instruction, at most 16 KiB"}}, "number", "key", "text")},
+	{ToolDeferred, "Inspect a durable deferred instruction by its receipt number; includes terminal refusal/failure/cancellation. Only delivered confirms the bound agent input acknowledgement, not model obedience.", object(map[string]any{"number": number}, "number")},
+	{ToolCancelDeferred, "Cancel a deferred instruction before its frozen handoff. A handoff or delivered receipt is too late to cancel; this never interrupts or recalls input. Cancellation does not refund send budget.", object(map[string]any{"number": number}, "number")},
 	{ToolInterrupt, "Ask a person in this channel to approve interrupting a thread that is running a turn. This returns at once and interrupts nothing by itself. Once approved, the thread's turn is stopped and it gets the reason as a message from the supervisor. A thread not running is refused with not busy; send instead.", object(map[string]any{"number": number, "reason": map[string]any{"type": "string", "description": "the reason to give the thread"}}, "number", "reason")},
 	{ToolStart, "Start a new thread in this channel, with its own workspace cloned from one of the channel's repositories: to do work, or to look something up that your tools do not show. Under the autonomy propose it is a proposal that a person approves first; under watch it is refused.",
 		object(map[string]any{
@@ -336,6 +343,7 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 	}
 	var a struct {
 		Number  *int64 `json:"number"`
+		Key     string `json:"key"`
 		Text    string `json:"text"`
 		Reason  string `json:"reason"`
 		Repo    string `json:"repo"`
@@ -362,7 +370,7 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 	}
 	read, isForge := forgeReads[name]
 	switch name {
-	case ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolRemind, ToolCancelRemind:
+	case ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolRemind, ToolCancelRemind, ToolDefer, ToolDeferred, ToolCancelDeferred:
 	default:
 		if !isForge {
 			return "", fmt.Errorf("no tool %q", name)
@@ -392,7 +400,28 @@ func (m *MCP) call(ctx context.Context, name string, raw json.RawMessage) (strin
 		}
 		return cut(forgeText(ans, r), ForgeMax), nil
 	}
+
 	switch name {
+	case ToolDefer, ToolDeferred, ToolCancelDeferred:
+		if a.Number == nil || *a.Number <= 0 {
+			return "", errors.New("bad arguments: number is required")
+		}
+		r := control.DeferredSendRequest{Action: "inspect", Number: *a.Number}
+		if name == ToolDefer {
+			if a.Key == "" || len(a.Key) > 128 || strings.TrimSpace(a.Text) == "" || len(a.Text) > 16*1024 {
+				return "", errors.New("bad arguments: stable key and text are required (128-byte key, 16 KiB text maximum)")
+			}
+			r = control.DeferredSendRequest{Action: "queue", Target: control.ThreadID(*a.Number), Key: a.Key, Text: a.Text}
+		}
+		if name == ToolCancelDeferred {
+			r.Action = "cancel"
+		}
+		got, e := api.DeferredSend(ctx, r)
+		if e != nil {
+			return "", reason(e)
+		}
+		out, e := json.Marshal(got)
+		return string(out), e
 	case ToolList:
 		if a.State != "" && a.State != listOpen && a.State != listAll {
 			return "", errors.New("bad arguments: state is open or all")

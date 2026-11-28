@@ -241,6 +241,7 @@ type eventData struct {
 	Multi   bool   `json:"multi"` // request: several choices at once, since 3.8
 	// proposal_made, proposal_answered: since 3.26
 	Number   int64  `json:"number"`
+	Deferred int64  `json:"deferred"`
 	Action   string `json:"action"`
 	Repo     string `json:"repo"`
 	Model    string `json:"model"`
@@ -268,6 +269,9 @@ func proposalText(d eventData) string {
 	}
 	if d.Action == "send" {
 		what = fmt.Sprintf("send to thread %d", d.Target)
+		if d.Deferred != 0 {
+			what = fmt.Sprintf("queue deferred instruction %d for the same worker of thread %d", d.Deferred, d.Target)
+		}
 		if d.Question != "" {
 			what += ", as the answer to its open question"
 		}
@@ -281,6 +285,12 @@ func proposalText(d eventData) string {
 // proposalDone is the line that says how a proposal was decided, and what
 // came of it.
 func proposalDone(d eventData) string {
+	if d.Deferred != 0 {
+		if d.Outcome == "run" {
+			return fmt.Sprintf("Approved by %s: deferred instruction %d is queued for the same worker of thread %d; delivery is not yet confirmed.", d.Principal, d.Deferred, d.Target)
+		}
+		return fmt.Sprintf("Deferred instruction %d was not queued: proposal %d outcome %s. %s", d.Deferred, d.Number, d.Outcome, d.Reason)
+	}
 	not := "was not started"
 	if d.Action == "send" {
 		not = "was not sent"

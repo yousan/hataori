@@ -44,8 +44,8 @@ var (
 var eventData = map[control.EventKind]string{
 	"approval_asked":       `{"request":"approval-1","action":"interrupt","target":8,"turn":12,"reason":"urgent","principal":"sv1","from":"supervisor:C0123"}`,
 	"approval_answered":    `{"request":"approval-1","allow":true,"outcome":"interrupted","target":8,"principal":"alice","from":"discord:W1","link":{"client":"discord","channel":"C0123","thread":"T0456"},"via":"dashboard"}`,
-	"proposal_made":        `{"action":"send","machine":"build","agent":"claude-code","effort":"high","from":"supervisor:C0123","model":"opus","number":3,"principal":"sv1","question":"request-1","repo":"https://example.com/repo.git","research":true,"request":"proposal-1","target":8,"text":"Run the tests."}`,
-	"proposal_answered":    `{"action":"send","allow":true,"from":"discord:W1","link":{"client":"discord","channel":"C0123","thread":"T0456"},"number":3,"outcome":"failed","principal":"alice","reason":"not allowed","request":"proposal-1","target":8,"via":"dashboard"}`,
+	"proposal_made":        `{"deferred":9,"action":"send","machine":"build","agent":"claude-code","effort":"high","from":"supervisor:C0123","model":"opus","number":3,"principal":"sv1","question":"request-1","repo":"https://example.com/repo.git","research":true,"request":"proposal-1","target":8,"text":"Run the tests."}`,
+	"proposal_answered":    `{"deferred":9,"action":"send","allow":true,"from":"discord:W1","link":{"client":"discord","channel":"C0123","thread":"T0456"},"number":3,"outcome":"failed","principal":"alice","reason":"not allowed","request":"proposal-1","target":8,"via":"dashboard"}`,
 	"thread_created":       `{"effort":"high","from":"discord:W1","kind":"ordinary","model":"opus","principal":"dispatch","repo":"https://example.com/repo.git","research":true,"session":3,"thread":7,"via":"proposal"}`,
 	"state":                `{"detail":"the folder-trust dialog names .mcp.json","from":"creating","reason":"blocked at start","session":3,"to":"failed","trust":[".mcp.json"]}`,
 	"turn_started":         `{"by":"caller","from":"discord:W1","key":"M0789","principal":"dispatch","session":3,"turn":12}`,
@@ -104,6 +104,7 @@ func examples(t *testing.T) map[string]any {
 			Message: `wire: operation "Unheard": not supported`}},
 	}
 	args := map[string]any{
+		"DeferredSend": control.DeferredSendRequest{Action: "queue", Number: 9, Target: exampleID, Key: "stable-instruction", Text: "Run focused checks after the turn."},
 		"Threads":      threadsArgs{Filter: control.Filter{Scope: "C0123", Link: &exampleLink}},
 		"Thread":       threadArgs{ID: exampleID, Recent: 2000, Events: 5},
 		"ThreadEvents": threadEventsArgs{ID: exampleID, Before: 42, Limit: 100},
@@ -151,7 +152,8 @@ func examples(t *testing.T) map[string]any {
 		"End": endArgs{},
 	}
 	results := map[string]any{
-		"Threads": []control.ThreadInfo{exampleInfo, exampleConfined},
+		"DeferredSend": control.DeferredSend{Number: 9, State: "proposed", Target: exampleID, Session: 3, Text: "Run focused checks after the turn.", Reason: "awaiting a person", Proposal: 3, Created: exampleTime, Updated: exampleTime},
+		"Threads":      []control.ThreadInfo{exampleInfo, exampleConfined},
 		"Thread": control.ThreadDetail{ThreadInfo: exampleInfo, Recent: "Reading the code.\n\nRunning the tests...",
 			Cancelled: []control.CancelledPost{{Time: exampleTime, Link: exampleLink, Event: 41, Part: 0, Plugin: "secret-scan",
 				Failed: true, Edit: true, Reason: "The post holds a secret."}},
