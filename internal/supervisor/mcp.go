@@ -161,6 +161,8 @@ var (
 // withheldNote is what the forge tools' descriptions say of withheld text.
 const withheldNote = " Text by an author without write access to the repository is withheld, unless this channel trusts them; the answer names the author."
 
+const researchCapabilityNote = ". Available only when the loaded configuration reports settings-free research support for the selected ordinary-worker adapter; otherwise refused before a worker is created. Confined supervisor support does not establish this capability"
+
 // tools is what tools/list returns.
 var tools = []tool{
 	{ToolList, "List the threads of this channel: number, state, title, who started it, and the last line of output. " +
@@ -180,7 +182,7 @@ var tools = []tool{
 			"model":   map[string]any{"type": "string", "description": "the model; leave out for the channel's default"},
 			"effort":  map[string]any{"type": "string", "description": "the effort; leave out for the channel's default", "enum": control.Efforts},
 			"research": map[string]any{"type": "boolean", "description": "true for a thread that only reads, to look something up: it starts without the repository's own settings and hooks, so that no dialog about them blocks it; " +
-				"never for a thread that changes anything"},
+				"never for a thread that changes anything" + researchCapabilityNote},
 		}, "repo", "text")},
 	{ToolIssues, "List the issues of one of this channel's repositories on its forge, read only: number, state, title, author, labels, assignees, last change." + withheldNote,
 		object(map[string]any{"repo": forgeRepo, "state": listState}, "repo")},

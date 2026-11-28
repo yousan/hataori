@@ -262,7 +262,7 @@ func TestConfigLayerNamesUnservedRepos(t *testing.T) {
 		{"both", Act, map[string]forge.Forge{"one": one, "two": two}, all},
 		{"none, watch", Watch, nil, all + " No forge answers for o/a, o/b" + refused + "."},
 	} {
-		got := ConfigLayer(Scope{Autonomy: tc.autonomy, Repos: repos}, tc.forges)
+		got := ConfigLayer(Scope{Autonomy: tc.autonomy, Repos: repos, WorkerResearch: ResearchCapability{Agent: "supported", Supported: true}}, tc.forges)
 		if !strings.Contains(got, "\n"+tc.want+"\n") {
 			t.Errorf("%s: no line %q in:\n%s", tc.name, tc.want, got)
 		}

@@ -122,8 +122,9 @@ func TestClaudeCodeToolsList(t *testing.T) {
 			if names := toolNames(t, r["result"]); !slices.Equal(names, current) {
 				t.Fatalf("tools/list gives %v, want the current tools %v", names, current)
 			}
-			// Keep the external capture immutable. Placement adds exactly one
-			// optional schema property; all previously captured fields match.
+			// Keep the external capture immutable. Placement adds one optional
+			// property; research adds an explicit capability qualification. All
+			// other captured fields still match, including the original wording.
 			for _, tool := range r["result"].(map[string]any)["tools"].([]any) {
 				x := tool.(map[string]any)
 				if x["name"] == ToolStart {
@@ -133,6 +134,12 @@ func TestClaudeCodeToolsList(t *testing.T) {
 						t.Fatal("start lacks typed machine option")
 					}
 					delete(props, "machine")
+					research := props["research"].(map[string]any)
+					description := research["description"].(string)
+					if !strings.HasSuffix(description, researchCapabilityNote) {
+						t.Fatal("research lacks capability qualification")
+					}
+					research["description"] = strings.TrimSuffix(description, researchCapabilityNote)
 				}
 			}
 			a, _ := json.Marshal(r["result"])

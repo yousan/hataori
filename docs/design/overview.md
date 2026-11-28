@@ -3182,6 +3182,20 @@ type WorkerAdapters interface {
 	ForWorker() Adapter
 }
 
+// ProjectSettingsOmitter is optional, pure adapter capability metadata.
+// Missing or false support refuses ordinary research before creating a
+// thread, workspace, session, proposal or launch. A confined supervisor's
+// support does not establish this separate ordinary-worker capability.
+type ProjectSettingsOmitter interface {
+	CanOmitProjectSettings() bool
+}
+
+// CanOmitProjectSettings returns false for an undeclared capability.
+func CanOmitProjectSettings(a Adapter) bool
+
+// Every actual requested launch must still attest Launch.NoProjectSettings;
+// this metadata cannot bypass the runner's independent fail-closed check.
+
 // Health is a probe observation; uncertainty never authorizes new work.
 type Health struct {
 	Installed, LoggedIn bool
