@@ -43,7 +43,11 @@ type deferredPeer struct {
 
 func (p *deferredPeer) listen(t *testing.T, dir string) {
 	t.Helper()
-	ln, e := net.Listen("unix", host.SocketPath(dir))
+	sock := host.SocketPath(dir)
+	if e := os.MkdirAll(filepath.Dir(sock), 0o700); e != nil {
+		t.Fatal(e)
+	}
+	ln, e := net.Listen("unix", sock)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -59,6 +63,32 @@ func (p *deferredPeer) listen(t *testing.T, dir string) {
 		}
 	}()
 }
+
+// Long temporary state paths use the same short-socket fallback on every OS.
+// The in-process peer must create its resolved parent, as the real host does.
+func TestDeferredPeerLongStateDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), strings.Repeat("state", 40))
+	if e := os.MkdirAll(dir, 0o700); e != nil {
+		t.Fatal(e)
+	}
+	if filepath.Dir(host.SocketPath(dir)) == dir {
+		t.Fatal("fixture did not exercise the short-socket parent")
+	}
+	p := &deferredPeer{run: "fixture-long-path"}
+	p.listen(t, dir)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	c, e := host.DialContext(ctx, dir)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer c.Close()
+	cap, e := c.InputCapability()
+	if e != nil || cap.Version != host.InputBatchVersion || cap.Run != p.run {
+		t.Fatalf("short-path capability: %+v, %v", cap, e)
+	}
+}
+
 func (p *deferredPeer) serve(c net.Conn) {
 	defer c.Close()
 	dec, enc := json.NewDecoder(c), json.NewEncoder(c)
