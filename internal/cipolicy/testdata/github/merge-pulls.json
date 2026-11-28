@@ -1,0 +1,29 @@
+[
+  {
+    "number": 1053,
+    "merged_at": "2026-11-28T00:11:35Z",
+    "merge_commit_sha": "8e051963929541ad126f9fff3c6b9c32dc4e58b7",
+    "user": {
+      "id": 561613,
+      "login": "yousan"
+    },
+    "head": {
+      "sha": "8b43adb9a98bd82e956be1194a7b6f2ca93c5569",
+      "ref": "issue-770-no-signature-program",
+      "repo": {
+        "id": 1454788309,
+        "full_name": "yousan/hataori",
+        "default_branch": "main"
+      }
+    },
+    "base": {
+      "sha": "8c60fde9d768bce37a941a245d7a83820d4f5915",
+      "ref": "main",
+      "repo": {
+        "id": 1454788309,
+        "full_name": "yousan/hataori",
+        "default_branch": "main"
+      }
+    }
+  }
+]

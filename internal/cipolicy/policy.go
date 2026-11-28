@@ -107,6 +107,17 @@ func Digest(b []byte) string {
 // unapproved or expired controls fail closed; they never enable partial gates.
 // A rollback selects another approved immutable revision through the same path.
 func Resolve(source Source, trust Trust, now time.Time) Selection {
+	s := resolveApproved(source, trust)
+	if r := s.Report(now); r.FullOnly && s.invalid == "" {
+		s.invalid = r.BlockedReason
+	}
+	return s
+}
+
+// resolveApproved authenticates immutable bytes without admitting new work. The
+// adapter also needs this identity to finish an already running frozen proof
+// after policy expiry. Report always closes admission outside policy validity.
+func resolveApproved(source Source, trust Trust) Selection {
 	s := Selection{revision: trust.Revision}
 	fail := func(reason string) Selection { s.invalid = reason; return s }
 	expected, ok := trust.Approved[trust.Revision]
@@ -146,9 +157,6 @@ func Resolve(source Source, trust Trust, now time.Time) Selection {
 	if l.MaxChanges <= 0 || l.MaxAgeSeconds <= 0 || l.MaxAgeSeconds > maxSeconds ||
 		l.LeadTimeSeconds < 0 || l.LeadTimeSeconds >= l.MaxAgeSeconds {
 		return fail("invalid coverage limits")
-	}
-	if r := s.Report(now); r.FullOnly {
-		return fail(r.BlockedReason)
 	}
 	return s
 }

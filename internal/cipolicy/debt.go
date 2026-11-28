@@ -14,6 +14,7 @@ type Commit struct {
 	IntegratedAt  time.Time
 	Code          bool
 	Compatibility bool
+	HighRisk      bool
 }
 
 type History struct {
@@ -25,6 +26,7 @@ type History struct {
 // trusted coordinator, not a candidate or a reusable workflow's result label.
 type Sweep struct {
 	ID, From, Target, Control, Digest string
+	Authority                         string
 	CompatibilityRequired             bool
 }
 
@@ -32,6 +34,7 @@ type Sweep struct {
 // Reconcile is a pure transition and cannot make concurrent storage atomic.
 type State struct {
 	Control, Digest, Watermark        string
+	Authority                         string
 	Root, ObservedTip, ObservedDigest string
 	ObservedAt                        time.Time
 	Sequence                          uint64
@@ -118,7 +121,7 @@ func Reconcile(old State, policy Selection, e Event) (State, Decision, error) {
 		from, fromOK := positions[sweep.From]
 		target, targetOK := positions[sweep.Target]
 		if !fromOK || !targetOK || from >= target || sweep.From != s.Watermark ||
-			sweep.Control != s.Control || sweep.Digest != s.Digest || sweep.ID == "" {
+			sweep.Control != s.Control || sweep.Digest != s.Digest || sweep.Authority != s.Authority || sweep.ID == "" {
 			return fail("invalid frozen sweep")
 		}
 		if sweep.CompatibilityRequired != compatibilityRequired(e.History, from, target) {
@@ -211,7 +214,7 @@ func Reconcile(old State, policy Selection, e Event) (State, Decision, error) {
 			newCode = newCode || e.History.Commits[i].Code
 		}
 		if newCode {
-			s.Pending = &Sweep{ID: "pending", From: s.Watermark, Target: target, Control: s.Control, Digest: s.Digest,
+			s.Pending = &Sweep{ID: "pending", From: s.Watermark, Target: target, Control: s.Control, Digest: s.Digest, Authority: s.Authority,
 				CompatibilityRequired: compatibilityRequired(e.History, w, len(e.History.Commits)-1)}
 		}
 		return s, d, nil
@@ -220,7 +223,7 @@ func Reconcile(old State, policy Selection, e Event) (State, Decision, error) {
 		return fail("sweep sequence exhausted")
 	}
 	s.Sequence++
-	s.Active = &Sweep{ID: fmt.Sprintf("%s/%d", s.Control, s.Sequence), From: s.Watermark, Target: target, Control: s.Control, Digest: s.Digest,
+	s.Active = &Sweep{ID: fmt.Sprintf("%s/%d", s.Control, s.Sequence), From: s.Watermark, Target: target, Control: s.Control, Digest: s.Digest, Authority: s.Authority,
 		CompatibilityRequired: compatibilityRequired(e.History, w, len(e.History.Commits)-1)}
 	copy := *s.Active
 	d.Dispatch = &copy

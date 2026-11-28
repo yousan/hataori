@@ -1,114 +1,158 @@
-# Offline integration-policy components
+# Integration-policy implementation
 
-Implementation for [#1103](https://github.com/yousan/hataori/issues/1103), stacked
-on the unmerged phase-one PR #1102 at `a4942c86`. The parent design is
-[ci-policy.md](ci-policy.md). These components can be developed and reviewed
-while the parent's actual macOS failure remains with its existing owners.
+[#1107](https://github.com/yousan/hataori/pull/1107) implements components of
+[#1103](https://github.com/yousan/hataori/issues/1103), explicitly stacked on
+unmerged phase-one #1102 at `a4942c86`. See [the policy design](ci-policy.md).
+The parent's actual macOS failure and #965/#1100/#1105 repairs retain their
+existing owners. This PR does not close #1103.
 
-`internal/cipolicy` contains executable policy selection and coverage-debt
-transitions with deterministic focused tests. Nothing calls it from Actions
-or runtime code. There is no active `.github/ci-policy.json`, integration
-branch, profile, schedule, routing change, dispatch, cancellation or release
-authorization. Existing main PR targets, full gates, provider reviews and
-Pages behavior are untouched. Neither phase one nor these profiles are
-adopted merely because code exists on a branch.
+`internal/cipolicy` now includes GitHub provenance verification, a durable
+SQLite coordinator/outbox, and complete Git-object change selection. No
+runtime or Actions caller activates it. No live policy, authority root/key,
+integration branch, dispatcher, schedule, profile or routing is installed.
+Existing main PR targets, full ready/main gates, mandatory provider/authority
+reviews, Pages and deployment sources remain unchanged. Draft successes and
+skips are partial development evidence, never full validation or adoption.
 
-## Approved control
+## Independent authority and actual provenance
 
-`Resolve` takes a `Source`, `Trust` and clock. `Trust` is the responsible
-coordinator's already-approved immutable control revision and allowlist of
-policy SHA-256 digests. It must be obtained outside candidate-controlled
-files, labels, workflow inputs and artifacts. This library does not create
-approvals or authenticate a GitHub reviewer; those are adapter boundaries
-that must be proved before activation. Calling the library with an anchor
-chosen by a candidate would violate its contract, not establish trust.
+`NewAdapter` verifies canonical Ed25519-signed `AuthorityRoot` bytes against an
+independently provisioned public key. The coordinator's key/root/database must
+be outside candidate checkouts and candidate-writable inputs/artifacts. This
+is an explicit trust bootstrap, not approval inferred from a `Trust`, owner
+string, label, fixture or success conclusion. No actual root is provisioned by
+this implementation. Test keys and mutated API variants are not real approvals.
 
-`GitSource` reads `.github/ci-policy.json` from the pinned commit object,
-including verifying that the object is a commit. Current HEAD and working
-tree edits cannot replace those bytes. The strict version-one schema rejects
-unknown/noncanonical fields (including case aliases), duplicate keys, trailing
-values, unknown profiles, missing
-owner/reason/validity, invalid budgets and an unapproved rollback revision.
-Missing, invalid, unapproved, unavailable or expired control fails closed:
-`FullOnly` is true and code integration is denied. It never silently grants
-partial validation. Expiry is rechecked on every decision, including when
-the selection was loaded earlier.
+The root fixes numeric repository identity, control/default and integration
+refs, approved immutable control revisions/policy digests, responsible owner,
+all required review identities, dispatcher, workflow identity, execution-file
+digests, job scopes, required steps and runner labels. The HTTPS adapter checks
+actual repository identity and default ref; actual merged control PR/head/base;
+latest exact-head `APPROVED` reviews from every required identity before merge;
+actual owner identity; and immutable policy/execution content digests. Comments
+are not approvals. Integration high-risk changes and explicit per-PR provider
+requirements also require their exact-head approvals. No provider requirement
+is automatically waived or converted into a cheaper repeated review.
 
-Reports identify profile, reason, responsible owner, start/expiry, approved
-revision/digest, limits and rollback revision. Rollback selects the old
-approved revision through the same loader and validation. If its policy is
-missing or expired, rollback fails closed too. The Git-backed test commits
-approved stable/throughput policies followed by a candidate's cheaper edit;
-the approved anchor keeps its original limits, the candidate cannot elect
-itself, and selecting the approved stable revision restores its limits.
+The signed scope digest includes the control, execution, classification/review
+requirements and dispatcher. State and every sweep persist it. A renewed root
+cannot silently change a running proof's requirements. Expiry refresh alone
+preserves scope; changed requirements use `SwitchControl`, which refuses an
+uncertain/bound proof, atomically retires only a definitely unsent prepared
+intent, retains all known history/classification/failure, and invalidates
+coverage back to the fixed bootstrap root. It cannot initialize at an arbitrary
+new head or discard debt. Keep the frozen root available to finish a sent proof
+before switching; a root expiry requires a signed expiry renewal.
 
-## Coverage transition and fences
+`Bootstrap` requires the signed fixed target and an actual applicable full
+Actions proof plus immutable ancestry. `Initialize` accepts only that sealed
+baseline, once. Actual installation still needs a compatible approved workflow,
+complete reviewed execution closure and valid live baseline. A declaration that
+a workflow or helper is trusted does not establish that closure's correctness.
 
-`NewState` starts with an externally proven integration watermark and a
-control identity. `Reconcile` takes a complete trusted first-parent history,
-a clock and optional exact completion, early-sweep request or diagnosed
-recovery. The coordinator must verify history/classification and use merge
-observation times, not candidate-controlled author dates. Rewritten,
-incomplete, duplicate, future-dated and time-reversed observations fail
-closed. State pins the observed tip, prefix fingerprint (including code/scope
-classification and merge times) and observation clock. Later events must
-append to that exact prefix; stale/truncated history and clock rewind cannot
-erase previously observed debt. The bootstrap root remains fixed; history
-compaction needs a separately verified checkpoint transition. History includes documentation commits, but only code merges incur
-runtime coverage debt.
+Actions proof matches repository/head repository, run ID, attempt 1, event,
+workflow ID/path, frozen target/control/policy/scope, unique intent title and
+actual dispatcher/triggering actor. All target execution files must match the
+approved closure. Complete attempt-specific job enumeration must have unique
+IDs/names, exact run/attempt/head and only approved jobs. Every applicable scope
+requires successful completed jobs, assigned runners with approved labels,
+and successful required steps. Skips, missing jobs/steps, unknown scopes,
+incomplete enumeration and reruns are not full proof. Compatibility is explicitly
+not applicable only when the frozen cumulative diff establishes that fact.
+Release/main candidate evidence remains #1104's responsibility.
 
-A dispatched sweep freezes its ID, old watermark, target and approved
-control revision/digest and cumulative compatibility requirement. The caller
-receives a value copy. New history
-cannot move an active target, replace its ID or cancel it. At most one
-pending cumulative target represents later uncovered code; it is a plan,
-not a second allocated runner. After completion, debt is recomputed before
-dispatching any successor. An older success clears only its covered prefix,
-retaining the count and original age of newer debt. Empty, already-covered
-and documentation-only ranges allocate no sweep, including on explicit
-early requests. A documentation-only tail does not duplicate an active run.
+Integration history follows actual immutable first-parent commit objects and
+associated merged PR records. Debt age uses GitHub's `merged_at`, never candidate
+commit timestamps or workflow inputs. Complete compare enumeration is required;
+its 300-file cap fails closed. Previously stored authenticated prefixes are
+retained and only new suffixes fetched. Each operation has a signed bounded API
+request budget; exhaustion cannot grant coverage. The separate local Git-object
+selector below handles uncapped complete tree diffs.
 
-Completion must match the entire frozen tuple. The future trusted Actions
-adapter must first verify exact run/attempt/head/control provenance and all
-applicable full scopes. Linux and macOS must each be `success`. Compatibility
-is required only when the trusted cumulative classification frozen before
-dispatch selects it; then it must also be `success`. Otherwise the adapter
-must explicitly report `not_applicable`, never invent successful execution.
-Partial, missing, skipped, cancelled or failed applicable results retain the
-watermark and close admission. They cannot authorize a release. Candidate
-and actual-main provenance remain separately owned in #1104.
+## Serialized persistence and recoverable dispatch
 
-Limits bound uncovered changes and age. The lead time is the measured
-queue/runtime allowance; dispatch becomes due before the age ceiling or
-one change before the count ceiling. At either ceiling, code admission
-closes even if cron is late or a sweep is still executing. A failed sweep
-does not automatically retry on pushes/ticks: recovery requires an explicit
-responsible-owner identity and concrete diagnosis from the trusted caller.
-This is an audit boundary for the existing owner, not another permission
-question. The owner must establish actual identity in the future adapter.
+`OpenStore` creates a dedicated private SQLite file with an application ID,
+WAL and synchronous FULL. It refuses unrelated/permissive files and symlinks;
+it never replaces an existing database. An interrupted initial database creation
+that cannot prove identity fails closed and needs owner diagnosis. Candidate
+write access to this file or coordinator credentials is outside the trust model.
 
-State persistence is deliberately outside this pure reducer. Before wiring
-it to Actions, implement serialized compare-and-swap storage/dispatch so two
-coordinators cannot allocate the same transition twice. Control identity
-changes cannot reuse the old ledger: transition through a newly proven
-watermark under the selected approved identity. Do not reset to an arbitrary
-head or copy old green results into a new policy scope.
+`BEGIN IMMEDIATE` and version CAS serialize admission, current transaction clock,
+policy/root expiry, observation freshness, coverage, failure and outbox creation
+across independent coordinator handles. Observations come only from sealed
+stored snapshots and verified API data. Count/age/lead fences apply even when
+scheduling is late or another proof is running. High risk requests early coverage.
+One unique active intent and one cumulative pending range are retained; empty,
+docs-only and already-covered ranges create no sweep. An older success clears
+only its prefix; newer debt keeps its count and original merge age. Failures
+retain debt; responsible-account authentication and diagnosis are required for
+recovery. They do not waive provider, merge or publication authority.
 
-## Evidence and remaining integration
+The same transaction commits a frozen intent with a random ID before dispatch:
 
-Run `go test ./internal/cipolicy -count=1`. The tests use a fixed clock,
-synthetic integration histories and a temporary Git repository; they start
-no terminal, tmux, provider, browser or network service. Assertions cover
-approved-vs-candidate control, rollback, malformed/unknown/expired fallback,
-metadata, frozen/replayed/moved completions, cumulative pending targets,
-older-success debt, deduplication, count/age/late-schedule fences, failure
-and recovery. These are component proofs, not Actions or release validation.
+1. `prepared`: safe preflight verifies the dispatcher and target execution
+   closure, creates/reconciles a deterministic `ci-sweeps/<intent-hash>` ref at
+   the frozen target, and constructs/budgets the HTTP request. Ref creation is
+   idempotently reconciled by its unique name; refs are never moved or deleted.
+2. `uncertain`: a serialized claim is committed before the single workflow POST.
+   Only its winning coordinator sends. Crash/lost response/restart does not
+   blindly repeat the POST. Reconciliation filters the fixed ref and target,
+   checks full provenance and binds exactly one observed run. Multiple matches
+   quarantine; missing visibility remains uncertain and closes admission.
+3. `bound`: completion must match the persisted run/attempt and frozen tuple.
+   A completed proof becomes `done` in the same transaction as debt advancement.
+   A prepared intent superseded by an explicit control switch is recorded as
+   `retired`; it is never represented as an executed or successful proof.
 
-Remaining #1103 work is the trusted Actions/history adapter, atomic durable
-coordination, changed-package/reverse-dependency/smoke selection, and explicit
-owner-compatible routing/Done integration. Activation requires compatible
-phase-one adoption and reviewed adapter evidence; existing test repairs stay
-in #965/#1100/#1105. #1104 and the existing operator owner retain frozen
-candidate/main promotion and upgrade/Pages compatibility. No arbitrary
-sample-count or repeated full-suite rehearsal is required for these pure
-components. Refresh only evidence affected by later changes.
+This is not an external Actions exactly-once guarantee. A crash after the
+uncertain commit but before sending cannot be distinguished safely from a lost
+response. Without a uniquely matching run, admission stays closed; there is no
+timeout retry, cancellation of the sole proof, or claimed automatic recovery.
+Expired policy blocks new admission/dispatch but still allows an authenticated
+already-bound proof to finish, then an explicit approved control transition.
+
+## Conservative complete-diff selection
+
+`CompleteDiff` requires immutable base/head IDs, verifies Git object type and
+SHA-1/SHA-256 content hashes, and walks both complete trees. It does not checkout
+candidate files, execute their tools/hooks, or use their diff drivers. Renames
+are conservative deletion plus addition, retaining both paths. Invalid objects,
+unknown/status inputs, incomplete enumeration, missing dependencies or invalid
+Go source escalate to full/high risk.
+
+Only explicitly ordinary version/chat utility files receive targeted Go
+selection. New/unknown Go paths, authority/plugin/runner/process changes,
+policy/dependency inputs, executable documentation contracts and captures stay
+full/high risk. Docs exemptions are narrow prose/site paths; protocol, plugin,
+configuration and policy/testing documents are executable or gate contracts.
+
+`Select` derives the complete diff itself and parses imports from both verified
+base and head trees, including tests and all platform files. It selects changed
+packages and transitive reverse dependencies across both graphs, plus compiled
+cross-module smoke packages. Deletion/rename cannot hide old importers. Missing
+smoke packages or uncertain graphs select full coverage. Candidate labels and
+policy edits never choose this classifier. This does not authorize routing
+selected tests into a live partial gate; that integration remains explicit work.
+
+## Validation and compatible continuation
+
+Focused tests cover signed-root and actual-review rejection, provenance and
+executed-step/runner completeness, authoritative history, request bounds,
+concurrent coordinators, CAS conflicts, commit/send crash boundaries, lost
+responses/restarts, fixed IDs/ref dispatch, stale completions, newer debt,
+clock/expiry/age fences, scope refresh, immutable complete diffs, reverse
+imports, cross-module smoke and conservative escalation. HTTP tests derive
+records from real public API captures; explicitly mutated positives are labelled.
+A separate read-only live probe checks actual repository/ancestry/merge-time
+parsing and rejects the known partial draft run. It establishes no approval,
+dispatch, release/main proof or active configuration. No host tmux tests run.
+
+The next compatible increment must wire a trusted coordinator entry point and
+owner-compatible admission/Done route, prove execution-closure and dispatch
+contract against actual Actions, and preserve current main PR targets, upgrade
+requirements, gates and provider reviews. This is runnable work under #1103,
+not a new permission stage. Parent compatibility must be proved before adoption;
+activation stays off meanwhile. #1104 and existing operator owners retain frozen
+release-candidate/main provenance, publication and operator checks. Exact final
+ready-head and actual merged-main full CI remain required before claiming a
+merged/complete rollout. No unchanged queued macOS run is retried.
