@@ -1,7 +1,8 @@
-# Native listener integration and pending acceptance
+# Native listener acceptance and integration map
 
-Issue #1071, draft PR #1115. The transport, daemon and HTTP integration are
-implemented for review. This is not complete desktop support. No Electron app,
+Issue #1071, PR #1115. The transport, daemon, HTTP and native page bootstrap
+are implemented. Completion requires the review and CI evidence described below.
+This is the first listener step, not complete desktop support. No Electron app,
 installer, shipped configuration field, control operation, event encoding or
 existing golden file changes are included.
 
@@ -39,10 +40,11 @@ paths. No Runner production code was edited.
 
 This is a limited supervisor handoff, not a release of other owners' hunks.
 #1003 reports no ownership/reservation/unpublished producer delta. Immediately
-before editing, #1118 head `5b8dcf01bf61198940a4ac32eb685f6ddb9aacb5` changed
+before the Terminal edit, #1118 head `5b8dcf01bf61198940a4ac32eb685f6ddb9aacb5` changed
 only Core's adapter-capability field and selected-agent research preflight;
 its published reservation does not include Terminal/Runner producer work.
-Those hunks are disjoint and preserved. Other owner tests, branches and review
+Those hunks are disjoint and are now present in main `4e54aab0`; they remain
+preserved in the clean prospective merge. Other owner tests, branches and review
 gates are retained without imports or overwrites.
 
 ## Private transport
@@ -76,9 +78,9 @@ inheritance-only grants. Deny ACEs are permitted. Without cgo, Darwin refuses
 native access with ErrACLUnavailable. Existing Darwin artifacts use
 CGO_ENABLED=0 and therefore cannot provide this transport. The supervisor
 explicitly accepted keeping that fail-closed behavior: no build-setting change
-or additional maintainer decision is requested. Executed Darwin ACL/security
-acceptance remains missing; a cross-build is not evidence of usable native
-access.
+or additional maintainer decision is requested. The isolated hosted Darwin
+ACL/peer/cross-user and non-cgo refusal tests passed, as recorded below. This
+does not make a non-cgo distribution usable for native access.
 
 Close checks socket identity before unlinking. The OS-user boundary excludes
 concurrent namespace mutation by another process of the same UID; the embedding
@@ -111,21 +113,24 @@ require their signed bearer and their existing web recent-auth/passkey checks.
 No native bearer exists to copy to another listener.
 
 The existing page and its entry asset are delivered over native HTTP in tests.
-Fresh-origin bootstrap currently has no stored browser bearer and already
-emits the empty WebSocket session. However, `web/src/session.ts` still adopts
-stored credentials: the proposed minimum native bootstrap branch must ignore
-browser link/storage adoption on the fixed native origin. This source hunk and
-its necessary generated entry asset/index reference remain held pending
-explicit decisions from #1054/#1108. #1013 explicitly released only the native
-link/storage bypass, any needed entry initialization, and corresponding JS
-bundle/index script reference; its later source-preserving rebuild need not
-keep the same bundle hash. Its control StartUnlisted:true, native permissions
-and unlisted source/generated behavior stay protected. That release does not
-release #1054's AllThreads/Details/api/catalog entry rebuild or #1108's worker
-UI entry/CSS rebuild; neither owner's source/build hunk has been changed.
-Fresh narrow requests are recorded on each of those PRs. No page source,
-index, generated assets, stylesheet or workflow was edited. Real Electron
-custom-scheme fetch/SSE/duplex integration belongs to step 2 and is unverified.
+At the fixed native origin, `adoptSession()` clears its cached session and
+returns before adopting browser link/storage credentials. Browser bootstrap
+is unchanged; the existing native HTTP and WebSocket paths send no bearer and
+an empty first WebSocket session. The isolated bootstrap regression fails
+without this branch (three native failures, ten browser passes) and passes
+all thirteen cases with it. The existing main entry already waits for adoption
+before rendering, so `main.tsx` needs no change.
+
+#1013, #1054 and #1108 explicitly released this source branch, isolated tests,
+the corresponding JS entry rebuild and index.html line 8 script reference.
+Both page owners permit #1115 first and a later source-preserving rebuild and
+re-hash; no hash is pinned. #1054 AllThreads/Details/api/catalog source,
+#1108 UI/worker source and CSS, index.html line 9 stylesheet reference, and
+#1013 unlisted source/generated behavior remain protected. A disposable
+baseline build matched the previous bundle byte-for-byte; unminified old/new
+entries differ only by the four executable guard lines. Every other generated
+file is identical. Electron custom-scheme fetch/SSE/duplex integration belongs
+to step 2; it is not a prerequisite for this listener issue.
 
 ## Shared hunk preservation
 
@@ -147,22 +152,29 @@ No donor branch was imported, merged, overwritten or rearranged. Preserve:
   join, in their existing positions before their dependencies close.
 - #1118 settings-free research preflight assignment.
 
-These pending owner hunks are not imported into this PR. Each owning PR must
-recheck the latest main and keep its own tests/review/CI gates when integrating.
+Pending owner hunks are not imported into this PR; already merged main hunks
+are preserved. Each owning PR must recheck the latest main and keep its own
+tests/review/CI gates when integrating.
 The current integration order is #1115 → #1109 → #967 → #968.
 
-## Evidence and remaining acceptance
+## Acceptance evidence
 
-| Issue acceptance criterion | Current evidence / remaining gate |
+| Issue acceptance criterion | Implementation and scoped evidence |
 | --- | --- |
-| Private socket, ownership/mode/link/long-path and cross-user refusal | Transport guard tests pass locally; executed Darwin ACL and privileged cross-user evidence are missing. |
+| Private socket, ownership/mode/link/long-path and cross-user refusal | Transport guard tests cover private paths and discovery; hosted Linux/macOS cross-user and Darwin ACL/kernel-peer/non-cgo refusal tests pass at exact `655b4b08`. |
 | Owner Caller only by listener identity | Unix HTTP/daemon fixtures and separate authority review cover this boundary; TCP/header/bearer promotion is refused. |
-| Existing page, reads/streams/writes/operate and native bootstrap | HTTP/asset and API/stream/WS fixtures pass; nested core child joins are repaired/tested; page bootstrap shared build remains held by #1054/#1108. |
+| Existing page, reads/streams/writes/operate and native bootstrap | HTTP/asset, API/stream/resume/operate/attach and shutdown fixtures pass; held-child tests cover nested producer joins; native bootstrap and browser regression tests pass with the narrowly released entry rebuild. |
 | Host/Origin/method/route/isolation and browser sign-in | Hostile requests fail; complete dashboard package and focused parallel-browser daemon tests cover browser regressions. |
 | Busy incompatible root/version discovery without lock deletion or duplicate daemon | Transport binding tests and disposable daemon duplicate/version/restart fixtures cover this. |
-| Public formats and tests that fail without guards | No control/event wire change; private HTTP setup is specified above; transport and HTTP overlay records prove behavioral guard failures. |
+| Public formats and tests that fail without guards | No control/event wire change; private HTTP setup is specified above; transport, HTTP and Terminal overlay records prove 13, 14 and 3 behavioral guard failures respectively. |
 
-These are scoped evidence statements, not an approval of full acceptance.
+These scoped results support all six implementation conditions. Full supported-
+platform daemon/HTTP/page execution remains subject to the normal ready CI
+contract; draft skips do not count. Independent implementation and authority
+audits of `655b4b08` against main `4e54aab0` found no code correction needed.
+The prospective merge tree `412042d5` preserves the released daemon/Terminal
+hunks and current main's owner changes. Final immutable-head confirmation and
+the actual merge-main checks are separate completion evidence.
 
 `validation.json` records the transport component's source hashes, focused
 serial/race results and 13 behavioral guard-removal failures at its component
@@ -180,6 +192,9 @@ Reproduce with `python3 docs/notes/desktop-listener/check_terminal_guards.py`.
 Its fixtures use only disposable in-process metadata/fake producers and start
 no agents or host processes. Older records retain their original component
 boundaries; the new record supersedes their previously unmet nested-child gate.
+All 28 recorded source hashes still match at `655b4b08`. Historical staged
+limitations in these records are superseded by this map and the linked proof,
+not rewritten or rerun as new evidence.
 
 The daemon fixtures run no agents, chat services or tmux. They exercise explicit
 startup, separate owner Caller, parallel browser sign-in, busy/incompatible
@@ -187,25 +202,34 @@ lock/discovery preservation, shutdown and restart. HTTP fixtures exercise page
 and asset delivery, reads, writes, resume positions, streams, operate/attach,
 rejection/isolation and held API/producer joins (including HEAD/disconnect).
 
-The cross-user fixture requires an already authorized privileged isolated
-runner. It never invokes sudo or alters accounts and skips locally, so
-cross-user acceptance remains unmet. Darwin libc/ACL/mount fixtures have not
-executed here. No real Mac, local tmux/full suite, production/configuration,
-service, credential or host operation is part of this work.
-
-The minimum page/build releases and native bootstrap are implemented. The
-maintainer now authorizes the separate `native-listener-proof.yml` workflow:
+The cross-user fixture requires an authorized privileged isolated runner. The
+fixture itself never invokes sudo or alters accounts and skips without that
+environment. The maintainer authorized `native-listener-proof.yml`:
 only PR #1115, standard disposable Linux/macOS runners, exact PR head checkout,
 ordinary-user Darwin ACL/kernel-peer/non-cgo checks and elevation of only the
 compiled cross-user fixture with an empty environment. It uses the PR event,
-not an unregistered dispatch. Named PASS results without skips must be recorded;
-adding the workflow or compiling a test binary is not executed acceptance.
-Existing draft/full CI and policy are unchanged.
+not an unregistered dispatch. [Run 46155069781](https://github.com/yousan/hataori/actions/runs/46155069781)
+passed on attempt 1 at exact `655b4b08a05f1c50dd0151cfc59c7e6879c41310`.
+The PR event, head checkout and logs prove execution of the unmerged workflow;
+existing draft/full CI and policy are unchanged.
 
-Still required for #1071: executed supported-platform ACL/cross-user security
-acceptance; fresh final independent Codex implementation and authority reviews;
-full required Linux/macOS CI on the final head and exact main merge SHA; merge
-and issue closure. Issue #1071 specifies Codex review and forbids running Claude.
+| Standard hosted runner | Named tests executed without skips |
+| --- | --- |
+| Linux, ubuntu-latest | `TestNativeCrossUserBoundary` (0.05 s) |
+| macOS, macos-latest | `TestDarwinACLGrantRefusesPrivatePaths` (0.10 s; root/state/discovery/socket/ancestor/runtime), `TestKernelPeerUID` (0.00 s), `TestNativeCrossUserBoundary` (0.03 s), `TestDarwinWithoutACLVerifierRefuses` (0.00 s) |
+
+Both job logs print the exact SHA and runner OS. No command/permission error
+occurred. CGO-enabled compilation and ordinary-user Darwin checks ran before
+the single elevated compiled cross-user test; that fixture uses only scratch
+paths and UID/GID 65534 verifier children. The non-cgo Darwin refusal compiled
+and ran separately without elevation. [Detailed run/job evidence](https://github.com/yousan/hataori/pull/1115#issuecomment-7240758421)
+is retained rather than rerunning unchanged tests. The privileged fixture
+proves its isolated owner/foreign-UID combination, not every user combination.
+
+Completion of #1071 requires final independent Codex implementation and
+authority reviews, full required Linux/macOS CI on the final head and exact
+main merge SHA, merge and issue closure. Issue #1071 specifies Codex review and
+forbids running Claude.
 Earlier references here to an additional mandatory Claude/provider gate had no
 PR-specific primary source and do not establish one. Other PRs retain their own
 explicit review requirements. Draft static/web/cross-build successes are not
