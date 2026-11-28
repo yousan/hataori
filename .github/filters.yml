@@ -1,0 +1,15 @@
+# With predicate-quantifier: every, a file is code when no docs exclusion
+# matches. Root-only Markdown is deliberate: package .md can be embedded
+# instructions or test fixtures. Both workflows OR policy back into code.
+code:
+  - '!*.{md,markdown,MD,MARKDOWN}'
+  - '!docs/**'
+  - '!site/**'
+  - '!LICENSE'
+policy:
+  - '{.github/**,AGENTS.md,CLAUDE.md,docs/testing.md,docs/design/ci-policy.md}'
+# Keep the existing compatibility scope, with conservative escalation for
+# dependencies and CI/contribution policy. Unknown paths still get both OS
+# suites through code, even when they do not affect the tmux matrix.
+tmux:
+  - '{internal/holder/tmux/**,internal/hostterm/**,internal/runner/closed_terminal_test.go,go.mod,go.sum,.github/**,AGENTS.md,CLAUDE.md,docs/testing.md,docs/design/ci-policy.md}'

@@ -5,6 +5,36 @@ development feedback, integration sweeps and immutable release gates. Phase 1
 keeps full applicable ready-PR/main validation; later profiles and branch or
 operator migrations are explicitly gated proposals.
 
+## Draft, ready and merge checks
+
+Draft code PRs run `check` (format, vet, build and test compilation with no
+execution), `build-macos` and `web`. `test`, `test-macos` and the tmux matrix
+do not allocate runners while draft. Skips provide partial development
+feedback only: mark the PR ready before merging. `ready_for_review` triggers
+the applicable complete gates on that same head without another push;
+subsequent ready updates run them too. Returning to draft cancels superseded
+PR work. Batch fixes into reviewable pushes rather than repeatedly starting
+new runs for intermediate edits.
+
+The shared [filters](../.github/filters.yml) use the entire PR diff or pushed
+main range. Non-policy root Markdown, `docs/`, `site/` and `LICENSE` alone skip
+unrelated runtime/build jobs; policy overrides, package Markdown, fixtures,
+dependencies, generated assets and unknown paths remain code. Existing
+`test`, `test-macos`, `build-macos`, `web` and `tmux` job IDs remain; a skipped
+matrix has the aggregate `tmux` check, not ten executed version checks.
+Compatibility is selected from its complete path/dependency/policy diff;
+manual tmux dispatch retains its explicit revision/test inputs.
+
+During this transition, ready main-targeted PRs and applicable main pushes
+still run full Linux/macOS suites and selected compatibility checks. Cheap
+static checks run once before the full suites. Confirm the **ready event's**
+current-head run actually executed every applicable heavy gate, obtain every
+mandatory provider/authority review, and verify the separate actual main
+merge-SHA run after merge. Never merge on a draft's skipped-green result.
+Every main run keeps a separate concurrency group; Pages is unchanged.
+Future partial integration lanes and profiles are planned in the design,
+not installed by these draft optimizations.
+
 ## CI when no macOS runner is available
 
 Rerun a CI job by hand when GitHub cannot assign its hosted macOS runner

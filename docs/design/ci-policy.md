@@ -35,14 +35,22 @@ applicable full gates on the same head without another push. A later ready
 push starts them again. Job names remain stable; a draft skip is development
 feedback, never evidence of full validation or permission to merge.
 
-Documentation exemptions are an allowlist: root Markdown, `docs/`, `site/`
-and `LICENSE`. Package files, captured fixtures and embedded Markdown such
-as `internal/supervisor/layer.md` remain code regardless of extension.
-Unknown paths, dependencies, workflow/policy files and generated assets
-remain code. Evaluate the complete PR diff, or the entire pushed main range;
+Documentation exemptions are an allowlist: non-policy root Markdown,
+`docs/`, `site/` and `LICENSE`. Policy overrides take precedence: `AGENTS.md`,
+`CLAUDE.md`, `docs/testing.md`, this policy and `.github/` remain code even
+inside an otherwise exempt path. Documentation captures under `docs/` are
+documentation; runtime/test fixtures in package trees, and embedded Markdown
+such as `internal/supervisor/layer.md`, remain code regardless of extension.
+Unknown paths, dependencies and generated assets outside the documentation
+allowlist remain code. Evaluate the complete PR diff, or the entire pushed main range;
 renames include both old and new paths. The last docs-only commit cannot
 hide an earlier code change. Docs-only changes skip unrelated runtime and
 build jobs through job conditions, retaining their check names.
+
+A future required-check configuration must include the classifier/static
+checks or a result aggregator, not only runtime names that can be skipped
+after a dependency failure. Full workflow success and actual gate execution
+are the transition evidence.
 
 Before merging a main PR: mark it ready, wait for the applicable full gates
 on its final head and obtain its mandatory independent/provider/authority
@@ -55,14 +63,14 @@ flaky-test fixes. Never rerun a queued macOS job to improve its position.
 ## Target phases: development, integration, release
 
 The target separates development feedback from release authorization.
-An opt-in integration branch is proposed; `main` stays the default and the
+An opt-in integration branch (`develop` is the proposed name) is proposed; `main` stays the default and the
 operator's upgrade source until an explicitly approved compatible change.
 No open PR is silently retargeted. Until migration is enabled, the phase 1
 main workflow remains the effective policy, even if more expensive.
 
 | Stage | Checks and evidence | Boundary |
 |---|---|---|
-| Development | Format/static/compile, focused tests of changed packages and importers, relevant web checks, regression tests and risk-specific review | Feedback identifies the exact head, risk tier and checks actually executed; no release claim |
+| Development | Format/static/compile, tests of changed packages and reverse dependencies, relevant web checks, cross-module smoke/regression tests and risk-specific review | Feedback identifies the exact head, risk tier and checks actually executed; no release claim |
 | Integration | The same targeted checks, plus bounded cumulative full sweeps over immutable integration SHAs | An integration merge is recorded as integrated, not released or deployable |
 | Release-candidate PR to main | Full Linux/macOS suites, applicable full tmux matrix, web reproducibility, cross-builds, regression evidence and mandatory reviews on a frozen candidate | No release PR merges on partial, skipped, stale or unrelated results |
 | Main promotion | Actual merged SHA receives the existing full checks; verify candidate identity and operator checks before upgrade | Keep exact merge-SHA evidence and the CI-green main upgrade contract |
@@ -75,8 +83,8 @@ If classification is uncertain, use the higher tier.
 - Documentation: only the phase 1 allowlist; no runtime or unrelated build
   claims. Static-site Pages checks retain their existing independent policy.
 - Ordinary code: focused regression tests, affected packages and importers,
-  format/static/compile and relevant web checks on development/integration
-  PRs. Full integration sweeps bound what these checks miss.
+  format/static/compile, relevant web checks and existing cross-module smoke
+  tests on development/integration PRs. Full integration sweeps bound what these checks miss.
 - High risk: working-directory removal/reset, protocol/state migration,
   authentication/authority, process ownership/cleanup, host terminals and
   transport, dependencies, generated/embedded assets, CI/policy changes or
@@ -91,24 +99,33 @@ checks. Their existing authorized owners supply those checks separately.
 
 ### Bounded integration sweeps
 
-Each sweep records last successful integration SHA G and frozen target H,
-and validates the cumulative G..H changes. New commits cannot mutate H.
-Full OS suites cover the target; compatibility selection considers the
-whole cumulative range, including dependencies and policy changes.
+Track coverage of cumulative integration changes, not the number of runs.
+A sweep records last completely covered integration SHA G and frozen target H,
+and validates G..H. New commits cannot mutate H. Full OS suites cover H;
+compatibility selection considers the entire range, including dependencies
+and policy changes. Reuse existing same-SHA full results with matching
+base/tree, workflow, dependency and check scope; an empty or fully covered
+range never starts another sweep.
 
-Allow one active full sweep and at most one pending successor for integration
-only; the successor may absorb newer integration heads. Never cancel the
-active sweep merely because development continued. Main runs and frozen
-release gates are never coalesced. A release candidate always needs its own
-complete immutable gate, regardless of the latest integration result.
+In stable mode, a full ready integration-PR result may discharge the same
+coverage debt if its tested merge tree, base/head and workflow identity match
+the integrated result. If identity cannot be proved, retain the debt. A green
+older H clears only commits it covers; it never resets the count or age of
+newer uncovered commits. Measure age from the oldest uncovered code merge.
+Candidate/main checks remain independent where the current exact-SHA upgrade
+contract requires them; do not deduplicate by pretending different SHAs passed.
 
-A scheduler must enforce both a merge-count bound and an elapsed-time bound.
-If a bound is reached without a fresh successful sweep, pause further code
-integration until it passes. A delayed cron event is not proof of freshness.
-On sweep failure, pause affected integration and release promotion, keep the
-last green watermark, and assign the failure's existing owner. Bound initial
-triage to two diagnostic probes; further attempts need an explicit incident
-plan, rather than a retry loop or one fresh full run for every worker.
+Allow one active full integration sweep and at most one cumulative pending
+successor. Never cancel the only validating sweep just because code continued.
+Main runs and frozen release gates are never coalesced. Trigger only for
+uncovered work, ahead of its hard admission bound using observed p95 queue
+plus runtime. If a bound arrives before fresh complete coverage, pause new
+code integration until covered. A delayed cron is not proof of freshness.
+
+On sweep failure, pause affected integration and release promotion, retain
+the last green watermark and assign its existing owner. Diagnose the concrete
+check/revision and choose bounded probes against a stated hypothesis. More
+probes follow evidence, not a retry loop or one new full run per worker.
 
 ### Immutable release candidate
 
@@ -134,41 +151,64 @@ main validation. No deployment source is switched by this document.
 
 ## Changeable profiles (planned, not enabled)
 
-These are initial trial limits, not measured performance promises. Both
-profiles retain all high-risk and immutable release gates.
+Mode changes development cadence, never release quality or authority.
+These initial budgets are provisional and adjustable alongside measurement,
+not proven optima or waiting periods that prevent implementation.
 
-| Setting | Throughput trial | Stable/default fallback |
+| Setting | Throughput | Stable |
 |---|---|---|
-| Ordinary development/integration | Targeted checks; batch ready code pushes | Targeted checks plus full ready integration-PR suites |
-| Full sweep trigger | First of 8 code merges or 2 hours since last successful sweep | First of 2 code merges or 30 minutes |
-| Active/pending full sweeps | One active, one cumulative pending; pause on freshness bound/failure | Same bounds; prioritize repair and release evidence |
-| Release candidate and main | Full gates, no coalescing | Same full gates, no coalescing |
-| Trial lifetime | At most 7 days, explicit authority renewal | Persistent fallback; still reviewed weekly |
+| Ordinary development/integration | Targeted + reverse-dependency + cross-module smoke checks; batch ready code pushes | Broader early per-change tests, including full ready integration-PR suites where useful |
+| Uncovered integration debt | Initial ceiling: first of 10 code merges or 6 hours from oldest uncovered merge | Initial ceiling: first of 2 uncovered code merges or 2 hours; same-SHA full per-change evidence discharges debt |
+| Full sweep admission | One active, one pending, only for uncovered work; start before the ceiling using measured queue + runtime | Same deduplication; no extra timer sweep for an empty/already-validated range |
+| Release candidate and main | Full immutable gate and existing exact-main proof | Identical release boundaries |
+| Mode expiry/review | Initial seven-day expiry, responsible owner renews or stable fallback | Default fallback; review when volume/risk changes |
 
-A profile activation must be a reviewed, versioned repository policy change
-with owner, start, expiry, thresholds and rollback revision. Do not introduce
-a temporary variable, mutable secret toggle or paid/self-hosted runner to
-select a profile. Expiry without renewal falls back to stable; it cannot
-silently extend a throughput exception. The follow-up implementation must
-prove expiry behavior even if the scheduled sweep is delayed.
+The [observed #1067 ready run](https://github.com/yousan/hataori/actions/runs/45926062077)
+spent about 2h33 waiting for macOS and 26m
+executing; Linux took about 22m. Another recent PR started both OS jobs in
+under a minute (#1101). A 30-minute sweep ceiling would often stop integration
+before coverage could complete. The provisional longer debt budgets allow
+room for observed work without asserting a universal queue. Start measuring
+concurrently; revise count/time ceilings from actual uncovered debt, latency
+and escapes. Stable prioritizes earlier coverage at lower volume, not more
+identical runs. If actual p95 execution exceeds a budget, the fence stops
+admission; the owner changes the budget or repairs capacity rather than
+silently extending coverage freshness.
 
-Start with at least 48 hours and 20 ordinary changes of baseline measurements,
-plus three successful release-candidate rehearsals. The release authority
-and CI owner must agree that existing failures have owners, mandatory gates
-are available, sweeps meet their bounds and no severe escape remains open
-before opting into throughput. Lack of samples is lack of evidence, not a
-reason to treat an unmeasured profile as safe.
+Use a reviewed, versioned repository policy with visible active mode/reason,
+owner, start, expiry and rollback revision. Classification, profile selection
+and admission use a trusted already-approved control revision, never a PR's
+own label or edited policy. Candidate policy changes need validation under
+the existing trusted policy; they cannot self-activate a cheaper gate.
+Unknown, invalid or expired configuration falls back to stable or fails closed
+if stable cannot be established. No temporary variable, secret toggle or
+paid/self-hosted infrastructure is needed.
 
-Immediately return to stable and pause promotion for one data-loss,
-authority or protocol escape; two other escaped regressions in a rolling
-seven days; two missed sweep windows; or two failed candidate attempts for
-the same unresolved cause. Investigate rather than repeatedly re-reviewing
-unchanged code. Resume throughput only after the cause is repaired, at least
-48 hours of healthy stable sweeps and a fresh explicit authority decision.
+The responsible CI/operator owners may perform routine reversible rollout
+steps within the maintainer's authorization; do not invent a new question or
+approval stage for each branch/workflow/profile edit. Existing independent
+reviews and actual publication, money, destructive-operation and provider
+constraints remain distinct and unchanged. Prove expiry, late scheduling,
+coverage accounting, candidate/base integrity, missing-review rejection and
+rollback with focused invariant/event tests and the minimum end-to-end route
+evidence needed. Do not require 48 hours, 20 changes or three repeated full
+rehearsals merely to reach a count. Capture baseline alongside rollout; label
+small samples and unavailable data honestly.
+
+Return to stable and pause promotion for any severe data-loss, authority or
+protocol escape, an unresolved candidate integrity failure, repeated coverage
+budget breaches or a materially worse escape/repair trend. Initial incident
+thresholds and the seven-day review interval are tunable, not measured facts.
+The owner records the cause and evidence for repair before resuming throughput.
+Renew only when the ledger shows useful cost/latency or coverage improvements
+against baseline without an unacceptable reliability regression; absence of
+samples is uncertainty, not claimed savings.
 
 ## Measurements and review cadence
 
-Store a sanitized evidence ledger keyed by policy/profile and immutable SHA:
+Start with one small PR/issue evidence summary per accepted change plus
+existing Actions metadata, keyed by policy/profile and immutable SHA. Do not
+build a large telemetry subsystem before learning what changes the decision:
 
 - Queue wait, elapsed and billable runner minutes by OS/check; p50/p95
   ready-to-integrated and candidate-to-green time. Separate cancellation,
@@ -196,24 +236,31 @@ review repeatedly. A changed base that affects the boundary invalidates the
 relevant review. Release authority still checks the final candidate; reuse
 never waives a mandatory provider review or another authority boundary.
 
-## Sequenced implementation and owners
+## Actionable rollout and owners
 
-Owners below are accountable roles, not permission to modify operator state.
-Each follow-up needs its own issue, claim, branch, PR and exact acceptance
-evidence. Operator-specific work belongs in the operator tracker.
+These are work packages, not six serial approval barriers. Each needs an
+issue, claim, branch/PR and testable acceptance. Owners continue runnable
+work under existing authorization and coordinate real cross-repository
+boundaries. Operator-specific changes stay in the operator tracker. No step
+silently retargets an open PR, changes the default/upgrade source or rewrites
+history.
 
-| Order | Owner | Work and binary acceptance |
+| Work | Accountable owner and next action | Acceptance and relationship |
 |---|---|---|
-| 1 (#1101) | CI maintainer | Design reviewed for cost/quality and release-authority compatibility; phase 1 draft/ready/docs behavior proven with Actions; exact ready head and main full gates green; Pages unchanged |
-| 2 | CI maintainer with release authority | Add an authorized metrics ledger, risk classifier and bounded-sweep scheduler in shadow mode; prove cumulative ranges, count/time admission fence, delayed schedule handling and one-active/one-pending behavior without reducing current main checks |
-| 3 | Release authority and worker-instruction owners | Approve an opt-in integration branch and worker Done contract; inventory every open main PR and its mandatory review gates; retain existing targets unless each owner agrees; no default branch or upgrade-source change; prove unreleased integration cannot be installed as a release |
-| 4 | CI maintainer with release authority | Implement frozen candidate PRs, tuple/artifact ledger and race-safe promotion admission; three rehearsals reject moved base/head/policy and missing provider reviews, and verify actual main merge identity/full CI before operator use |
-| 5 | Operator owner with release authority | In the operator tracker, prove compatibility of upgrade and Pages/operator checks against the release route; explicit source-change approval if ever needed; retain known-good main and rollback evidence; no automatic deployment from a partial integration result |
-| 6 | CI maintainer with release authority | Activate one time-limited profile only after steps 2–5 and baseline criteria pass; prove stable fallback/expiry, incident pause and rollback, then measure the seven-day trial before renewal |
+| Compatible delivery (#1101) | Current CI maintainer: merge the reviewed design and phase 1 | Actual draft -> ready same-head proof; applicable ready/main full gates green; docs exemptions conservative; Pages unchanged |
+| Adjustable development/integration lane ([#1103](https://github.com/yousan/hataori/issues/1103)) | CI maintainer, with existing worker-instruction owner: implement trusted risk/profile selection, targeted + smoke checks and debt-aware bounded sweeps; start lightweight measurement concurrently | Test self-weakening/unknown/expired policy, stale/late sweep admission, cumulative debt and no duplicate coverage; opt-in integration routing/Done wording explicit per owner; open main PRs retain targets/gates unless their owner agrees |
+| Candidate and operator compatibility ([#1104](https://github.com/yousan/hataori/issues/1104)) | Existing release/operator owner, with CI maintainer: implement frozen candidate proof and race-safe promotion, coordinate worker Done and upgrade checks in the operator tracker | Reject moved base/head/policy and missing mandatory reviews; prove actual candidate/main identity and rollback; current main full checks/upgrade source and Pages operator checks remain until equivalent verification is implemented and tested |
 
-Until each prerequisite is accepted, it stays planned. Phase 1 does not claim
-the integration/release architecture is deployed. Revert phase 1 with a
-normal reviewed PR if it suppresses an applicable ready/main gate; preserve
-main run history and never use retries or a status rewrite to conceal that
-failure. Ongoing provider-specific approvals and operator/release authority
-remain effective throughout the migration.
+The last two work packages can progress together; promotion cannot use
+unproved candidate/operator invariants, but there is no arbitrary baseline
+waiting period. Start the reversible implementation and record its evidence;
+production rollout, publication and provider execution still follow their
+actual existing authorization boundaries.
+
+Phase 1 saves draft full suites and unrelated docs builds. Ready-main PRs
+and applicable main pushes still pay their current full-suite cost; do not
+claim the proposed integration/release savings are implemented. Revert phase 1
+with a normal reviewed PR if it suppresses an applicable ready/main gate.
+Never erase main history, rewrite statuses or retry unrelated failures to
+hide a policy defect. Later profile/branch rollout must update this document
+and the worker/operator contracts with the settings actually in use.
