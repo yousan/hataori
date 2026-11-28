@@ -15,8 +15,9 @@ const chatPageLimit = 50
 
 // ChatService is the daemon's history adapter. It must check the service's
 // actual thread parent and public type, including empty pages, and return
-// those facts in ChatPage. It must never fetch attachments. The #886
-// driver interfaces are adapted here only after their owner releases them.
+// those facts in ChatPage. It must never fetch attachments. Consumption of
+// the #886 driver API is released only after its review/capture/CI gates,
+// merge and exact-main CI; no driver branch is imported here.
 type ChatService interface {
 	ReadChat(context.Context, control.LinkRef, control.ReadChatRequest, int) (ChatPage, error)
 }

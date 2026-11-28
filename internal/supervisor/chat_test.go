@@ -246,3 +246,99 @@ func TestChatReadLimitValidationBeforeService(t *testing.T) {
 		t.Fatal(err, calls)
 	}
 }
+
+// Empty pages are not an end-of-history signal. Thread-list cursors are
+// opaque; message cursors can advance past notices without giving text.
+// These are normalized consumer fixtures, not captured service payloads.
+func TestChatEmptyPagesPreserveContinuationAndCommitBarrier(t *testing.T) {
+	for _, op := range []string{"list", "read"} {
+		t.Run(op, func(t *testing.T) {
+			const cursor = "opaque:{\"position\":\"next\"}"
+			calls, commits := 0, 0
+			svc := chatServiceFunc(func(_ context.Context, l control.LinkRef, q control.ReadChatRequest, n int) (ChatPage, error) {
+				calls++
+				if n != 50 || q.Op != op {
+					t.Fatalf("query=%+v, limit=%d", q, n)
+				}
+				page := ChatPage{Link: l, Public: true}
+				if calls == 1 {
+					if q.Before != "" || q.After != "" {
+						t.Fatal("initial query did not request latest")
+					}
+					if op == "list" {
+						page.Next = cursor
+					} else {
+						page.Before, page.After = cursor, "newer-notice"
+					}
+					return page, nil
+				}
+				if q.Before != cursor {
+					t.Fatalf("continuation was interpreted or lost: %q", q.Before)
+				}
+				if op == "list" {
+					thread := l
+					thread.Thread = "thread"
+					page.Threads = []ChatThread{{Link: thread, Public: true, Known: true, Name: "daemon title"}}
+				} else {
+					page.Messages = []ChatMessage{{Link: l, Message: chattext.Message{Client: l.Client, ID: "older-post", Author: "1", Kind: "person", Text: "older decision"}}}
+				}
+				return page, nil
+			})
+			api := ChatReads(nil, chatOwn, nil, chatPolicy(Act), svc, func(_ context.Context, sources []chattext.Reference) error {
+				commits++
+				if len(sources) != 0 {
+					t.Fatalf("unexpected outside sources: %+v", sources)
+				}
+				return nil
+			})
+			q := control.ReadChatRequest{Op: op}
+			if op == "read" {
+				q.Thread = "thread"
+			}
+			first, err := api.ReadChat(context.Background(), q)
+			if err != nil || calls != 1 || commits != 1 {
+				t.Fatalf("empty page skipped the barrier: %+v %v calls=%d commits=%d", first, err, calls, commits)
+			}
+			q.Before = first.Next
+			if op == "read" {
+				q.Before = first.Before
+				if first.After != "newer-notice" {
+					t.Fatalf("notice cursor lost: %+v", first)
+				}
+			}
+			second, err := api.ReadChat(context.Background(), q)
+			want := "daemon title"
+			if op == "read" {
+				want = "older decision"
+			}
+			if err != nil || calls != 2 || commits != 2 || !strings.Contains(second.Text, want) {
+				t.Fatalf("continuation: %+v %v calls=%d commits=%d", second, err, calls, commits)
+			}
+		})
+	}
+}
+
+func TestChatInvalidPagingNeverReadsOrCommits(t *testing.T) {
+	svc := chatServiceFunc(func(context.Context, control.LinkRef, control.ReadChatRequest, int) (ChatPage, error) {
+		t.Fatal("invalid query reached the service")
+		return ChatPage{}, nil
+	})
+	api := ChatReads(nil, chatOwn, nil, chatPolicy(Act), svc, func(context.Context, []chattext.Reference) error {
+		t.Fatal("invalid query reached the commit barrier")
+		return nil
+	})
+	for _, q := range []control.ReadChatRequest{
+		{Op: "read", Thread: "thread", Before: "a", After: "b"},
+		{Op: "read"},
+		{Op: "read", Thread: "thread", Archived: true},
+		{Op: "list", Thread: "thread"},
+		{Op: "list", After: "cursor"},
+		{Op: "read", Thread: "thread", Before: strings.Repeat("x", 513)},
+		{Op: "unsupported"},
+	} {
+		out, err := api.ReadChat(context.Background(), q)
+		if err == nil || out != (control.ReadChatAnswer{}) {
+			t.Fatalf("query=%+v returned %+v, %v", q, out, err)
+		}
+	}
+}
