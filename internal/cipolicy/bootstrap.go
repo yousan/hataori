@@ -46,7 +46,7 @@ func (a *Adapter) Bootstrap(ctx context.Context) (Baseline, error) {
 // Diagnose authenticates the responsible account; a supplied owner string alone
 // cannot clear failure. This grants no provider waiver or merge permission.
 func (a *Adapter) Diagnose(ctx context.Context, o Observation, reason string) (Observation, error) {
-	if strings.TrimSpace(reason) == "" {
+	if strings.TrimSpace(reason) == "" || len(reason) > 4096 {
 		return Observation{}, fmt.Errorf("diagnosis required")
 	}
 	var who Identity

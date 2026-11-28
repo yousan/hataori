@@ -26,7 +26,7 @@ func Bundle(repo, revision, binary string) (ActivationBundle, error) {
 	b := ActivationBundle{Status: "UNSIGNED / INACTIVE / actual dispatch unproved", Revision: revision, CoordinatorDigest: binary,
 		Missing:  []string{"approved merged control and immutable policy bytes", "independently provisioned authority public key/signature", "actual repository/workflow/dispatcher/owner/reviewer identities", "default-branch workflow registration and frozen-ref dispatch evidence", "actual applicable full bootstrap run/attempt/tuple", "parent compatibility and owner opt-in/Done adoption"},
 		Files:    []string{"authority.pub (base64 public key)", "root.json (canonical signed bytes)", "root.sig (base64 detached signature)", "dispatcher.token (private external credential)", "coverage.sqlite (created once; retain on rollback)"},
-		Commands: []string{"ci-coordinator bootstrap AUTHORITY_DIR", "ci-coordinator observe AUTHORITY_DIR", "ci-coordinator admission AUTHORITY_DIR --pull N", "ci-coordinator pump AUTHORITY_DIR", "ci-coordinator status AUTHORITY_DIR", "ci-coordinator control-transition AUTHORITY_DIR", "ci-coordinator done AUTHORITY_DIR --pull N", "ci-coordinator summary AUTHORITY_DIR --run N"}}
+		Commands: []string{"ci-coordinator bootstrap AUTHORITY_DIR", "ci-coordinator observe AUTHORITY_DIR", "ci-coordinator admission AUTHORITY_DIR --pull N", "ci-coordinator pump AUTHORITY_DIR", "ci-coordinator status AUTHORITY_DIR", "ci-coordinator control-transition AUTHORITY_DIR", "ci-coordinator recover AUTHORITY_DIR --reason DIAGNOSIS", "ci-coordinator done AUTHORITY_DIR --pull N", "ci-coordinator summary AUTHORITY_DIR --run N"}}
 	if !digestOK(binary) {
 		return b, fmt.Errorf("coordinator binary digest required")
 	}

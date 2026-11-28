@@ -23,6 +23,7 @@ ci-coordinator admission AUTHORITY_DIR --pull N
 ci-coordinator pump AUTHORITY_DIR
 ci-coordinator status AUTHORITY_DIR
 ci-coordinator control-transition AUTHORITY_DIR
+ci-coordinator recover AUTHORITY_DIR --reason DIAGNOSIS
 ci-coordinator done AUTHORITY_DIR --pull N
 ci-coordinator summary AUTHORITY_DIR --run N
 ```
@@ -35,6 +36,18 @@ objects close bundle generation. Working-tree edits do not change its contents.
 The remaining commands use the real HTTPS GitHub adapter and durable store;
 they are not watchers or fixtures. JSON errors expose closed categories without
 raw errors, paths, response bodies, credentials or authority payloads.
+
+`recover --reason DIAGNOSIS` explicitly handles a diagnosed failed sweep. It
+refreshes authenticated control/history and verifies the credential's actual
+`GET /user` numeric identity and login against the approved responsible owner.
+A dispatcher credential for a different account cannot recover. Empty/oversized
+diagnoses, expired authority, unknown control and a still-active or ambiguous
+sole proof fail closed. The diagnosis is a nonsecret audit entry in the same
+serialized CAS as recovery; root, watermark, cumulative debt and old intents
+remain. A new fixed-ID proof is only prepared, not sent: recovery has no rerun,
+cancellation or dispatch side effect. Normal admission/provider/Done/full-proof
+requirements still apply. Supply the responsible credential through the existing
+external trusted boundary; this command does not issue or replace credentials.
 
 `AUTHORITY_DIR` is a dedicated private directory outside Git checkouts. Its
 files are `authority.pub` (base64 Ed25519 public key), `root.json` (exact canonical

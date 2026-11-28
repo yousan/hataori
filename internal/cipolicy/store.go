@@ -102,6 +102,7 @@ func OpenStore(file string) (*Store, error) {
 			`CREATE TABLE IF NOT EXISTS admission (id INTEGER PRIMARY KEY, pull INTEGER NOT NULL, head TEXT NOT NULL, base TEXT NOT NULL, grant_digest TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('reserved','integrated','withdrawn')), expires TEXT NOT NULL)`,
 			`CREATE TABLE IF NOT EXISTS admission_grant (pull INTEGER NOT NULL, head TEXT NOT NULL, base TEXT NOT NULL, digest TEXT NOT NULL, expires TEXT NOT NULL, PRIMARY KEY(pull,head,base,digest))`,
 			`CREATE UNIQUE INDEX IF NOT EXISTS one_admission ON admission((1)) WHERE status='reserved'`,
+			`CREATE TABLE IF NOT EXISTS recovery (revision INTEGER PRIMARY KEY, owner TEXT NOT NULL, reason TEXT NOT NULL, control TEXT NOT NULL, authority TEXT NOT NULL, watermark TEXT NOT NULL, at TEXT NOT NULL)`,
 		} {
 			if _, err := c.ExecContext(context.Background(), q); err != nil {
 				return err
@@ -241,6 +242,11 @@ func (s *Store) Advance(ctx context.Context, version int64, o Observation) (Deci
 			return err
 		}
 		decision = d
+		if event.Recovery != nil {
+			if _, err := c.ExecContext(ctx, "INSERT INTO recovery VALUES(?,?,?,?,?,?,?)", version+1, event.Recovery.Owner, event.Recovery.Reason, snap.State.Control, snap.State.Authority, snap.State.Watermark, event.Now.UTC().Format(time.RFC3339Nano)); err != nil {
+				return err
+			}
+		}
 		if o.event.Completion != nil {
 			if _, err := c.ExecContext(ctx, "UPDATE intent SET status='done' WHERE id=? AND status='bound'", o.event.Completion.Sweep.ID); err != nil {
 				return err

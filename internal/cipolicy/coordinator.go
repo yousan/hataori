@@ -39,6 +39,16 @@ type Outcome struct {
 }
 
 func (c *Coordinator) Execute(ctx context.Context, operation string, pull int, run int64) (Outcome, error) {
+	return c.execute(ctx, operation, pull, run, "")
+}
+
+// Recover authenticates the responsible account and records a diagnosis through
+// the existing CAS. It preserves debt and prepares proof; it never dispatches it.
+func (c *Coordinator) Recover(ctx context.Context, reason string) (Outcome, error) {
+	return c.execute(ctx, "recover", 0, 0, reason)
+}
+
+func (c *Coordinator) execute(ctx context.Context, operation string, pull int, run int64, reason string) (Outcome, error) {
 	out := Outcome{Operation: operation, RoutingEnabled: c.adapter.root.RoutingEnabled}
 	if operation == "summary" {
 		v, err := c.adapter.Summarize(ctx, run)
@@ -77,10 +87,17 @@ func (c *Coordinator) Execute(ctx context.Context, operation string, pull int, r
 		if out.Policy.FullOnly {
 			return out, fmt.Errorf("policy closed")
 		}
-	case "observe", "admission", "done", "control-transition":
+	case "observe", "admission", "done", "control-transition", "recover":
 		observation, err := c.adapter.Observe(ctx, snap)
 		if err != nil {
 			return out, err
+		}
+		if operation == "recover" {
+			observation, err = c.adapter.Diagnose(c.adapter.budget(ctx), observation, reason)
+			if err != nil {
+				return out, err
+			}
+			observation.event.Force = true
 		}
 		out.Policy = observation.control.selection.Report(c.store.clock())
 		if operation == "control-transition" {
@@ -242,13 +259,20 @@ func RunCLI(ctx context.Context, args []string, out io.Writer, binary string) in
 		return 0
 	}
 	if len(args) != 2 && len(args) != 4 {
-		writeCLI(out, Outcome{}, errors.New("usage: ci-coordinator OP AUTHORITY_DIR [--pull N|--run N]"))
+		writeCLI(out, Outcome{}, errors.New("usage: ci-coordinator OP AUTHORITY_DIR [--pull N|--run N|--reason DIAGNOSIS]"))
 		return 2
 	}
 	op, dir := args[0], args[1]
 	pull := 0
 	var run int64
-	if len(args) == 4 {
+	reason := ""
+	if len(args) == 4 && args[2] == "--reason" {
+		if op != "recover" || strings.TrimSpace(args[3]) == "" || len(args[3]) > 4096 {
+			writeCLI(out, Outcome{}, errors.New("recovery diagnosis required"))
+			return 2
+		}
+		reason = args[3]
+	} else if len(args) == 4 {
 		n, e := strconv.ParseInt(args[3], 10, 64)
 		if e != nil || n <= 0 {
 			writeCLI(out, Outcome{}, errors.New("positive identity required"))
@@ -264,8 +288,8 @@ func RunCLI(ctx context.Context, args []string, out io.Writer, binary string) in
 			return 2
 		}
 	}
-	allowed := map[string]bool{"bootstrap": true, "observe": true, "admission": true, "pump": true, "status": true, "control-transition": true, "done": true, "summary": true}
-	if !allowed[op] || ((op == "admission" || op == "done") && pull == 0) || (op == "summary" && run == 0) {
+	allowed := map[string]bool{"bootstrap": true, "observe": true, "admission": true, "pump": true, "status": true, "control-transition": true, "done": true, "summary": true, "recover": true}
+	if !allowed[op] || ((op == "admission" || op == "done") && pull == 0) || (op == "summary" && run == 0) || (op == "recover" && reason == "") {
 		writeCLI(out, Outcome{}, errors.New("invalid operation arguments"))
 		return 2
 	}
@@ -275,7 +299,12 @@ func RunCLI(ctx context.Context, args []string, out io.Writer, binary string) in
 		return 1
 	}
 	defer c.Close()
-	result, err := c.Execute(ctx, op, pull, run)
+	var result Outcome
+	if op == "recover" {
+		result, err = c.Recover(ctx, reason)
+	} else {
+		result, err = c.Execute(ctx, op, pull, run)
+	}
 	writeCLI(out, result, err)
 	if err != nil {
 		return 1

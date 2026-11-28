@@ -88,7 +88,12 @@ One unique active intent and one cumulative pending range are retained; empty,
 docs-only and already-covered ranges create no sweep. An older success clears
 only its prefix; newer debt keeps its count and original merge age. Failures
 retain debt; responsible-account authentication and diagnosis are required for
-recovery. They do not waive provider, merge or publication authority.
+recovery. The callable `recover --reason` operation refreshes observation,
+authenticates that actual account, and advances the same CAS without resetting
+watermark, debt or old proof. Its nonsecret diagnosis/control/watermark audit is
+committed atomically with the replacement prepared intent. It does not POST,
+rerun or cancel Actions; a concurrent/second recovery cannot replace the sole
+active proof. They do not waive provider, merge or publication authority.
 
 The same transaction commits a frozen intent with a random ID before dispatch:
 
