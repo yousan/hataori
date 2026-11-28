@@ -729,7 +729,10 @@ no bot/forge/supervisor credential is copied to the resident.
 
 The combined setup and recovery path is documented in
 [First Linux worker](first-worker.md), with isolated acceptance evidence in
-[the first-worker gate](notes/first-worker/README.md).
+[the first-worker gate](notes/first-worker/README.md). The isolated fixture
+also verifies [owned SSH cleanup](notes/first-worker/cleanup.md) across main
+SIGKILL/restart and failed tests; these checks add no configuration field or
+actual OS reboot/macOS worker runtime evidence.
 Retained history currently has a 64 MiB per-run budget and at most 128 sources;
 exhaustion pauses the session rather than discarding codec reconstruction bytes.
 A read step drains up to 64 MiB per source before decoding later hooks; an

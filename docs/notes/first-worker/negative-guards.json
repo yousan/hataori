@@ -5,10 +5,10 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestFirstWorkerLostWriteReplyDedupAndCatchup (13.97s)",
+      "--- FAIL: TestFirstWorkerLostWriteReplyDedupAndCatchup (14.14s)",
       "first_worker_recovery_test.go:231: timed out waiting for all original worker turn ends committed",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t13.979s",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t14.159s",
       "FAIL"
     ]
   },
@@ -18,10 +18,10 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestFirstWorkerLostWriteReplyDedupAndCatchup (10.90s)",
+      "--- FAIL: TestFirstWorkerLostWriteReplyDedupAndCatchup (11.37s)",
       "first_worker_recovery_test.go:215: timed out waiting for unknown receipt blocks catch-up after restart",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t10.911s",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t11.385s",
       "FAIL"
     ]
   },
@@ -31,10 +31,97 @@
     "expected_failure": true,
     "exit_code": 1,
     "evidence": [
-      "--- FAIL: TestFirstWorkerRemovalPreservesSoleCopy (1.29s)",
+      "--- FAIL: TestFirstWorkerRemovalPreservesSoleCopy (1.11s)",
       "first_worker_recovery_test.go:471: removal accepted untracked sole-copy file",
       "FAIL",
-      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t1.303s",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t1.125s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "fixture process ownership",
+    "command": "go test -p 1 ./cmd/hataori -run ^TestFirstWorkerProcessOwnershipAndExitBarrier$ -parallel 1 -count=1 -timeout 150s",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestFirstWorkerProcessOwnershipAndExitBarrier (2.09s)",
+      "first_worker_cleanup_test.go:65: foreign owner accepted: <nil>",
+      "first_worker_cleanup_test.go:69: PID-only record accepted: <nil>",
+      "first_worker_cleanup_test.go:73: foreign fixture was stopped",
+      "first_worker_cleanup_test.go:97: foreign fixture lost its live child",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t2.109s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "fixture child exit barrier",
+    "command": "go test -p 1 ./cmd/hataori -run ^TestFirstWorkerProcessOwnershipAndExitBarrier$ -parallel 1 -count=1 -timeout 150s",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestFirstWorkerProcessOwnershipAndExitBarrier (2.09s)",
+      "first_worker_cleanup_test.go:82: cleanup returned before owned child exit",
+      "first_worker_cleanup_test.go:85: TERM-resistant child did not exercise escalation",
+      "first_worker_cleanup_test.go:93: reaped process was signalled again",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t2.121s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "fixture generation quiescence",
+    "command": "go test -p 1 ./cmd/hataori -run ^TestFirstWorkerGenerationWaitsForAuthorizedHandler$ -parallel 1 -count=1 -timeout 150s",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestFirstWorkerGenerationWaitsForAuthorizedHandler (0.59s)",
+      "first_worker_cleanup_test.go:280: generation cleanup returned before authorized handler finished: <nil>",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t0.605s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "fixture parent lease",
+    "command": "go test -p 1 ./cmd/hataori -run ^TestFirstWorkerSSHAuthorityRejectsForeignConnection$ -parallel 1 -count=1 -timeout 150s",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestFirstWorkerSSHAuthorityRejectsForeignConnection (1.04s)",
+      "first_worker_cleanup_test.go:217: foreign main generation was admitted",
+      "first_worker_cleanup_test.go:220: foreign main generation created an SSH child",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t1.062s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "fixture registration freeze",
+    "command": "go test -p 1 ./cmd/hataori -run ^TestFirstWorkerLateSSHDescendantExitEvidence$ -parallel 1 -count=1 -timeout 150s",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestFirstWorkerLateSSHDescendantExitEvidence (0.92s)",
+      "first_worker_cleanup_test.go:434: late SSH descendant evidence missing",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/cmd/hataori\t0.932s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "fixture procfs fallback",
+    "command": "go test -p 1 ./cmd/hataori -run ^TestFirstWorkerProcChildrenFallback$ -parallel 1 -count=1 -timeout 150s",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestFirstWorkerProcChildrenFallback (0.18s)",
+      "--- FAIL: TestFirstWorkerProcChildrenFallback/task (0.05s)",
+      "first_worker_identity_linux_test.go:204: fallback descendant tree incomplete: 0",
+      "--- FAIL: TestFirstWorkerProcChildrenFallback/children (0.06s)",
+      "first_worker_identity_linux_test.go:204: fallback descendant tree incomplete: 0",
+      "--- FAIL: TestFirstWorkerProcChildrenFallback/one-task-children (0.06s)",
+      "first_worker_identity_linux_test.go:204: fallback descendant tree incomplete: 0",
       "FAIL"
     ]
   }
