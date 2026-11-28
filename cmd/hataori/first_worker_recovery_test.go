@@ -118,7 +118,7 @@ func TestFirstWorkerCapacityScopeBindingAndOwnerAttach(t *testing.T) {
 		t.Fatalf("automatic start did not wait without a fallback: %+v %v", info.ThreadInfo, err)
 	}
 	c.Close()
-	f.main.restart(t)
+	f.restart()
 	c = f.client()
 	info, err = c.Thread(ctx, waiting, 0, 0)
 	if err != nil || !info.PlacementPending {
@@ -176,7 +176,7 @@ func TestFirstWorkerMainRestartMidTurn(t *testing.T) {
 	})
 	eventually(t, "worker tool is active", 10*time.Second, func() bool { return len(f.main.events(t, "tool_started", conv)) == 1 })
 	c.Close()
-	f.main.kill(t)
+	f.kill()
 	if len(f.main.events(t, "tool_ended", conv)) != 0 {
 		t.Fatal("tool finished before main was killed")
 	}
@@ -210,7 +210,7 @@ func TestFirstWorkerLostWriteReplyDedupAndCatchup(t *testing.T) {
 	_ = c.Send(ctx, id, "uncertain-once", control.Input{Text: "reply dedup worker"}, control.Deliver)
 	eventually(t, "one applied write with deliberately lost reply", 10*time.Second, func() bool { return f.proxy.dropped.Load() == 1 && f.inputCount("reply dedup worker") >= 1 })
 	c.Close()
-	f.main.restart(t)
+	f.restart()
 	c = f.client()
 	eventually(t, "unknown receipt blocks catch-up after restart", 10*time.Second, func() bool {
 		d, err := c.Thread(ctx, id, 0, 0)
@@ -280,7 +280,7 @@ func TestFirstWorkerCutHeldInputAndStaleNamedStop(t *testing.T) {
 		t.Fatalf("held action/absence dedup: %d %d", actions, notices)
 	}
 	c.Close()
-	f.main.restart(t)
+	f.restart()
 	// Only the fixture-owned worker terminal is used. The chat connection is cut.
 	dirs, err := filepath.Glob(filepath.Join(f.root, "state/sessions/*"))
 	if err != nil || len(dirs) != 1 {
@@ -368,7 +368,7 @@ func TestFirstWorkerHeldChatRechecksPersonAndScope(t *testing.T) {
 				return n == 1
 			})
 			c.Close()
-			f.main.kill(t)
+			f.kill()
 			path := filepath.Join(f.main.root, instance.ConfigFile)
 			data, err := os.ReadFile(path)
 			if err != nil {
@@ -429,7 +429,7 @@ func TestFirstWorkerExpiredHeldAnswer(t *testing.T) {
 		return n == 1
 	})
 	c.Close()
-	f.main.restart(t)
+	f.restart()
 	// Let the worker-local hook wall deadline pass while SSH remains cut.
 	time.Sleep(6200 * time.Millisecond)
 	f.proxy.away.Store(false)

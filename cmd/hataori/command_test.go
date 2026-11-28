@@ -42,6 +42,14 @@ const secondAgent = "fake-second"
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "first-worker-tree":
+			os.Exit(firstWorkerTree(os.Args[2:]))
+		case "first-worker-foreign-ssh":
+			os.Exit(firstWorkerForeignSSHClient(os.Args[2:]))
+		case "first-worker-sleeper":
+			os.Exit(firstWorkerSleeper(os.Args[2:]))
+		case "first-worker-ssh":
+			os.Exit(firstWorkerSSHClient(os.Args[2:]))
 		case "host", "hook", "login-guard", "mcp", "statusline", "signin", "threads", "exec", "pipe": // signin: as hataori on the host, run over SSH by hataori connect; threads: run by a test plugin
 			// As main runs them: SIGINT and SIGTERM do not end the process.
 			ctx, _ := signalContext()
