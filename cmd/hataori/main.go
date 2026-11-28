@@ -114,6 +114,8 @@ func runCtx(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	switch args[0] {
+	case "desktop":
+		return desktopMain(ctx, args[1:], os.Stdin, stdout, stderr)
 	case "version":
 		if len(args) == 1 {
 			fmt.Fprintln(stdout, version.Line())
