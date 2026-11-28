@@ -32,9 +32,9 @@ func integrationIntentAt(ctx context.Context, q queryer, pull int) (integrationI
 
 func (s *Store) prepareIntegration(ctx context.Context, snap Snapshot, w integrationWrite, g RouteGrant, p Selection, expires time.Time) (integrationIntent, error) {
 	raw, _ := json.Marshal(w)
-	i := integrationIntent{ID: Digest(raw), Write: w, Status: "prepared", ExpiresAt: g.ExpiresAt}
+	i := integrationIntent{ID: Digest(raw), Write: w, Status: "prepared", ExpiresAt: g.ExpiresAt.UTC()}
 	if expires.Before(i.ExpiresAt) {
-		i.ExpiresAt = expires
+		i.ExpiresAt = expires.UTC()
 	}
 	err := s.transaction(ctx, func(c *sql.Conn) error {
 		current, err := load(ctx, c)
@@ -231,6 +231,12 @@ func (c *Coordinator) integrate(ctx context.Context, pull int) (Outcome, error) 
 	if err != nil || fresh != w {
 		return out, fmt.Errorf("integration identity changed before write")
 	}
+	// Prepare and charge the entire POST before uncertainty. Budget/URL errors
+	// are definitely unsent and must leave a recoverable prepared intent.
+	prepared, err := a.gitRequest(ctx, "POST", "git-receive-pack", atomicCommands(w))
+	if err != nil {
+		return out, err
+	}
 	claim, err := c.store.claimIntegration(ctx, snap.Version, i, control.selection, a.root.ExpiresAt)
 	if err != nil {
 		return out, err
@@ -238,7 +244,7 @@ func (c *Coordinator) integrate(ctx context.Context, pull int) (Outcome, error) 
 	if !claim {
 		return out, ErrAmbiguous
 	}
-	if err = a.writeIntegration(ctx, w); err != nil {
+	if err = a.writeIntegration(prepared, w); err != nil {
 		return out, fmt.Errorf("%w: integration outcome unknown or rejected", ErrAmbiguous)
 	}
 	i.Status = "uncertain"

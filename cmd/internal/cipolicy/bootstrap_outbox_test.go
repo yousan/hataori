@@ -3,6 +3,7 @@ package cipolicy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -235,6 +236,51 @@ func TestColdBootstrapFailedRecoveryRetainsAuditAndClosesUnknown(t *testing.T) {
 			}
 			if f.posts != 2 {
 				t.Fatal("replacement dispatch count", f.posts)
+			}
+		})
+	}
+}
+
+func TestColdBootstrapNeverReusesArchivedIntent(t *testing.T) {
+	for _, changedTarget := range []bool{false, true} {
+		t.Run(fmt.Sprint(changedTarget), func(t *testing.T) {
+			s, f, _ := coldFixture(t)
+			ctx := context.Background()
+			first := f.adapter.root.Bootstrap
+			if _, err := s.PrepareBootstrap(ctx, f.adapter); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.PumpBootstrap(ctx, f.adapter); err != nil {
+				t.Fatal(err)
+			}
+			f.mu.Lock()
+			f.run.Conclusion = "failure"
+			f.mu.Unlock()
+			f.adapter.root.Bootstrap.Sweep.ID = "second diagnosed bootstrap"
+			if _, err := s.RecoverBootstrap(ctx, f.adapter, "first failed"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.PumpBootstrap(ctx, f.adapter); err != nil {
+				t.Fatal(err)
+			}
+			f.mu.Lock()
+			f.run.Conclusion = "failure"
+			f.mu.Unlock()
+			beforeSeal, before, err := bootstrapIntent(ctx, s.db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.adapter.root.Bootstrap = first
+			if changedTarget {
+				f.adapter.root.Bootstrap.Target = sha(101)
+				f.adapter.root.Bootstrap.Sweep.Target = sha(101)
+			}
+			if _, err = s.RecoverBootstrap(ctx, f.adapter, "second failed; old ID reuse is forbidden"); err == nil {
+				t.Fatal("archived ID reused")
+			}
+			afterSeal, after, err := bootstrapIntent(ctx, s.db)
+			if err != nil || beforeSeal != afterSeal || before != after || f.posts != 2 {
+				t.Fatal("failed recovery changed intent/dispatched", after, err, f.posts)
 			}
 		})
 	}

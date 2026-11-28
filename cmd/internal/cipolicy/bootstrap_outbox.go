@@ -265,9 +265,16 @@ func (s *Store) RecoverBootstrap(ctx context.Context, a *Adapter, reason string)
 		if !s.clock().Before(a.root.ExpiresAt) || c.selection.Report(s.clock()).FullOnly {
 			return fmt.Errorf("bootstrap recovery expired")
 		}
+		var reused int
+		if err = conn.QueryRowContext(ctx, "SELECT count(*) FROM bootstrap_archive WHERE seal=? OR intent=?", a.bootstrapSeal(), next.Sweep.ID).Scan(&reused); err != nil {
+			return err
+		}
+		if reused != 0 {
+			return fmt.Errorf("archived bootstrap request cannot be reused")
+		}
 		audit, _ := json.Marshal(old)
 		owner, _ := json.Marshal(c.requirement.Owner)
-		if _, err = conn.ExecContext(ctx, "INSERT INTO bootstrap_archive VALUES(?,?,?,?,?)", seal, audit, owner, reason, s.clock().UTC().Format(time.RFC3339Nano)); err != nil {
+		if _, err = conn.ExecContext(ctx, "INSERT INTO bootstrap_archive VALUES(?,?,?,?,?,?)", seal, old.Sweep.ID, audit, owner, reason, s.clock().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 		raw, _ := json.Marshal(next.Sweep)

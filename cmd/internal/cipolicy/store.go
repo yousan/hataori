@@ -104,7 +104,7 @@ func OpenStore(file string) (*Store, error) {
 			`CREATE UNIQUE INDEX IF NOT EXISTS one_admission ON admission((1)) WHERE status='reserved'`,
 			`CREATE TABLE IF NOT EXISTS integration_intent (id TEXT PRIMARY KEY, pull INTEGER NOT NULL, record BLOB NOT NULL, status TEXT NOT NULL CHECK(status IN ('prepared','uncertain','confirmed','retired')), expires TEXT NOT NULL)`,
 			`CREATE UNIQUE INDEX IF NOT EXISTS one_integration_write ON integration_intent((1)) WHERE status NOT IN ('confirmed','retired')`,
-			`CREATE TABLE IF NOT EXISTS bootstrap_archive (seal TEXT PRIMARY KEY, record BLOB NOT NULL, owner BLOB NOT NULL, reason TEXT NOT NULL, at TEXT NOT NULL)`,
+			`CREATE TABLE IF NOT EXISTS bootstrap_archive (seal TEXT PRIMARY KEY, intent TEXT NOT NULL UNIQUE, record BLOB NOT NULL, owner BLOB NOT NULL, reason TEXT NOT NULL, at TEXT NOT NULL)`,
 			`CREATE TABLE IF NOT EXISTS bootstrap_intent (id INTEGER PRIMARY KEY CHECK(id=1), seal TEXT NOT NULL, sweep BLOB NOT NULL, status TEXT NOT NULL CHECK(status IN ('prepared','uncertain','bound')), run INTEGER NOT NULL, attempt INTEGER NOT NULL)`,
 			`CREATE TABLE IF NOT EXISTS recovery (revision INTEGER PRIMARY KEY, owner TEXT NOT NULL, reason TEXT NOT NULL, control TEXT NOT NULL, authority TEXT NOT NULL, watermark TEXT NOT NULL, at TEXT NOT NULL)`,
 		} {

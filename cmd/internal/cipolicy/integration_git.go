@@ -140,7 +140,7 @@ func atomicReport(raw []byte, w integrationWrite) error {
 // gitHTTP has no URL/credential overrides in the public root or CLI. Test code
 // substitutes the private transport base only. Never follow redirects or expose
 // provider response bodies (which may echo private ref names or credentials).
-func (a *Adapter) gitHTTP(ctx context.Context, method, suffix string, body []byte) ([]byte, error) {
+func (a *Adapter) gitRequest(ctx context.Context, method, suffix string, body []byte) (*http.Request, error) {
 	if b, ok := ctx.Value(budgetKey{}).(*apiBudget); ok && b.used.Add(1) > b.max {
 		return nil, fmt.Errorf("trusted API request budget exhausted")
 	}
@@ -159,6 +159,9 @@ func (a *Adapter) gitHTTP(ctx context.Context, method, suffix string, body []byt
 		want = "application/x-git-receive-pack-result"
 	}
 	req.Header.Set("Accept", want)
+	return req, nil
+}
+func (a *Adapter) gitSend(req *http.Request) ([]byte, error) {
 	client := *a.client
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
@@ -166,7 +169,7 @@ func (a *Adapter) gitHTTP(ctx context.Context, method, suffix string, body []byt
 		return nil, fmt.Errorf("git transport failed")
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != want {
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != req.Header.Get("Accept") {
 		return nil, fmt.Errorf("git transport contract unavailable")
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
@@ -174,6 +177,13 @@ func (a *Adapter) gitHTTP(ctx context.Context, method, suffix string, body []byt
 		return nil, fmt.Errorf("git response incomplete")
 	}
 	return raw, nil
+}
+func (a *Adapter) gitHTTP(ctx context.Context, method, suffix string, body []byte) ([]byte, error) {
+	req, err := a.gitRequest(ctx, method, suffix, body)
+	if err != nil {
+		return nil, err
+	}
+	return a.gitSend(req)
 }
 
 func (a *Adapter) prepareIntegration(ctx context.Context, pull int, g RouteGrant) (integrationWrite, error) {
@@ -213,8 +223,8 @@ func (a *Adapter) prepareIntegration(ctx context.Context, pull int, g RouteGrant
 	return w, advertisedAtomic(raw, w)
 }
 
-func (a *Adapter) writeIntegration(ctx context.Context, w integrationWrite) error {
-	raw, err := a.gitHTTP(ctx, "POST", "git-receive-pack", atomicCommands(w))
+func (a *Adapter) writeIntegration(prepared *http.Request, w integrationWrite) error {
+	raw, err := a.gitSend(prepared)
 	if err != nil {
 		return err
 	}

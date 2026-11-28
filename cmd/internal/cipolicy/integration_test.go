@@ -408,3 +408,56 @@ func TestOwnerPreparedGrantReplacementPreservesAudit(t *testing.T) {
 		t.Fatal("retired grant sent", ok, err)
 	}
 }
+
+func TestOwnerPostBudgetExhaustionRemainsDefinitelyUnsent(t *testing.T) {
+	c, f, seam := integrationFixture(t)
+	ctx := context.Background()
+	setBudget := func(n int) {
+		f.adapter.root.MaxRequests = n
+		snap, err := c.store.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		o, err := f.adapter.Observe(ctx, snap)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = c.store.SwitchControl(ctx, snap.Version, o); err != nil {
+			t.Fatal(err)
+		}
+		g := f.adapter.root.Routes[1107]
+		g.Feedback.Authority = f.adapter.authorityDigest()
+		f.adapter.root.Routes[1107] = g
+		f.mu.Lock()
+		f.run.Title = sweepTitle(g.Feedback)
+		f.mu.Unlock()
+	}
+	// Eleven control reads + two four-read write preflights consume 19.
+	// The final POST itself is charged before claim, not after uncertainty.
+	setBudget(19)
+	if _, err := c.Execute(ctx, "integrate", 1107, 0); err == nil || !strings.Contains(err.Error(), "budget") {
+		t.Fatal("budget boundary not exercised", err)
+	}
+	i, err := integrationIntentAt(ctx, c.store.db, 1107)
+	if err != nil || i.Status != "prepared" || seam.posts != 0 {
+		t.Fatal("definitely-unsent failure stranded intent", i, err, seam.posts)
+	}
+	setBudget(64)
+	out, err := c.Execute(ctx, "integrate", 1107, 0)
+	if err != nil || out.Route == nil || !out.Route.Integrated || seam.posts != 1 {
+		t.Fatal("authorized larger-budget transition unrecoverable", out, err, seam.posts)
+	}
+}
+
+func TestOwnerNonUTCGrantExpiryUsesInstantIdentity(t *testing.T) {
+	c, f, seam := integrationFixture(t)
+	g := f.adapter.root.Routes[1107]
+	g.ExpiresAt = g.ExpiresAt.In(time.FixedZone("JST", 9*60*60))
+	f.adapter.root.Routes[1107] = g
+	f.adapter.root.ExpiresAt = f.adapter.root.ExpiresAt.In(time.FixedZone("JST", 9*60*60))
+	f.consent.(map[string]any)["body"] = consentText(f.root.RepositoryID, 1107, g)
+	out, err := c.Execute(context.Background(), "integrate", 1107, 0)
+	if err != nil || out.Route == nil || !out.Route.Integrated || seam.posts != 1 {
+		t.Fatal("equivalent expiry timezone blocked first write", out, err, seam.posts)
+	}
+}
