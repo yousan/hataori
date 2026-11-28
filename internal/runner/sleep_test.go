@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,8 +15,10 @@ import (
 	"time"
 
 	"github.com/yousan/hataori/internal/control"
+	"github.com/yousan/hataori/internal/core"
 	"github.com/yousan/hataori/internal/host"
 	"github.com/yousan/hataori/internal/proctest"
+	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 )
 
@@ -158,6 +161,95 @@ func TestBusySessionStaysAwake(t *testing.T) {
 				t.Fatalf("state %s, agent alive %v", s, agentAlive(t, f.root, 1))
 			}
 		})
+	}
+}
+
+// A new agent process resumed without input has no tasks of the old one.
+// Neither an idle check, Sleep nor close may wait for the old turn's count.
+func TestResumedAgentIgnoresEarlierBackgroundTasks(t *testing.T) {
+	for _, outcome := range []string{"completion", "failure"} {
+		for _, action := range []string{"idle", "sleep", "close", "reconnect then sleep", "new turn"} {
+			t.Run(outcome+"/"+action, func(t *testing.T) {
+				t.Parallel()
+				o := options{}
+				if action == "idle" {
+					o.idlePeriod = 200 * time.Millisecond
+				}
+				f := newFixture(t, o)
+				script := "background 60s\nreply started"
+				if outcome == "failure" {
+					script = "background 60s\nfail api_error"
+				}
+				f.start(script)
+				waitFor(t, "the turn's end", 15*time.Second, f.has("turn_ended", 1))
+				// Tasks of the process that still runs do keep it awake.
+				if slept, err := f.run.Sleep(context.Background(), thread); err != nil || slept {
+					t.Fatalf("Sleep before the agent ended: %v, %v", slept, err)
+				}
+				if err := f.run.Shut(context.Background(), 1, "command"); !errors.Is(err, session.ErrRefused) {
+					t.Fatalf("close before the agent ended: %v", err)
+				}
+				// Kill only the fake agent this fixture started, by its pid.
+				proctest.Kill(filepath.Join(StateDir(f.root, 1), host.PIDFile))
+				waitFor(t, "the ended agent", 15*time.Second, func() bool {
+					return sessionState(t, f.st, 1) == "asleep"
+				})
+				if err := f.run.Machine.Apply(context.Background(), 1, session.Input{Kind: session.Wake}); err != nil {
+					t.Fatal(err)
+				}
+				// Resume with an accepted no-input operation. Wake now reads
+				// admission recorded by the core's attach API, which this
+				// runner-only fixture has not called.
+				if err := f.run.Resume(context.Background(), 1, core.FirstInput{
+					AcceptedOperation: control.OpAttach, Principal: "owner", From: ownerFrom, Wake: true, NoInput: true,
+				}); err != nil {
+					t.Fatal(err)
+				}
+				waitFor(t, "the resumed agent", 15*time.Second, func() bool { return len(readyLines(t, f.root, 1)) == 2 })
+				waitFor(t, "the resumed session ready", 15*time.Second, func() bool {
+					return sessionState(t, f.st, 1) != "creating"
+				})
+				if action == "reconnect then sleep" {
+					f.run.Close()
+					st, _, r, err := build(f.root, o, &syncBuffer{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { r.Close(); st.Close() })
+					if err := r.Reconnect(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+					f.run = r
+				}
+				wantTurns, wantBackground := 1, 1
+				switch action {
+				case "idle":
+					waitFor(t, "the idle sleep", 10*time.Second, func() bool { return sessionState(t, f.st, 1) == "asleep" })
+				case "sleep", "reconnect then sleep":
+					if slept, err := f.run.Sleep(context.Background(), thread); err != nil || !slept {
+						t.Fatalf("Sleep after resuming without a turn: %v, %v", slept, err)
+					}
+				case "close":
+					if err := f.run.Shut(context.Background(), 1, "command"); err != nil {
+						t.Fatal(err)
+					}
+				case "new turn":
+					send(t, owner(f.core), thread, "m2", "background 60s\nreply again")
+					waitFor(t, "the new process's turn", 15*time.Second, f.has("turn_ended", 2))
+					if slept, err := f.run.Sleep(context.Background(), thread); err != nil || slept {
+						t.Fatalf("Sleep with new background tasks: %v, %v", slept, err)
+					}
+					wantTurns = 2
+				}
+				var turns, background int
+				if err := f.st.DB.QueryRow(`SELECT count(*), max(background) FROM turns`).Scan(&turns, &background); err != nil {
+					t.Fatal(err)
+				}
+				if turns != wantTurns || background != wantBackground {
+					t.Errorf("turn history: %d turns, background %d; want %d, %d", turns, background, wantTurns, wantBackground)
+				}
+			})
+		}
 	}
 }
 

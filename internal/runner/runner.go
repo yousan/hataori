@@ -221,18 +221,19 @@ func (r *Runner) backgroundWait() time.Duration {
 	return session.BackgroundWait
 }
 
-// background returns how many background tasks the session's last turn left
-// running, 0 without a turn. The count of a turn that
-// completed holds until the next turn ends. That of a turn that failed, was
-// stopped or met a usage limit holds only until the session reported nothing
-// for backgroundWait: whether its tasks still run may never be learned, as
-// when the turn that would say so fails too. stopped says that somebody
-// stopped the turn (Stop), and that it ended by that.
+// background returns how many background tasks the session's last turn in
+// its current agent process left running, 0 without such a turn. The count
+// of a turn that completed holds until the next turn ends. That of a turn
+// that failed, was stopped or met a usage limit holds only until the
+// session reported nothing for backgroundWait: whether its tasks still run
+// may never be learned, as when the turn that would say so fails too.
+// stopped says that somebody stopped the turn (Stop), and that it ended by that.
 func (r *Runner) background(ctx context.Context, tx *store.Tx, id int64) (n int, stopped bool, err error) {
 	var outcome, reason, by string
 	var updated int64
 	err = tx.QueryRowContext(ctx, `SELECT t.background, t.status, t.reason, t.stopped_by, s.updated_at FROM turns t
-		JOIN sessions s ON s.id = t.session_id WHERE t.session_id = ? ORDER BY t.id DESC LIMIT 1`, id).Scan(&n, &outcome, &reason, &by, &updated)
+		JOIN sessions s ON s.id = t.session_id WHERE t.session_id = ? AND t.id > s.agent_after_turn
+		ORDER BY t.id DESC LIMIT 1`, id).Scan(&n, &outcome, &reason, &by, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -521,6 +522,8 @@ func (r *Runner) launch(ctx context.Context, id int64, agentName string, ad agen
 // newAgent retires input belonging to the previous agent before a new
 // host can start. Unwritten messages fail visibly instead of reaching a
 // later agent; written messages cannot be reported by the new process.
+// It also records the last preceding turn: background tasks of those
+// earlier turns ended with the old agent process.
 func (r *Runner) newAgent(ctx context.Context, id int64) error {
 	err := r.Store.Update(ctx, func(tx *store.Tx) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE pending_inputs SET stale = 1, context = '' WHERE session_id = ?`, id); err != nil {
@@ -529,7 +532,11 @@ func (r *Runner) newAgent(ctx context.Context, id int64) error {
 		if err := r.failStaleInput(ctx, tx, id); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE session_id = ? AND request = '' AND written != 0`, id)
+		if _, err := tx.ExecContext(ctx, `DELETE FROM pending_inputs WHERE session_id = ? AND request = '' AND written != 0`, id); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE sessions SET agent_after_turn =
+			(SELECT coalesce(max(id), 0) FROM turns WHERE session_id = ?) WHERE id = ?`, id, id)
 		return err
 	})
 	if err != nil {
