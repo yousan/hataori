@@ -57,6 +57,9 @@ func TestInvalidControlsFailClosed(t *testing.T) {
 		{"expired", func(p *Policy) { p.ExpiresAt = clock }},
 		{"unbounded", func(p *Policy) { p.ExpiresAt = time.Time{} }},
 		{"rollback", func(p *Policy) { p.RollbackRevision = sha(99) }},
+		{"unknown rollback route", func(p *Policy) { p.RollbackRoute = "candidate-cheap" }},
+		{"contradictory rollback route", func(p *Policy) { p.RollbackRoute = "main-full" }},
+		{"revision route missing target", func(p *Policy) { p.RollbackRoute = "revision"; p.RollbackRevision = "" }},
 		{"self rollback", func(p *Policy) { p.RollbackRevision = sha(1) }},
 		{"count", func(p *Policy) { p.Limits.MaxChanges = 0 }},
 		{"age", func(p *Policy) { p.Limits.MaxAgeSeconds = -1 }},
@@ -161,7 +164,8 @@ func TestGitControlIgnoresCandidateAndSupportsApprovedRollback(t *testing.T) {
 	}
 	p := validPolicy()
 	p.Profile = "stable"
-	p.RollbackRevision = root
+	p.RollbackRevision = ""
+	p.RollbackRoute = "main-full"
 	p.Limits.MaxChanges = 2
 	stableBytes := write(p)
 	git("add", ".")
@@ -181,7 +185,7 @@ func TestGitControlIgnoresCandidateAndSupportsApprovedRollback(t *testing.T) {
 	candidate := git("rev-parse", "HEAD")
 	// A candidate's changed policy, current HEAD and any PR labels are outside
 	// Resolve's authority inputs. The trusted anchor alone selects control.
-	trust := Trust{Revision: approved, Approved: map[string]string{approved: Digest(throughputBytes), stable: Digest(stableBytes), root: Digest(nil)}}
+	trust := Trust{Revision: approved, Approved: map[string]string{approved: Digest(throughputBytes), stable: Digest(stableBytes)}}
 	s := Resolve(GitSource{repo}, trust, clock)
 	if r := s.Report(clock); r.FullOnly || r.Limits.MaxChanges != 10 || r.Revision != approved || r.RollbackRevision != stable {
 		t.Fatal(r)
@@ -196,7 +200,7 @@ func TestGitControlIgnoresCandidateAndSupportsApprovedRollback(t *testing.T) {
 	}
 	trust.Revision = root
 	if !Resolve(GitSource{repo}, trust, clock).Report(clock).FullOnly {
-		t.Fatal("missing rollback policy must fail closed")
+		t.Fatal("unapproved seed without policy must fail closed")
 	}
 	if _, err := (GitSource{repo}).PolicyAt("HEAD"); err == nil {
 		t.Fatal("mutable revision accepted")

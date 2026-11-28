@@ -49,18 +49,28 @@ func (c *Coordinator) Recover(ctx context.Context, reason string) (Outcome, erro
 }
 
 func (c *Coordinator) execute(ctx context.Context, operation string, pull int, run int64, reason string) (Outcome, error) {
+	if operation == "integrate" {
+		return c.integrate(ctx, pull)
+	}
 	out := Outcome{Operation: operation, RoutingEnabled: c.adapter.root.RoutingEnabled}
 	if operation == "summary" {
 		v, err := c.adapter.Summarize(ctx, run)
 		out.Summary = &v
 		return out, err
 	}
-	if operation == "bootstrap" {
-		b, err := c.adapter.Bootstrap(ctx)
-		if err != nil {
-			return out, err
+	if operation == "bootstrap-prepare" || operation == "bootstrap-pump" {
+		var i Intent
+		var err error
+		if operation == "bootstrap-prepare" {
+			i, err = c.store.PrepareBootstrap(ctx, c.adapter)
+		} else {
+			i, err = c.store.PumpBootstrap(ctx, c.adapter)
 		}
-		if err = c.store.Initialize(ctx, b); err != nil {
+		out.Intent = &i
+		return out, err
+	}
+	if operation == "bootstrap" {
+		if err := c.store.bootstrap(ctx, c.adapter); err != nil {
 			return out, err
 		}
 	}
@@ -126,6 +136,19 @@ func (c *Coordinator) execute(ctx context.Context, operation string, pull int, r
 					r.Reason = "closed: integration reservation unresolved"
 				}
 			}
+			if err == nil && operation == "done" && r.DoneAllowed {
+				var p pullRecord
+				err = c.adapter.request(c.adapter.budget(ctx), "GET", fmt.Sprintf("%s/pulls/%d", c.adapter.prefix(), pull), nil, &p)
+				if err == nil {
+					err = c.store.integrationReceipt(ctx, pull, p.MergeSHA)
+				}
+				if err != nil {
+					r.Allowed = false
+					r.DoneAllowed = false
+					r.Integrated = false
+					r.Reason = "closed: admitted integration write receipt missing"
+				}
+			}
 			out.Route = &r
 			if err != nil {
 				return out, err
@@ -138,6 +161,13 @@ func (c *Coordinator) execute(ctx context.Context, operation string, pull int, r
 	out.State = &snap.State
 	out.Intent = snap.Intent
 	// Ambiguity remains visible even on status; no reader calls it healthy.
+	var writes int
+	if err := c.store.db.QueryRowContext(ctx, "SELECT count(*) FROM integration_intent WHERE status='uncertain'").Scan(&writes); err != nil {
+		return out, err
+	}
+	if writes != 0 {
+		return out, ErrAmbiguous
+	}
 	if snap.Intent != nil && snap.Intent.Status == "uncertain" {
 		return out, ErrAmbiguous
 	}
@@ -267,7 +297,7 @@ func RunCLI(ctx context.Context, args []string, out io.Writer, binary string) in
 	var run int64
 	reason := ""
 	if len(args) == 4 && args[2] == "--reason" {
-		if op != "recover" || strings.TrimSpace(args[3]) == "" || len(args[3]) > 4096 {
+		if (op != "recover" && op != "bootstrap-recover") || strings.TrimSpace(args[3]) == "" || len(args[3]) > 4096 {
 			writeCLI(out, Outcome{}, errors.New("recovery diagnosis required"))
 			return 2
 		}
@@ -288,8 +318,8 @@ func RunCLI(ctx context.Context, args []string, out io.Writer, binary string) in
 			return 2
 		}
 	}
-	allowed := map[string]bool{"bootstrap": true, "observe": true, "admission": true, "pump": true, "status": true, "control-transition": true, "done": true, "summary": true, "recover": true}
-	if !allowed[op] || ((op == "admission" || op == "done") && pull == 0) || (op == "summary" && run == 0) || (op == "recover" && reason == "") {
+	allowed := map[string]bool{"bootstrap": true, "bootstrap-prepare": true, "bootstrap-pump": true, "observe": true, "admission": true, "integrate": true, "pump": true, "status": true, "control-transition": true, "done": true, "summary": true, "recover": true, "bootstrap-recover": true}
+	if !allowed[op] || ((op == "admission" || op == "done" || op == "integrate") && pull == 0) || (op == "summary" && run == 0) || ((op == "recover" || op == "bootstrap-recover") && reason == "") {
 		writeCLI(out, Outcome{}, errors.New("invalid operation arguments"))
 		return 2
 	}
@@ -300,7 +330,12 @@ func RunCLI(ctx context.Context, args []string, out io.Writer, binary string) in
 	}
 	defer c.Close()
 	var result Outcome
-	if op == "recover" {
+	if op == "bootstrap-recover" {
+		result = Outcome{Operation: op, RoutingEnabled: c.adapter.root.RoutingEnabled}
+		var i Intent
+		i, err = c.store.RecoverBootstrap(ctx, c.adapter, reason)
+		result.Intent = &i
+	} else if op == "recover" {
 		result, err = c.Recover(ctx, reason)
 	} else {
 		result, err = c.Execute(ctx, op, pull, run)

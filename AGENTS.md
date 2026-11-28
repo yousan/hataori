@@ -19,6 +19,7 @@ English for code, comments, commit messages, issues, pull requests and docs.
 - One branch per issue, one pull request per branch. Reference the issue (`Closes #N`).
 - Do not push to `main` directly.
 - Follow the ready-before-merge CI contract and staged policy in [docs/design/ci-policy.md](docs/design/ci-policy.md); draft skips are not full validation.
+- Opted-in integration owners use the explicit [coordinator caller contract](docs/design/ci-owner-adapter.md); existing main owners keep their full final-head and actual-main Done gates.
 - Before every merge, the pull request's diff against the current `main` lists only the pull request's own changes.
 
 ## Claiming an issue

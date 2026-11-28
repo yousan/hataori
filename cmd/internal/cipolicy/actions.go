@@ -25,6 +25,7 @@ import (
 type AuthorityRoot struct {
 	CoordinatorDigest   string
 	RoutingEnabled      bool
+	IntegrationWrite    IntegrationWriteContract
 	Routes              map[int]RouteGrant
 	MaxRequests         int
 	RiskReviewers       []Identity
@@ -69,6 +70,7 @@ type Adapter struct {
 	keyDigest   string
 	client      *http.Client
 	base, token string
+	gitBase     string
 	clock       func() time.Time
 }
 
@@ -210,6 +212,7 @@ type pullRecord struct {
 	MergeSHA string    `json:"merge_commit_sha"`
 	User     Identity
 	Head     struct {
+		Ref  string
 		SHA  string
 		Repo repoRecord
 	}

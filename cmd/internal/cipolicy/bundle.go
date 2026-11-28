@@ -26,7 +26,7 @@ func Bundle(repo, revision, binary string) (ActivationBundle, error) {
 	b := ActivationBundle{Status: "UNSIGNED / INACTIVE / actual dispatch unproved", Revision: revision, CoordinatorDigest: binary,
 		Missing:  []string{"approved merged control and immutable policy bytes", "independently provisioned authority public key/signature", "actual repository/workflow/dispatcher/owner/reviewer identities", "default-branch workflow registration and frozen-ref dispatch evidence", "actual applicable full bootstrap run/attempt/tuple", "parent compatibility and owner opt-in/Done adoption"},
 		Files:    []string{"authority.pub (base64 public key)", "root.json (canonical signed bytes)", "root.sig (base64 detached signature)", "dispatcher.token (private external credential)", "coverage.sqlite (created once; retain on rollback)"},
-		Commands: []string{"ci-coordinator bootstrap AUTHORITY_DIR", "ci-coordinator observe AUTHORITY_DIR", "ci-coordinator admission AUTHORITY_DIR --pull N", "ci-coordinator pump AUTHORITY_DIR", "ci-coordinator status AUTHORITY_DIR", "ci-coordinator control-transition AUTHORITY_DIR", "ci-coordinator recover AUTHORITY_DIR --reason DIAGNOSIS", "ci-coordinator done AUTHORITY_DIR --pull N", "ci-coordinator summary AUTHORITY_DIR --run N"}}
+		Commands: []string{"ci-coordinator bootstrap-prepare AUTHORITY_DIR", "ci-coordinator bootstrap-pump AUTHORITY_DIR", "ci-coordinator bootstrap AUTHORITY_DIR", "ci-coordinator bootstrap-recover AUTHORITY_DIR --reason DIAGNOSIS", "ci-coordinator observe AUTHORITY_DIR", "ci-coordinator admission AUTHORITY_DIR --pull N", "ci-coordinator integrate AUTHORITY_DIR --pull N", "ci-coordinator pump AUTHORITY_DIR", "ci-coordinator status AUTHORITY_DIR", "ci-coordinator control-transition AUTHORITY_DIR", "ci-coordinator recover AUTHORITY_DIR --reason DIAGNOSIS", "ci-coordinator done AUTHORITY_DIR --pull N", "ci-coordinator summary AUTHORITY_DIR --run N"}}
 	if !digestOK(binary) {
 		return b, fmt.Errorf("coordinator binary digest required")
 	}
@@ -63,6 +63,6 @@ func Bundle(repo, revision, binary string) (ActivationBundle, error) {
 	b.ExecutionFiles = closure
 	b.Requirement = ControlRequirement{WorkflowPath: ProofWorkflow, ExecutionFiles: closure, LinuxJobs: []string{"contract", "linux", "web"}, MacOSJobs: []string{"macos"}, CompatibilityJobs: comp, DevelopmentJobs: []string{"contract", "development"}, RequiredSteps: steps, RunnerLabels: labels, OptionalSkippedJobs: []string{"development", "compatibility", "compatibility ()"}}
 	b.RootTemplate = AuthorityRoot{Version: 1, MaxRequests: 128, CoordinatorDigest: binary, ControlRef: "main", IntegrationRef: "develop", CurrentControl: revision, Controls: map[string]ControlRequirement{revision: b.Requirement}, RoutingEnabled: false}
-	b.PolicyTemplate = Policy{Version: 1, Profile: "throughput", Reason: "UNSIGNED TEMPLATE; actual owner/validity/rollback and merged policy required", Limits: Limits{MaxChanges: 10, MaxAgeSeconds: 21600, LeadTimeSeconds: 1800}}
+	b.PolicyTemplate = Policy{Version: 1, Profile: "throughput", RollbackRoute: "main-full", Reason: "UNSIGNED TEMPLATE; actual owner/validity/rollback and merged policy required", Limits: Limits{MaxChanges: 10, MaxAgeSeconds: 21600, LeadTimeSeconds: 1800}}
 	return b, nil
 }

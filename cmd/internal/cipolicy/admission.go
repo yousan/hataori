@@ -34,6 +34,13 @@ func (s *Store) reserve(ctx context.Context, version int64, pull int, g RouteGra
 		if err != nil {
 			return err
 		}
+		var uncertain int
+		if err := c.QueryRowContext(ctx, "SELECT count(*) FROM integration_intent WHERE status='uncertain'").Scan(&uncertain); err != nil {
+			return err
+		}
+		if uncertain != 0 {
+			return fmt.Errorf("integration outcome unresolved")
+		}
 		if snap.Version != version {
 			return ErrConflict
 		}
@@ -87,12 +94,22 @@ func (c *Coordinator) reconcileReservation(ctx context.Context, snap Snapshot) e
 	}
 	status := ""
 	if !p.Merged && p.State == "closed" {
+		intent, e := integrationIntentAt(ctx, c.store.db, r.Pull)
+		if e != nil && e != sql.ErrNoRows {
+			return e
+		}
+		if e == nil && intent.Status == "uncertain" {
+			return ErrAmbiguous
+		}
 		status = "withdrawn"
 	} else {
 		if p.Head.SHA != r.Head || p.Base.SHA != r.Base || p.Base.Ref != snap.ref {
 			return fmt.Errorf("reserved PR changed; diagnose without dropping reservation")
 		}
 		if p.Merged && !p.MergedAt.IsZero() {
+			if err := c.store.integrationReceipt(ctx, r.Pull, p.MergeSHA); err != nil {
+				return err
+			}
 			for _, commit := range snap.History.Commits {
 				if commit.SHA == p.MergeSHA {
 					status = "integrated"
@@ -110,6 +127,18 @@ func (c *Coordinator) reconcileReservation(ctx context.Context, snap Snapshot) e
 		}
 		if current.Version != snap.Version {
 			return ErrConflict
+		}
+		if status == "withdrawn" {
+			intent, e := integrationIntentAt(ctx, conn, r.Pull)
+			if e != nil && e != sql.ErrNoRows {
+				return e
+			}
+			if e == nil && intent.Status == "uncertain" {
+				return ErrAmbiguous
+			}
+			if _, err = conn.ExecContext(ctx, "UPDATE integration_intent SET status='retired' WHERE pull=? AND status='prepared'", r.Pull); err != nil {
+				return err
+			}
 		}
 		_, err = conn.ExecContext(ctx, "UPDATE admission SET status=? WHERE status='reserved' AND pull=? AND head=? AND base=? AND grant_digest=?", status, r.Pull, r.Head, r.Base, r.Grant)
 		return err
