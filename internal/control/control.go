@@ -1190,15 +1190,15 @@ func ValidHostKey(name string) bool {
 	return true
 }
 
-// AgentLimits is an agent's remaining usage, as one of its sessions last
-// reported it. At is when that report was made. Every is how often the
-// agent's sessions report it while one runs: a report older than Every is
-// not current, so a reader shows it with its time.
+// AgentLimits keeps independent window observations across sessions of one
+// account. At is the oldest kept observation; Every is the shortest kept
+// refresh interval, so their combined age is conservative. Missing windows
+// retain their last observation and age. See docs/design/limit-observations.md.
 type AgentLimits struct {
 	Agent   string        `json:"agent"`   // the agent's registered name
-	At      time.Time     `json:"at"`      // when it was reported
+	At      time.Time     `json:"at"`      // oldest kept observation
 	Every   int64         `json:"every"`   // seconds
-	Windows []LimitWindow `json:"windows"` // as the agent reports them, in its order
+	Windows []LimitWindow `json:"windows"` // first-observed order; omission is not deletion
 }
 
 // LimitWindow is one usage window of an agent.

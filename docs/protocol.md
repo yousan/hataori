@@ -19,10 +19,12 @@ Programs outside the daemon (the `hataori` command, a supervisor, a dashboard, p
 
 ## Versions
 
-The protocol version is `major.minor`, now **3.48**. Both hellos carry it.
+The protocol version is `major.minor`, now **4.0**. Both hellos carry it.
 
 - A client and a daemon whose **major** numbers differ refuse each other. The refusal names both versions, for example `protocol version mismatch: client speaks 2.0, daemon speaks 3.0`.
 - With the same major number and different minor numbers they work together.
+
+**A 3.x client and a 4.0 daemon.** 4.0 changes `Limits` from complete-report replacement to per-window merging. Omitted windows retain their value and age. `AgentLimits.at` is the oldest retained observation, and `every` is the shortest retained refresh interval. These meanings differ from 3.x, so the two refuse each other even though the JSON fields have the same shape. See `Limits`, `AgentLimits` and [the observation contract](design/limit-observations.md).
 
 **A 2.x client and a 3.0 daemon.** 3.0 names a thread by its number. Every operation that took a thread (`Thread`, `Send`, `Stop`, `Workspace`, `Terminal`, `AttachTerminal`, `CloseThread`, `RemoveThread`) takes the number as `id`, `Start` returns it, and every event carries it as `thread`, with the thread's `scope` beside it. The chat thread a thread is shown in is a link (`LinkRef`): `ThreadInfo` lists them in `links`, and `Filter.link` finds the thread linked to one conversation. `ThreadInfo.number` is gone, since `id` is the number; `login_restored` lists numbers in `threads`; `Start.thread` names the first link's conversation in the scope's own channel. The two refuse each other as below. Events written before 3.0 are read back with their thread's number and scope.
 
@@ -648,7 +650,7 @@ Result: `WorkerAttachment`
 
 ### Operation `Limits`
 
-Since 1.13. The remaining usage of each agent, as its sessions last reported it: one entry per agent that has reported, by its registered name. An agent that has not, because nothing it gives says so, has no entry. A later report replaces an earlier one, whichever of the agent's sessions made it; it changes no thread and writes no event. The usage is the agent's account's, so it needs the `Threads` permission and no scope. It takes no arguments.
+Since 1.13. The remaining usage of each agent, as its sessions last reported it: one entry per agent that has reported, by its registered name. An agent that has not, because nothing it gives says so, has no entry. Since 4.0, windows merge independently across the agent's sessions within one daemon-bound machine/agent/configuration-directory key; omission, including an empty report, removes nothing. Later observation evidence wins within a reset period, including genuine decreases; a known later reset wins over an older period. Cached repetitions cannot renew another window's age. The returned local configuration-directory view is selected by latest report receipt, independently of the retained windows' age. It changes no thread and writes no event. See [the provenance and merge rules](design/limit-observations.md). The usage is the agent's account's, so it needs the `Threads` permission and no scope. It takes no arguments.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
@@ -1196,14 +1198,14 @@ Since 3.16. One hook point of a plugin's grant.
 
 ### Type `AgentLimits`
 
-Since 1.13. A report older than `every` seconds is not current: a reader shows it with its time, since the agent's sessions would have reported again by then if one ran.
+Since 1.13. Since 4.0, this is a merged set of observations, not one complete report. A set older than `every` seconds is not current: a reader shows it with its time. Its conservative age must not make any retained window appear fresh.
 
 | Field | Type | Presence | Meaning |
 |---|---|---|---|
 | `agent` | string | required | the agent's registered name |
-| `at` | time | required | when the report was made |
-| `every` | integer | required | seconds: how often the agent's sessions report while one runs |
-| `windows` | [`LimitWindow`] | required | as the agent reports them, in its order; may be empty |
+| `at` | time | required | oldest retained window observation; initial receipt time when no window has ever been observed; since 4.0 |
+| `every` | integer | required | seconds: shortest retained expected refresh interval; initial report interval for a never-populated set; since 4.0 |
+| `windows` | [`LimitWindow`] | required | retained observations in first-observed name order, new names appended; omission does not delete; may be empty; since 4.0 |
 
 ### Type `ClientState`
 

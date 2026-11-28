@@ -170,7 +170,7 @@ func TestOperateHostNeedsANewerDaemon(t *testing.T) {
 		asked <- m.Op
 		return nil
 	})
-	cl, err := dialPath(path, Version)
+	cl, err := dialPath(path, "3.0")
 	if err != nil {
 		t.Fatal(err)
 	}

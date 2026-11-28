@@ -23,7 +23,8 @@ new provider fetch cannot be distinguished from cache and is conservatively old.
 
 Session history is partitioned by the same trusted account key. A changed key
 cannot reuse that history. The sequence cursor, history and account merge commit
-in one transaction. Legacy stored windows retain their old time; an initial
+in one transaction. A separate per-session receipt watermark rejects delayed reports,
+even when cached observations retain an older time. Legacy stored windows retain their old time; an initial
 cached report identical to one cannot freshen it. A different first-seen value
 is new local evidence; no earlier per-session history can be reconstructed.
 

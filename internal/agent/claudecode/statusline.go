@@ -264,7 +264,7 @@ func decodeLimits(raw json.RawMessage, at time.Time) *agent.LimitReport {
 		}
 		return strings.Compare(a, b)
 	})
-	r := &agent.LimitReport{At: at, Every: limitsEvery, Windows: []agent.LimitWindow{}}
+	r := &agent.LimitReport{At: at, Every: limitsEvery, Windows: []agent.LimitWindow{}, Cached: true}
 	for _, n := range names {
 		w := ws[n]
 		if w.Used == nil {
