@@ -1,0 +1,28 @@
+{
+  "number": 1068,
+  "merged": true,
+  "merged_at": "2026-11-27T05:03:19Z",
+  "merge_commit_sha": "6ec6bbdc089a077588a6a59d41af71fa9acecad6",
+  "user": {
+    "id": 561613,
+    "login": "yousan"
+  },
+  "head": {
+    "sha": "988e29d2a0f90fca724a72395d78a9e84eab8133",
+    "ref": "issue-1067-ci-macos-queue",
+    "repo": {
+      "id": 1454788309,
+      "full_name": "yousan/hataori",
+      "default_branch": "main"
+    }
+  },
+  "base": {
+    "sha": "bbfd29ce87744e21fb435f5eec4dd67cf3abf379",
+    "ref": "main",
+    "repo": {
+      "id": 1454788309,
+      "full_name": "yousan/hataori",
+      "default_branch": "main"
+    }
+  }
+}
