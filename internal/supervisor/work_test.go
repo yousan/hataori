@@ -83,7 +83,7 @@ func TestWorkRecordNormalAndRestart(t *testing.T) {
 			if got, bad := writeWork(t, m, r, versionOf(before)); bad || !strings.Contains(got, "No wake, action or report was sent") {
 				t.Fatalf("update: %s", got)
 			}
-			if got := w.workContext(ctx, filesOwn); !strings.Contains(got, `"state":"complete"`) || !strings.Contains(got, "not report delivery") {
+			if got := w.workContext(ctx, filesOwn); !strings.Contains(got, `"state":"complete"`) || !strings.Contains(got, "not report delivery") || !strings.Contains(got, "do not start another action or repeat its report") {
 				t.Fatalf("assessment context: %s", got)
 			}
 		})

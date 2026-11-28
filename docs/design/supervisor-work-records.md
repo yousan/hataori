@@ -42,9 +42,9 @@ remain available for explicit repair; no bytes are deleted or migrated.
 A permitted existing wake includes the bounded record, its version, wait and next
 step. Fresh wake conversations recover it without a person reposting the task.
 Read again before updating because a stored wake can contain an older version.
-Ordinary final answers report to the recorded own supervisor thread through its
+Those wakes’ final answers report to the recorded own supervisor thread through its
 existing posting/outbox path, including configured quiet/digest/mention limits.
-The tool sends no message. State `complete` means the model assessed the user's
+The tool sends no message and does not reroute an ordinary conversation’s immediate output. State `complete` means the model assessed the user's
 condition; it does not mean a report was queued or delivered. Report delivery
 remains the existing transport's evidence. No new exactly-once report promise.
 
