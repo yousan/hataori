@@ -1,5 +1,10 @@
 # Testing
 
+The [CI policy and staged release design](design/ci-policy.md) distinguishes
+development feedback, integration sweeps and immutable release gates. Phase 1
+keeps full applicable ready-PR/main validation; later profiles and branch or
+operator migrations are explicitly gated proposals.
+
 ## CI when no macOS runner is available
 
 Rerun a CI job by hand when GitHub cannot assign its hosted macOS runner
