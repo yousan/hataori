@@ -12,6 +12,15 @@ immutable execution closure at the signed frozen target must match the approved
 control. These are read-only checks; a previous successful execution of the new
 workflow is not a prerequisite for its first dispatch.
 
+The actual `.github/ci-policy.json` must first be committed and approved; the
+bundle's `PolicyTemplate` is unsigned configuration, not that source. For the
+first control, `rollback_route: "main-full"` with an empty `rollback_revision`
+declares the existing stricter main fallback. It avoids inventing predecessor
+policies or references to future commit SHAs. Omitted/`revision` mode keeps the
+existing separately approved rollback-SHA requirement; unknown/contradictory
+modes fail closed. The real source bytes/digest, exact merged/head approvals,
+owner, bounded validity and signed root are required in either mode.
+
 1. The responsible operator supplies an independently signed root, pinned public
    key, reviewed binary and private database/dispatcher credential outside any
    candidate checkout. No bundle or code-review comment supplies live approval.
@@ -109,6 +118,15 @@ proof -> one-time initialization -> separately compatible owner opt-in. There is
 no requirement for that workflow to succeed before its first execution. Policy,
 schedule and routing activation, branch default/targets and deployment source
 remain off/unchanged until their concrete compatible proof route is satisfied.
+
+`main-full` fallback is the callable existing `RoutingEnabled=false` boundary:
+keep the same current control, key, database, watermark and unresolved intents;
+stop new integration routing. The returned `main` route is a referral with
+Allowed/DoneAllowed/ReleaseAllowed/UpgradeAllowed false. It neither retargets an
+existing integration PR nor validates or merges it. Owners separately use the
+existing full final-head and actual-main workflow. Stop the old caller first:
+a changed signed root cannot atomically revoke a process already using old
+verified bytes. This is an explicit fallback contract, not a new rollback writer.
 
 Rollback: stop the owner caller; disable new routing in an independently approved
 root; keep the same database, watermark, grants, archived attempts and uncertain

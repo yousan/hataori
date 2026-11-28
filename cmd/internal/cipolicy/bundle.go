@@ -63,6 +63,6 @@ func Bundle(repo, revision, binary string) (ActivationBundle, error) {
 	b.ExecutionFiles = closure
 	b.Requirement = ControlRequirement{WorkflowPath: ProofWorkflow, ExecutionFiles: closure, LinuxJobs: []string{"contract", "linux", "web"}, MacOSJobs: []string{"macos"}, CompatibilityJobs: comp, DevelopmentJobs: []string{"contract", "development"}, RequiredSteps: steps, RunnerLabels: labels, OptionalSkippedJobs: []string{"development", "compatibility", "compatibility ()"}}
 	b.RootTemplate = AuthorityRoot{Version: 1, MaxRequests: 128, CoordinatorDigest: binary, ControlRef: "main", IntegrationRef: "develop", CurrentControl: revision, Controls: map[string]ControlRequirement{revision: b.Requirement}, RoutingEnabled: false}
-	b.PolicyTemplate = Policy{Version: 1, Profile: "throughput", Reason: "UNSIGNED TEMPLATE; actual owner/validity/rollback and merged policy required", Limits: Limits{MaxChanges: 10, MaxAgeSeconds: 21600, LeadTimeSeconds: 1800}}
+	b.PolicyTemplate = Policy{Version: 1, Profile: "throughput", RollbackRoute: "main-full", Reason: "UNSIGNED TEMPLATE; actual owner/validity/rollback and merged policy required", Limits: Limits{MaxChanges: 10, MaxAgeSeconds: 21600, LeadTimeSeconds: 1800}}
 	return b, nil
 }

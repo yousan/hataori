@@ -1,5 +1,5 @@
-// Package cipolicy plans integration coverage. It performs no dispatch, merge,
-// cancellation, deployment, or release authorization.
+// Package cipolicy implements a trusted, explicitly opted-in CI coordinator.
+// It never issues authority, cancels proof, deploys, or authorizes a release.
 package cipolicy
 
 import (
@@ -57,6 +57,7 @@ type Policy struct {
 	StartsAt         time.Time `json:"starts_at"`
 	ExpiresAt        time.Time `json:"expires_at"`
 	RollbackRevision string    `json:"rollback_revision"`
+	RollbackRoute    string    `json:"rollback_route,omitempty"`
 	Limits           Limits    `json:"limits"`
 }
 
@@ -70,16 +71,16 @@ type Selection struct {
 }
 
 type Report struct {
-	Profile, Owner, Reason, Revision, Digest, RollbackRevision string
-	StartsAt, ExpiresAt                                        time.Time
-	Limits                                                     Limits
-	FullOnly                                                   bool
-	BlockedReason                                              string
+	Profile, Owner, Reason, Revision, Digest, RollbackRevision, RollbackRoute string
+	StartsAt, ExpiresAt                                                       time.Time
+	Limits                                                                    Limits
+	FullOnly                                                                  bool
+	BlockedReason                                                             string
 }
 
 func (s Selection) Report(now time.Time) Report {
 	r := Report{Profile: s.policy.Profile, Owner: s.policy.Owner, Reason: s.policy.Reason,
-		Revision: s.revision, Digest: s.digest, RollbackRevision: s.policy.RollbackRevision,
+		Revision: s.revision, Digest: s.digest, RollbackRevision: s.policy.RollbackRevision, RollbackRoute: s.policy.RollbackRoute,
 		StartsAt: s.policy.StartsAt, ExpiresAt: s.policy.ExpiresAt, Limits: s.policy.Limits}
 	r.BlockedReason = s.invalid
 	if r.BlockedReason == "" {
@@ -148,8 +149,20 @@ func resolveApproved(source Source, trust Trust) Selection {
 		p.StartsAt.IsZero() || !p.ExpiresAt.After(p.StartsAt) {
 		return fail("policy needs owner, reason and bounded validity")
 	}
-	if !revisionOK(p.RollbackRevision) || p.RollbackRevision == trust.Revision || !digestOK(trust.Approved[p.RollbackRevision]) {
-		return fail("rollback revision is not separately approved")
+	switch p.RollbackRoute {
+	case "", "revision":
+		if !revisionOK(p.RollbackRevision) || p.RollbackRevision == trust.Revision || !digestOK(trust.Approved[p.RollbackRevision]) {
+			return fail("rollback revision is not separately approved")
+		}
+	case "main-full":
+		// The first real policy can fall back to the existing stricter main
+		// route. No predecessor/future policy SHA or synthetic genesis is needed.
+		// The caller stops new routing; this never grants main Done/merge rights.
+		if p.RollbackRevision != "" {
+			return fail("main-full rollback cannot select a revision")
+		}
+	default:
+		return fail("unknown rollback route")
 	}
 	// Bound arithmetic before converting seconds to time.Duration.
 	const maxSeconds = int64((1<<63 - 1) / int64(time.Second))
@@ -216,7 +229,7 @@ func uniqueKeys(b []byte) error {
 // these exact schema spellings, including when an alias appears only once.
 func canonicalKey(name string) bool {
 	switch name {
-	case "version", "profile", "owner", "reason", "starts_at", "expires_at", "rollback_revision", "limits", "max_changes", "max_age_seconds", "lead_time_seconds":
+	case "version", "profile", "owner", "reason", "starts_at", "expires_at", "rollback_revision", "rollback_route", "limits", "max_changes", "max_age_seconds", "lead_time_seconds":
 		return true
 	}
 	return false

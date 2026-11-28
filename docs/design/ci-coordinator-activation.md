@@ -216,6 +216,13 @@ promotion stays with #1104 and existing operator owners.
 
 ## Actual identities, permissions and proof still needed
 
+The real `.github/ci-policy.json` is a source prerequisite, not an identity field
+in the unsigned bundle. The first approved policy can use `rollback_route:
+"main-full"` with empty `rollback_revision`, retaining the current control and
+turning new routing off as its stricter fallback. It needs no synthetic genesis
+control or future SHA. Default revision mode retains separately approved rollback
+source requirements. See the [first-control contract](ci-owner-adapter.md).
+
 Public read-only API queries resolve the repository ID, workflow ID/path/active
 state, immutable source/digests, actual reviews, run/attempt/jobs and observed
 main evidence. Owners must identify which numeric accounts hold dispatcher,
