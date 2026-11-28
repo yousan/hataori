@@ -28,15 +28,22 @@ dashboard serving. Native stream cleanup drains the canceled producer channel.
 The existing browser server still uses its previous Close lifecycle; this
 change does not certify a join of all browser work.
 
-One deeper lifecycle gate remains: `core.(*api).Terminal` cancels its child
-Runner.Terminal channel but does not join it, both on exit and when switching
-to a newer session. The nested remote-terminal producer can still be finishing
-a store read after the outer channel closes. Native HTTP cannot join that
-hidden child itself. This pre-existing core path needs a scoped owner release
-and a child cancel-and-drain fix with a held-child regression before claiming
-that every native terminal producer ends before store.Close. No core or runner
-production file was edited. Current `core.go` owners are PRs #1002, #1003,
-#1005, #1010, #1012, #1013, #1043 and #1118; their hunks and gates remain intact.
+The nested Terminal lifecycle finding is now repaired in the specifically
+authorized `core.(*api).Terminal` hunks: cancel/drain the current Runner child
+before closing the API channel, and cancel/drain the old child before opening
+a replacement. Cancellation during the join prevents a replacement start.
+Replacement open failure retains the closed old channel for safe deferred
+cleanup; replacement still starts with empty run/zero position, with no replay.
+Held-child fixtures cover these exit, success, open-error and cancellation
+paths. No Runner production code was edited.
+
+This is a limited supervisor handoff, not a release of other owners' hunks.
+#1003 reports no ownership/reservation/unpublished producer delta. Immediately
+before editing, #1118 head `5b8dcf01bf61198940a4ac32eb685f6ddb9aacb5` changed
+only Core's adapter-capability field and selected-agent research preflight;
+its published reservation does not include Terminal/Runner producer work.
+Those hunks are disjoint and preserved. Other owner tests, branches and review
+gates are retained without imports or overwrites.
 
 ## Private transport
 
@@ -109,7 +116,14 @@ emits the empty WebSocket session. However, `web/src/session.ts` still adopts
 stored credentials: the proposed minimum native bootstrap branch must ignore
 browser link/storage adoption on the fixed native origin. This source hunk and
 its necessary generated entry asset/index reference remain held pending
-explicit decisions from all page owners #1013/#1054/#1108. No page source,
+explicit decisions from #1054/#1108. #1013 explicitly released only the native
+link/storage bypass, any needed entry initialization, and corresponding JS
+bundle/index script reference; its later source-preserving rebuild need not
+keep the same bundle hash. Its control StartUnlisted:true, native permissions
+and unlisted source/generated behavior stay protected. That release does not
+release #1054's AllThreads/Details/api/catalog entry rebuild or #1108's worker
+UI entry/CSS rebuild; neither owner's source/build hunk has been changed.
+Fresh narrow requests are recorded on each of those PRs. No page source,
 index, generated assets, stylesheet or workflow was edited. Real Electron
 custom-scheme fetch/SSE/duplex integration belongs to step 2 and is unverified.
 
@@ -143,7 +157,7 @@ The current integration order is #1115 → #1109 → #967 → #968.
 | --- | --- |
 | Private socket, ownership/mode/link/long-path and cross-user refusal | Transport guard tests pass locally; executed Darwin ACL and privileged cross-user evidence are missing. |
 | Owner Caller only by listener identity | Unix HTTP/daemon fixtures and separate authority review cover this boundary; TCP/header/bearer promotion is refused. |
-| Existing page, reads/streams/writes/operate and native bootstrap | HTTP/asset and API/stream/WS fixtures pass; page bootstrap release and nested core Terminal join remain held. |
+| Existing page, reads/streams/writes/operate and native bootstrap | HTTP/asset and API/stream/WS fixtures pass; nested core child joins are repaired/tested; page bootstrap shared build remains held by #1054/#1108. |
 | Host/Origin/method/route/isolation and browser sign-in | Hostile requests fail; complete dashboard package and focused parallel-browser daemon tests cover browser regressions. |
 | Busy incompatible root/version discovery without lock deletion or duplicate daemon | Transport binding tests and disposable daemon duplicate/version/restart fixtures cover this. |
 | Public formats and tests that fail without guards | No control/event wire change; private HTTP setup is specified above; transport and HTTP overlay records prove behavioral guard failures. |
@@ -159,6 +173,14 @@ reproduce with `python3 docs/notes/desktop-listener/check_http_guards.py`.
 Go overlays use disposable files and never mutate repository sources.
 Compilation failures are not counted as behavioral evidence.
 
+`terminal-validation.json` records the separately authorized core Terminal
+delta, with source hashes, three behavioral guard removals and serial/race
+held-child tests plus focused native dashboard/daemon regression runs.
+Reproduce with `python3 docs/notes/desktop-listener/check_terminal_guards.py`.
+Its fixtures use only disposable in-process metadata/fake producers and start
+no agents or host processes. Older records retain their original component
+boundaries; the new record supersedes their previously unmet nested-child gate.
+
 The daemon fixtures run no agents, chat services or tmux. They exercise explicit
 startup, separate owner Caller, parallel browser sign-in, busy/incompatible
 lock/discovery preservation, shutdown and restart. HTTP fixtures exercise page
@@ -171,8 +193,8 @@ cross-user acceptance remains unmet. Darwin libc/ACL/mount fixtures have not
 executed here. No real Mac, local tmux/full suite, production/configuration,
 service, credential or host operation is part of this work.
 
-Still required for #1071: scoped core Terminal child-stream join release/fix;
-explicit page/bootstrap releases and implementation;
+Still required for #1071: #1054/#1108 minimum shared page/build releases and
+native bootstrap implementation;
 executed supported-platform ACL/cross-user security acceptance; fresh final
 independent implementation and authority reviews; every preserved mandatory
 Claude/provider review gate; full required Linux/macOS CI on the final head and
