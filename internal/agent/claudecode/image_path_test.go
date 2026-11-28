@@ -22,7 +22,7 @@ func TestImagePathLinesAreText(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("confined=%v: %q pasted as %q, want %q", confine != nil, tt.text, got, tt.want)
 			}
-			if twice := noImagePaths(got); twice != got {
+			if twice := noImagePaths(got, false); twice != got {
 				t.Errorf("confined=%v: pasting twice changes %q into %q", confine != nil, got, twice)
 			}
 		}
@@ -41,9 +41,56 @@ func TestImagePathLinesAreText(t *testing.T) {
 
 func TestOrdinaryShellKeepsImagePaths(t *testing.T) {
 	c := (&Adapter{}).NewCodec(agent.Spec{}).(*codec)
-	for _, text := range []string{"!cat /tmp/example.png", "!cat example.png", "!printf ok\nmore text"} {
+	for _, text := range []string{"!cat /tmp/example.png", "!cat example.png", "!printf ok\nmore text",
+		"!printf '%s\\n' \\\nexample.png", "!printf '%s\\n' \\\n'example image.png'"} {
 		if got := c.pasteText(text); got != text {
 			t.Errorf("shell command %q pasted as %q", text, got)
+		}
+	}
+}
+
+func TestImageNamesDoNotChangeProseOrOrdinaryCommands(t *testing.T) {
+	for _, confine := range []*agent.Confinement{nil, {}} {
+		c := (&Adapter{}).NewCodec(agent.Spec{Confine: confine}).(*codec)
+		for _, text := range []string{"Explain example.png", "Answer about example.png", "/compact Focus on example.png", "/rename example.png"} {
+			want := text
+			if confine != nil {
+				want = noCommand(text)
+			}
+			if got := c.pasteText(text); got != want {
+				t.Errorf("confined=%v: %q pasted as %q, want %q", confine != nil, text, got, want)
+			}
+		}
+	}
+}
+
+func TestOrdinaryCommandDoesNotHideLaterImagePaths(t *testing.T) {
+	c := (&Adapter{}).NewCodec(agent.Spec{}).(*codec)
+	text := "/review example.png\n/tmp/after.png"
+	want := "/review example.png\n" + commandPrefix + "/tmp/after.png"
+	if got := c.pasteText(text); got != want {
+		t.Fatalf("%q pasted as %q, want %q", text, got, want)
+	}
+}
+
+func TestRootImageNamesStayProtected(t *testing.T) {
+	for _, confine := range []*agent.Confinement{nil, {}} {
+		c := (&Adapter{}).NewCodec(agent.Spec{Confine: confine}).(*codec)
+		for _, path := range []string{"\"/root image.png\"", "'/root image.png'", "/root\\ image.png", "/root.png /tmp/after.png"} {
+			for _, lead := range []string{"", "Look at this\n"} {
+				text := lead + path
+				want := lead + commandPrefix + path
+				if got := c.pasteText(text); got != want {
+					t.Errorf("confined=%v: %q pasted as %q, want %q", confine != nil, text, got, want)
+				}
+			}
+		}
+		if confine != nil {
+			text := "Look at this\n/root image.png"
+			want := "Look at this\n" + commandPrefix + "/root image.png"
+			if got := c.pasteText(text); got != want {
+				t.Errorf("confined root image: %q, want %q", got, want)
+			}
 		}
 	}
 }

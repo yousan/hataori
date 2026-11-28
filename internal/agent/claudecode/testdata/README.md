@@ -467,3 +467,15 @@ The rewritten captures send no image and report the follow-up input on its
 own. `command_images: null` with zero `command_requests` records that no API
 observation was available before the follow-up, rather than claiming no
 attachment; the follow-up always has an observed request.
+
+The message rewrite retains conservative protection for standalone basenames,
+but leaves prose ending in a basename unchanged. Ordinary shell continuations
+protect absolute paths only: the raw relative-name cases above attach nothing,
+and adding a word to a relative shell argument would change its syntax. The
+shell captures demonstrate absolute continuations, not relative continuations.
+An ordinary opening slash-command head is preserved independently of its
+arguments; later lines still pass through image-path protection. This syntax
+policy treats an ambiguous unquoted root name with spaces as a command in an
+ordinary opening line; quoted/escaped root names and image-suffix heads stay
+protected. Confined inputs have no slash-command exemption. Prepared-clipboard
+behavior and ambiguous unquoted root names are outside the captured matrix.

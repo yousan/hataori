@@ -314,20 +314,27 @@ const atSignNote = "In every message you are given, each at sign (@) is written 
 func (c *codec) pasteText(text string) string {
 	text = cleanPaste(text)
 	if c.spec.Confine == nil {
-		if first := strings.TrimLeftFunc(text, unicode.IsSpace); strings.HasPrefix(first, "!") {
-			// Keep the opening shell command line. The CLI still scans
-			// subsequent lines of the same paste for image paths.
+		first := strings.TrimLeftFunc(text, unicode.IsSpace)
+		shell := strings.HasPrefix(first, "!")
+		if shell || imageSlashCommand.MatchString(first) {
+			// Keep the opening native command line. Later absolute paths
+			// still attach, but relative shell continuations must stay valid.
 			end := strings.IndexAny(first, "\r\n")
 			if end < 0 {
 				return text
 			}
 			end += len(text) - len(first)
-			return text[:end] + noImagePaths(text[end:])
+			return text[:end] + noImagePaths(text[end:], shell)
 		}
-		return noImagePaths(text)
+		return noImagePaths(text, false)
 	}
-	return noImagePaths(noCommand(strings.ReplaceAll(noControls(text), "@", atSign)))
+	return noImagePaths(noCommand(strings.ReplaceAll(noControls(text), "@", atSign)), false)
 }
+
+// Only an ordinary opening line may be a native slash command. Treat a
+// root name followed by arguments as command syntax; quote or escape an
+// ambiguous root image name with spaces. Confined inputs get no exemption.
+var imageSlashCommand = regexp.MustCompile(`^/[A-Za-z][A-Za-z0-9_:-]*(?:[ \t]|$)`)
 
 // noImagePaths keeps a line naming an image from becoming an attachment.
 // The CLI reads image paths at paste time, before it reports the prompt;
@@ -336,8 +343,10 @@ func (c *codec) pasteText(text string) string {
 // and escaped paths, without looking at any file or the clipboard. Lines
 // already quoted by a wake or reminder need no prefix. The CLI removes
 // terminal color sequences before recognizing paths, so classify without
-// those sequences, but keep the original line after any prefix.
-func noImagePaths(text string) string {
+// those sequences, but keep the original line after any prefix. In shell
+// continuations only absolute paths are candidates: captured relative names
+// attach nothing, and prefixing them would change the shell's syntax.
+func noImagePaths(text string, shell bool) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		first := strings.TrimSpace(controlSequence.ReplaceAllString(line, ""))
@@ -346,14 +355,8 @@ func noImagePaths(text string) string {
 		}
 		path := strings.Trim(first, `"'`)
 		absolute := strings.HasPrefix(path, "/") || strings.HasPrefix(path, `\`) || len(path) > 2 && path[1] == ':'
-		if !absolute && strings.ContainsAny(path, `/\`) {
-			continue // words before a path already keep it from attaching
-		}
-		if next := imagePathSeparator.FindStringIndex(first); next != nil {
-			head := strings.Trim(first[:next[0]], `"'`)
-			if strings.HasPrefix(head, "/") && !strings.Contains(head[1:], "/") && !imagePathEnd.MatchString(strings.ReplaceAll(head, "\\", "")) {
-				continue // a slash command before a path is not a path list
-			}
+		if !absolute && (shell || strings.ContainsAny(path, `/\`) || strings.IndexFunc(path, unicode.IsSpace) >= 0) {
+			continue // relative shell names and words before paths stay text
 		}
 		if imagePathEnd.MatchString(strings.ReplaceAll(first, "\\", "")) {
 			lines[i] = commandPrefix + line
@@ -363,7 +366,6 @@ func noImagePaths(text string) string {
 }
 
 var imagePathEnd = regexp.MustCompile(`(?i)\.(png|jpe?g|gif|webp)["']?$`)
-var imagePathSeparator = regexp.MustCompile(` ["']?(?:/|[A-Za-z]:\\)`)
 
 // noControls is text without its control characters but line feeds and
 // tabs: nothing in it starts an escape sequence, which a terminal or the

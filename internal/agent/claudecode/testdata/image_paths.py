@@ -30,7 +30,7 @@ from mention import API, KEY, environ, written
 
 PREFIX = "(message) "
 IMAGE_END = re.compile(r"\.(png|jpe?g|gif|webp)[\"']?$", re.I)
-PATH_SEPARATOR = re.compile(r" [\"']?(?:/|[A-Za-z]:\\)")
+SLASH_COMMAND = re.compile(r"^/[A-Za-z][A-Za-z0-9_:-]*(?:[ \t]|$)")
 TEXTS = [
     ("whole_inside", "{cwd}/{p}-whole.png"),
     ("line_inside", "Look at this\n{cwd}/{p}-line.png\nthen answer"),
@@ -56,19 +56,14 @@ TEXTS = [
 ]
 
 
-def no_images(text):
+def no_images(text, shell=False):
     lines = text.split("\n")
     for i, line in enumerate(lines):
         first = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", line).strip()
         path = first.strip("\"'")
         absolute = path.startswith(("/", "\\")) or len(path) > 2 and path[1] == ":"
-        if not absolute and ("/" in path or "\\" in path):
+        if not absolute and (shell or "/" in path or "\\" in path or any(c.isspace() for c in path)):
             continue
-        next_path = PATH_SEPARATOR.search(first)
-        if next_path:
-            head = first[:next_path.start()].strip("\"'")
-            if head.startswith("/") and "/" not in head[1:] and not IMAGE_END.search(head.replace("\\", "")):
-                continue
         if not first.startswith((PREFIX, "> ")) and IMAGE_END.search(first.replace("\\", "")):
             lines[i] = PREFIX + line
     return "\n".join(lines)
@@ -78,12 +73,13 @@ def rewritten(text, confined=False):
     if confined:
         return no_images(written(text))
     first = text.lstrip()
-    if first.startswith("!"):
+    shell = first.startswith("!")
+    if shell or SLASH_COMMAND.match(first):
         end = re.search(r"[\r\n]", first)
         if end is None:
             return text
         offset = len(text) - len(first) + end.start()
-        return text[:offset] + no_images(text[offset:])
+        return text[:offset] + no_images(text[offset:], shell)
     return no_images(text)
 
 
