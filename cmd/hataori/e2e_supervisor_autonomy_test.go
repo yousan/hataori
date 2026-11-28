@@ -135,7 +135,7 @@ func (f *svAutonomy) propose(t *testing.T, tool string, args map[string]any) int
 // Approve and Refuse, and returns it.
 func (f *svAutonomy) shown(t *testing.T, n int64) fakesurface.Call {
 	t.Helper()
-	return f.buttons(t, fmt.Sprintf("Proposal %d of the supervisor: ", n))
+	return f.buttons(t, fmt.Sprintf("Proposal %d of the supervisor:", n))
 }
 
 // buttons waits for a post in the supervisor's thread that starts with
@@ -247,8 +247,8 @@ func TestAutonomyProposedSend(t *testing.T) {
 	w, _ := f.wt.worker(t, f.owner, "c1", "w", "reply w")
 	n := f.propose(t, supervisor.ToolSend, map[string]any{"number": int64(w), "text": "reply ordered"})
 	q := f.shown(t, n)
-	if want := fmt.Sprintf("Proposal %d of the supervisor: send to thread %d", n, w); !strings.HasPrefix(q.Message.Text, want) ||
-		!strings.HasSuffix(q.Message.Text, "?\nreply ordered") {
+	if want := fmt.Sprintf("Proposal %d of the supervisor:", n); !strings.HasPrefix(q.Message.Text, want) ||
+		!strings.HasSuffix(q.Message.Text, "\n"+(&fakesurface.Driver{}).Verbatim("reply ordered")) {
 		t.Fatalf("the proposal's post: %q", q.Message.Text)
 	}
 	d, err := f.owner.Thread(ctx, f.sv.ID, 0, 0)
@@ -310,7 +310,7 @@ func TestAutonomyProposedStart(t *testing.T) {
 	threads := f.threadsIn(t)
 	n := f.propose(t, supervisor.ToolStart, map[string]any{"repo": f.wt.repo, "text": "reply started"})
 	q := f.shown(t, n)
-	if !strings.Contains(q.Message.Text, "start a thread in "+f.wt.repo) || !strings.HasSuffix(q.Message.Text, "?\nreply started") {
+	if !strings.Contains(q.Message.Text, "start a thread in "+f.wt.repo) || !strings.HasSuffix(q.Message.Text, "\n"+(&fakesurface.Driver{}).Verbatim("reply started")) {
 		t.Fatalf("the proposal's post: %q", q.Message.Text)
 	}
 	time.Sleep(300 * time.Millisecond)

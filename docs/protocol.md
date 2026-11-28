@@ -48,6 +48,8 @@ Events are stored, and a reader reads them from a position, possibly long after 
 
 **Text is optional.** Every field that holds text written by a person or an agent (prompts, answers, questions, terminal output) is optional, so it can be left out for a reader that may not read it.
 
+**Approval text validation.** A proposed `Start` or `Send`, and `AskInterrupt`'s reason, is refused before its request/event is stored if its text exceeds 32 KiB, is not UTF-8, or contains characters that do not show. These are controls other than line feed/tab, format and default-ignorable characters, and blank letters. U+200D and U+FE0F are allowed only inside listed Unicode 18.0 emoji sequences; extra selectors/joiners and tag characters are refused. The existing `error` response names the refused character and its one-based UTF-8 byte position. This validation and literal chat presentation (#884) add no message, field, event or error code and change no encoding or protocol version.
+
 ## Messages
 
 ### Message `hello`

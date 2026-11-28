@@ -9,6 +9,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/yousan/hataori/internal/approvaltext"
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
@@ -31,6 +32,9 @@ func (a *api) AskInterrupt(ctx context.Context, id control.ThreadID, key, reason
 	var askScope string
 	if err := a.c.Store.DB.QueryRowContext(ctx, `SELECT scope FROM threads WHERE id = ?`, a.caller.AsksIn).Scan(&askScope); err != nil || askScope != scope {
 		return "", a.refused("AskInterrupt", scope, "approval thread is not in the scope")
+	}
+	if err := approvaltext.Validate(reason); err != nil {
+		return "", fmt.Errorf("core: interrupt reason: %w", err)
 	}
 	var handle control.RequestID
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
