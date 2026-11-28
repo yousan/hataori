@@ -64,7 +64,7 @@ func hookRoot(t *testing.T, hooks ...[2]string) (*chatRoot, *func(string) (strin
 		}
 		hs = append(hs, m)
 	}
-	manifest, _ := json.Marshal(map[string]any{"id": "p", "version": "0.1.0", "protocol": "3.18", "hooks": hs, "conversation": true})
+	manifest, _ := json.Marshal(map[string]any{"id": "p", "version": "0.1.0", "protocol": wire.Version, "hooks": hs, "conversation": true})
 	if err := os.WriteFile(filepath.Join(dir, plugin.ManifestFile), manifest, 0o600); err != nil {
 		t.Fatal(err)
 	}
