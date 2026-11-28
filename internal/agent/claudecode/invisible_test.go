@@ -231,3 +231,55 @@ func TestEquivalentInvisiblePromptsKeepTheirOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestInvisibleNormalizationDoesNotConsumeATaskNotification(t *testing.T) {
+	file := filepath.Join("testdata/2.1.322", held+"07-UserPromptSubmit.json")
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p payload
+	if err := json.Unmarshal(b, &p); err != nil || !notification(p.Prompt) {
+		t.Fatalf("captured notification: %v", err)
+	}
+	for _, text := range []string{p.Prompt + "\u200b", strings.Replace(p.Prompt, "<task-", "<task-\u200b", 1)} {
+		for _, reconnect := range []bool{false, true} {
+			c := (&Adapter{}).NewCodec(agent.Spec{TakenIn: true, ResumeID: p.SessionID}).(*codec)
+			paste := c.pasteText(text)
+			a, err := c.Input(agent.Input{ID: "unsubmitted", Text: text, Written: reconnect, WrittenText: &paste})
+			if err != nil || c.sent == nil || !reconnect && len(a.Keys) != 1 {
+				t.Fatalf("paste reconnect=%v: %+v, %v", reconnect, a, err)
+			}
+			a = c.Decode(agent.Hook, envelope("notification", file, b))
+			if len(a.Events) == 0 || a.Events[0].StartedBy != agent.ByAgent || a.Events[0].Input != "" || c.sent == nil || len(c.pasted) != 1 {
+				t.Fatalf("notification consumed the editor reconnect=%v: %+v, sent %+v, pasted %+v", reconnect, a, c.sent, c.pasted)
+			}
+		}
+	}
+}
+
+// A deliberately mutated captured report models an unknown normalization,
+// not an observed CLI behavior. Such ambiguity cannot be positive evidence
+// that a later held input was submitted, releasing that editor's fence.
+func TestAmbiguousInvisibleReportDoesNotReleaseALaterInput(t *testing.T) {
+	for _, name := range []string{"extra_ordinary_start", "extra_ordinary_resume", "extra_confined_start", "extra_confined_resume"} {
+		for _, mc := range invisibleCases(t, name) {
+			if mc.Case != "arabic_joiner" {
+				continue
+			}
+			c := invisibleCodec(name, mc.Reports[0])
+			for i, text := range []string{mc.Text, strings.ReplaceAll(mc.Text, "\u200d", "")} {
+				paste := c.pasteText(text)
+				c.Input(agent.Input{ID: []string{"earlier", "later"}[i], Text: text, Written: true, WrittenText: &paste})
+			}
+			var report map[string]any
+			json.Unmarshal(mc.Reports[0], &report)
+			report["prompt"] = strings.ReplaceAll(mc.Prompts[0], "\u200d", "")
+			mutated, _ := json.Marshal(report)
+			a := c.Decode(agent.Hook, envelope("mutated", "", mutated))
+			if len(a.Events) == 0 || a.Events[0].StartedBy != agent.ByTerminal || a.Events[0].Input != "" || len(c.unconfirmed) != 2 || len(c.pasted) != 2 || c.sent == nil {
+				t.Fatalf("%s: ambiguous report consumed a pending input: %+v, unconfirmed %q, pasted %+v", name, a, c.unconfirmed, c.pasted)
+			}
+		}
+	}
+}

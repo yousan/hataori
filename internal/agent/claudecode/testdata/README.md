@@ -512,7 +512,17 @@ be reconstructed by hand.
 
 Attribution compares the real report with the expected report of the saved
 paste, consuming equivalent inputs in paste order. Report text itself is
-not stripped of joining/selector characters. Pasting still uses the original
+not stripped of joining/selector characters. Normalization never widens
+attribution to a task-notification-shaped report; it does not acknowledge
+held text or a live paste that only normalizes to it. The existing raw-exact
+live caller quote remains a caller message for background-task accounting;
+that pre-existing format ambiguity is not resolved here. An earlier unmatched
+paste that could coincide under unknown joining/selector removal withholds
+attribution to a later held input. This broad ambiguity check never proves
+delivery; its regression deliberately mutates a captured report and does
+not claim that the CLI was observed emitting that variant.
+
+Pasting still uses the original
 rewrite: removing invisible characters before pasting would change #915's
 image-recognition stage. The existing unconfirmed-editor fence also applies
 to the warning: when submission cannot be proved, timeout reports failure

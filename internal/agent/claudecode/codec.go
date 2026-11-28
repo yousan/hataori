@@ -1413,11 +1413,20 @@ func denyWrite(path string) []byte {
 // agent's own, and anything else was typed at the terminal.
 func (c *codec) starter(prompt string) (agent.Starter, string) {
 	text := normalize(unwrapPaste(prompt))
+	notice := notification(prompt)
+	shadowed := false
 	for i, p := range c.pasted {
 		held := slices.Contains(c.leftover, p.id) || slices.Contains(c.unconfirmed, p.id)
-		if held && notification(prompt) {
-			// A notification starts a turn with the box as it is, also
-			// one that is the text of the input that may be in it.
+		if notice && (held || p.older != nil || p.text != text) {
+			// A notification does not consume the editor. Normalization
+			// must not widen attribution to it. Retain the existing raw-exact
+			// live caller-quote behavior used by background task accounting.
+			continue
+		}
+		if held && shadowed {
+			// An earlier unresolved paste could have produced this report
+			// under an unrecognized normalization. It cannot release a later
+			// editor merely because that later input matches it exactly.
 			continue
 		}
 		// Compare the report with what the CLI reports of the actual paste,
@@ -1430,8 +1439,9 @@ func (c *codec) starter(prompt string) (agent.Starter, string) {
 			}
 			return agent.ByCaller, p.id
 		}
+		shadowed = shadowed || p.mayShow(text)
 	}
-	if notification(prompt) {
+	if notice {
 		return agent.ByAgent, ""
 	}
 	return agent.ByTerminal, ""
@@ -1510,6 +1520,26 @@ func (q queued) shows(prompt string) bool {
 		forms = []string{q.text}
 	}
 	return slices.ContainsFunc(forms, func(t string) bool { return normalize(shown(t)) == p })
+}
+
+// mayShow is deliberately broader than shows: unknown joining/selector
+// handling may make a report ambiguous. It can only withhold attribution
+// to a later held input, never acknowledge this one or release its editor.
+func (q queued) mayShow(prompt string) bool {
+	loose := func(text string) string {
+		return normalize(strings.Map(func(r rune) rune {
+			if unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Variation_Selector, r) {
+				return -1
+			}
+			return r
+		}, shown(text)))
+	}
+	forms := q.older
+	if forms == nil {
+		forms = []string{q.text}
+	}
+	p := loose(prompt)
+	return slices.ContainsFunc(forms, func(t string) bool { return loose(t) == p })
 }
 
 // normalize is the text an input and a prompt are compared by: trimmed,
