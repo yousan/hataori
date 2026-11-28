@@ -2003,7 +2003,9 @@ commit together. Reconnect reconciles only that original run/key/bytes after
 retained-read/readiness checks; written clocks come from actual receiver
 completion and are preserved across reconstructions. Host receipt is not an
 agent ACK. A pending receipt fences later codec I/O; consumed later actions
-require reconstruction before writing. Cached exact ACK restoration propagates
+require reconstruction before writing. Later input/answer rows stay in the
+recovery horizon and wait before entering the codec, so an input held without
+an emitted action cannot be enqueued twice after recovery. Cached exact ACK restoration propagates
 store failures and reconstructs again rather than losing the acknowledgement.
 A complete receiver rejection (including non-evicting capacity exhaustion) is
 terminal, distinct from an ambiguous connection failure. Global terminal holder

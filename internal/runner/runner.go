@@ -1408,6 +1408,13 @@ func (r *Runner) handOver(lv *live, pending int64, answer bool, f func() (agent.
 		// retain this row in the recovery horizon, including held answers.
 		lv.upTo = max(lv.upTo, pending)
 	}
+	if lv.deferredBlocked {
+		// Do not give an unwritten later row to a codec that could hold it
+		// without emitting an action. Recovery will hand that durable row
+		// over once, after reconciling the original receiver receipt.
+		lv.warmPending, lv.pending = true, true
+		return core.ErrMachineUnchecked
+	}
 	a, err := f()
 	if err != nil && answer {
 		recordErr := r.refusePendingAnswer(lv.id, pending)

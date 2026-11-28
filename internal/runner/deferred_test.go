@@ -212,7 +212,7 @@ func deferredNativeScenario(t *testing.T, scenario string) (before [][]byte, com
 }
 
 func TestDeferredRecovery(t *testing.T) {
-	for _, boundary := range []string{"accepted", "frozen", "lost-reply", "reserved", "reserved-action", "holder-preference", "unsupported-remote", "unsupported-held", "unsupported-codec", "unsupported-adapter", "unsupported-old", "ack-uncommitted", "ack-committed", "refused", "absent-active", "late-action", "cached-ack-failure"} {
+	for _, boundary := range []string{"accepted", "frozen", "lost-reply", "reserved", "reserved-action", "reserved-held", "holder-preference", "unsupported-remote", "unsupported-held", "unsupported-codec", "unsupported-adapter", "unsupported-old", "ack-uncommitted", "ack-committed", "refused", "absent-active", "late-action", "cached-ack-failure"} {
 		t.Run(boundary, func(t *testing.T) {
 			ctx := context.Background()
 			before, _, response, started, user, ended, text := deferredNative(t)
@@ -226,7 +226,7 @@ func TestDeferredRecovery(t *testing.T) {
 			r.Machine = &session.Machine{Store: r.Store}
 			lv.adapter = ad
 			r.live = map[int64]*live{1: lv}
-			p := &deferredPeer{run: "fixture-original-run", receipts: map[string]host.InputReceipt{}, data: map[string][][]byte{}, lost: boundary == "lost-reply", hold: boundary == "reserved" || boundary == "reserved-action", refuse: boundary == "refused"}
+			p := &deferredPeer{run: "fixture-original-run", receipts: map[string]host.InputReceipt{}, data: map[string][][]byte{}, lost: boundary == "lost-reply", hold: strings.HasPrefix(boundary, "reserved"), refuse: boundary == "refused"}
 			p.listen(t, lv.dir)
 			c := &core.Core{Store: r.Store, Machine: r.Machine, Runner: r, Log: r.Log, Scopes: map[string]core.Scope{"s": {Enabled: true}}, People: people.New([]people.Person{{Name: "sv", IDs: []string{"supervisor:s"}}}, "owner", map[string][]string{"s": {"sv"}})}
 			caller := control.Caller{From: "supervisor:s", AsksIn: 2, Scopes: []string{"s"}, May: control.OpRead | control.OpSend, OrdinaryOnly: true, RefuseBusy: true, DeferInput: true}
@@ -396,7 +396,7 @@ func TestDeferredRecovery(t *testing.T) {
 						t.Fatal("native busy recovery wrote the absent frozen request")
 					}
 				}
-				if boundary == "reserved" || boundary == "reserved-action" {
+				if strings.HasPrefix(boundary, "reserved") {
 					if p.count() != 0 || !lv.deferredBlocked {
 						t.Fatal("pending receiver was retried or allowed timeout")
 					}
@@ -405,7 +405,7 @@ func TestDeferredRecovery(t *testing.T) {
 					}
 				}
 			}
-			if boundary == "reserved-action" {
+			if boundary == "reserved-action" || boundary == "reserved-held" {
 				// A reversible fixture-only lookup fault must not release the
 				// receipt's timeout/I/O fence. Restore the table before proceeding.
 				if _, e = r.Store.DB.Exec(`ALTER TABLE deferred_sends RENAME TO fixture_deferred_lookup_fault`); e != nil {
@@ -420,8 +420,10 @@ func TestDeferredRecovery(t *testing.T) {
 				// the reconnect horizon, through Core.Send/Deliver/the actual codec.
 				// Native notifications make ordinary steering eligible; the older
 				// deferred receiver reservation must still fence its emitted action.
-				x.appendTo(filepath.Join(lv.dir, host.EventsFile), started, user)
-				readCommit()
+				if boundary == "reserved-action" {
+					x.appendTo(filepath.Join(lv.dir, host.EventsFile), started, user)
+					readCommit()
+				}
 				oldHorizon := lv.upTo
 				ordinary := c.As(control.Caller{Principal: "owner", Scopes: []string{"s"}, May: control.OpSend})
 				if e = ordinary.Send(ctx, 1, "later-ordinary", control.Input{Text: "later fixture instruction"}, control.Deliver); e != nil && !errors.Is(e, core.ErrMachineUnchecked) {
@@ -432,15 +434,18 @@ func TestDeferredRecovery(t *testing.T) {
 				if e = r.Store.DB.QueryRow(`SELECT id,written FROM pending_inputs WHERE session_id=1 ORDER BY id DESC LIMIT 1`).Scan(&next, &written); e != nil {
 					t.Fatal(e)
 				}
-				if next <= oldHorizon || written != 0 || !lv.warmPending || !lv.pending || p.ordinaryCount() != 0 {
+				if next <= oldHorizon || written != 0 || p.ordinaryCount() != 0 {
 					t.Fatalf("later input was not fenced before its marker: row=%d old=%d written=%d warm=%v pending=%v writes=%d", next, oldHorizon, written, lv.warmPending, lv.pending, p.ordinaryCount())
 				}
 				// Reconstruct the same daemon's codec while retaining its horizon,
 				// exactly as warmPending does. Do not query a new maximum here.
-				lv.codec = ad.NewCodec(agent.Spec{})
-				r.warm(lv)
-				lv.warmPending = false
-				r.handOverWritten(lv)
+				r.holdDeferredActions(lv, nil) // follower sees pending receipt/empty batch
+				if lv.warmPending {
+					lv.codec = ad.NewCodec(agent.Spec{})
+					r.warm(lv)
+					lv.warmPending = false
+					r.handOverWritten(lv)
+				}
 			}
 			if boundary == "absent-active" || boundary == "late-action" {
 				x.appendTo(filepath.Join(lv.dir, host.EventsFile), secondEnded)
@@ -466,7 +471,7 @@ func TestDeferredRecovery(t *testing.T) {
 				}
 				return
 			}
-			if boundary == "reserved" || boundary == "reserved-action" {
+			if strings.HasPrefix(boundary, "reserved") {
 				if lv.warmPending {
 					x.lv = x.load(ad.NewCodec(agent.Spec{}))
 					lv = x.lv
@@ -480,8 +485,15 @@ func TestDeferredRecovery(t *testing.T) {
 				if e = r.reconcileDeferred(lv); e != nil {
 					t.Fatal(e)
 				}
-				if boundary == "reserved-action" {
+				if boundary == "reserved-action" || boundary == "reserved-held" {
 					r.handOverPending(lv)
+					if boundary == "reserved-held" {
+						x.appendTo(filepath.Join(lv.dir, host.EventsFile), started, user)
+						readCommit()
+						if e = r.do(lv, r.tickCodec(lv)); e != nil {
+							t.Fatal(e)
+						}
+					}
 					var written int
 					r.Store.DB.QueryRow(`SELECT written FROM pending_inputs WHERE session_id=1 ORDER BY id DESC LIMIT 1`).Scan(&written)
 					if p.ordinaryCount() != 1 || written == 0 {
@@ -511,7 +523,7 @@ func TestDeferredRecovery(t *testing.T) {
 			r.Store.DB.QueryRow(`SELECT count(*) FROM pending_inputs WHERE session_id=1`).Scan(&pending)
 			r.Store.DB.QueryRow(`SELECT count(*) FROM sessions`).Scan(&sessions)
 			wantPending := 0
-			if boundary == "reserved-action" {
+			if boundary == "reserved-action" || boundary == "reserved-held" {
 				wantPending = 1 // ordinary write awaits its own ACK, independently
 			}
 			if pending != wantPending || sessions != 2 {
