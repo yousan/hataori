@@ -400,6 +400,16 @@ func stream[T any](s *Server, w http.ResponseWriter, r *http.Request, open func(
 		fail(w, err)
 		return
 	}
+	if listenerOfRequest(r).native != nil {
+		// Native shutdown joins this handler before closing its API/store.
+		// Cancellation alone does not join the producer behind a stream:
+		// it may still be finishing a store read or a host-screen request.
+		defer func() {
+			cancel()
+			for range ch {
+			}
+		}()
+	}
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("X-Accel-Buffering", "no") // a proxy must pass each message on at once
