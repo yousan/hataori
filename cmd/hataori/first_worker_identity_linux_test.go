@@ -147,26 +147,27 @@ func TestFirstWorkerProcChildrenFallback(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			eventually(t, "fallback fixture tree ready", 5*time.Second, func() bool {
-				_, err := os.Stat(filepath.Join(directory, "0"))
-				return err == nil
+			pids := []int{os.Getpid()}
+			eventually(t, "all fallback fixture PID markers complete", 5*time.Second, func() bool {
+				ready := []int{os.Getpid()}
+				for _, depth := range []string{"2", "1", "0"} {
+					b, err := os.ReadFile(filepath.Join(directory, depth))
+					if err != nil || !bytes.HasSuffix(b, []byte("\n")) {
+						return false
+					}
+					pid, err := strconv.Atoi(strings.TrimSuffix(string(b), "\n"))
+					if err != nil || pid <= 1 {
+						return false
+					}
+					ready = append(ready, pid)
+				}
+				pids = ready
+				return true
 			})
 			// Only this fixture's processes and the test parent appear in the
 			// private proc view. Stat links read their actual kernel metadata;
 			// missing interfaces are simulated without scanning shared processes.
 			view := t.TempDir()
-			pids := []int{os.Getpid()}
-			for _, depth := range []string{"2", "1", "0"} {
-				b, err := os.ReadFile(filepath.Join(directory, depth))
-				if err != nil {
-					t.Fatal(err)
-				}
-				pid, err := strconv.Atoi(string(b))
-				if err != nil {
-					t.Fatal(err)
-				}
-				pids = append(pids, pid)
-			}
 			if pids[1] != record.process.Pid {
 				t.Fatal("fallback tree root is not the creator child")
 			}

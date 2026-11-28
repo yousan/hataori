@@ -314,7 +314,7 @@ func firstWorkerTree(args []string) int {
 		}
 		defer func() { child.Process.Signal(syscall.SIGTERM); child.Wait() }()
 	}
-	if err := os.WriteFile(filepath.Join(args[0], args[1]), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(args[0], args[1]), []byte(strconv.Itoa(os.Getpid())+"\n"), 0600); err != nil {
 		return 2
 	}
 	<-stop
