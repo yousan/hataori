@@ -33,10 +33,17 @@ func TestInputBatchExplicitRefusalDiffersFromLostReply(t *testing.T) {
 }
 
 func batchPeer(t *testing.T, h *host) *Client {
+	c, _ := batchPeerUntilClosed(t, h)
+	return c
+}
+
+func batchPeerUntilClosed(t *testing.T, h *host) (*Client, <-chan struct{}) {
 	t.Helper()
 	s, c := net.Pipe()
+	done := make(chan struct{})
 	t.Cleanup(func() { c.Close(); s.Close() })
 	go func() {
+		defer close(done)
 		defer s.Close()
 		d, e := json.NewDecoder(s), json.NewEncoder(s)
 		for {
@@ -49,7 +56,7 @@ func batchPeer(t *testing.T, h *host) *Client {
 			}
 		}
 	}()
-	return &Client{conn: c, dec: json.NewDecoder(c)}
+	return &Client{conn: c, dec: json.NewDecoder(c)}, done
 }
 
 func TestInputBatchSurvivesLostReplyAndConcurrentRetry(t *testing.T) {
@@ -61,7 +68,7 @@ func TestInputBatchSurvivesLostReplyAndConcurrentRetry(t *testing.T) {
 		once.Do(func() { close(entered); <-release })
 		return got.Write(b)
 	})
-	c := batchPeer(t, h)
+	c, receiverDone := batchPeerUntilClosed(t, h)
 	cap, err := c.InputCapability()
 	if err != nil || cap.Run != h.run {
 		t.Fatalf("capability: %+v %v", cap, err)
@@ -71,6 +78,12 @@ func TestInputBatchSurvivesLostReplyAndConcurrentRetry(t *testing.T) {
 	go func() { c.InputBatch(b); close(done) }()
 	<-entered
 	c.Close() // the daemon loses the reply while its receiver continues
+	<-done    // disconnected client completion does not imply receiver completion
+	select {
+	case <-receiverDone:
+		t.Fatal("receiver stopped before its controlled write completed")
+	default:
+	}
 	other := batchPeer(t, h)
 	r, err := other.InputBatch(b)
 	if err != nil || r.State != "pending" {
@@ -81,8 +94,8 @@ func TestInputBatchSurvivesLostReplyAndConcurrentRetry(t *testing.T) {
 		t.Fatalf("in-flight lookup: %+v %v", lookup, err)
 	}
 	close(release)
-	<-done
-	// Reading the cached completion synchronizes with the entire write.
+	<-receiverDone // the original handler persisted the receipt before losing its reply
+	// Reading cached completion now synchronizes with the entire write.
 	r, err = other.InputBatch(b)
 	if err != nil || r.State != "written" || r.CompletedAt == 0 {
 		t.Fatalf("reconnected: %+v %v", r, err)
