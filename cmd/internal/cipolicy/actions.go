@@ -424,18 +424,29 @@ func (a *Adapter) run(ctx context.Context, c verifiedControl, s Sweep, id int64,
 	if err := a.request(ctx, "GET", fmt.Sprintf("%s/actions/runs/%d/attempts/%d", a.prefix(), id, attempt), nil, &r); err != nil {
 		return r, err
 	}
-	if r.ID != id || r.RunAttempt != attempt || r.Repository.ID != a.root.RepositoryID || r.Repository.FullName != a.root.Repository || r.HeadRepository.ID != a.root.RepositoryID || r.HeadSHA != s.Target || r.WorkflowID != c.requirement.WorkflowID || r.Path != c.requirement.WorkflowPath || r.Event != "workflow_dispatch" || r.Title != sweepTitle(s) || s.Control != c.revision || s.Digest != c.selection.digest || s.Authority != c.authority || r.Actor != a.root.Dispatcher || r.TriggeringActor != a.root.Dispatcher {
-		return r, fmt.Errorf("run repository/event/attempt/target/control/workflow/scope mismatch")
+	if err := a.runIdentity(r, c, s, id, attempt); err != nil {
+		return r, err
 	}
-	// A target may contain application changes, but cannot change the approved
-	// workflow or any declared executed control source and still earn credit.
+	return r, a.executionClosure(ctx, c, s.Target)
+}
+
+func (a *Adapter) runIdentity(r runRecord, c verifiedControl, s Sweep, id int64, attempt int) error {
+	if r.ID != id || r.RunAttempt != attempt || r.Repository.ID != a.root.RepositoryID || r.Repository.FullName != a.root.Repository || r.HeadRepository.ID != a.root.RepositoryID || r.HeadSHA != s.Target || r.WorkflowID != c.requirement.WorkflowID || r.Path != c.requirement.WorkflowPath || r.Event != "workflow_dispatch" || r.Title != sweepTitle(s) || s.Control != c.revision || s.Digest != c.selection.digest || s.Authority != c.authority || r.Actor != a.root.Dispatcher || r.TriggeringActor != a.root.Dispatcher {
+		return fmt.Errorf("run repository/event/attempt/target/control/workflow/scope mismatch")
+	}
+	return nil
+}
+
+// Only immutable target contents are shared. Mutable approvals/run state are
+// freshly read by each caller; a dispatch receipt is not full-test evidence.
+func (a *Adapter) executionClosure(ctx context.Context, c verifiedControl, target string) error {
 	for p, digest := range c.requirement.ExecutionFiles {
-		b, err := a.content(ctx, s.Target, p)
+		b, err := a.content(ctx, target, p)
 		if err != nil || Digest(b) != digest {
-			return r, fmt.Errorf("target modified approved execution closure")
+			return fmt.Errorf("target modified approved execution closure")
 		}
 	}
-	return r, nil
+	return nil
 }
 
 func (a *Adapter) completion(ctx context.Context, c verifiedControl, s Sweep, id int64, attempt int) (*Completion, error) {
@@ -680,10 +691,13 @@ type Intent struct {
 	Status  string
 }
 
-func (a *Adapter) find(ctx context.Context, c verifiedControl, s Sweep) (int64, error) {
+// Discovery does not claim approval. Only the subsequent current-run and full
+// completion verification credit the unique ID, without rereading the entire
+// immutable execution closure once per discovery/verification phase.
+func (a *Adapter) discoverRun(ctx context.Context, c verifiedControl, s Sweep) (int64, error) {
 	var found int64
-	seen := map[int64]bool{}
 	total := -1
+	seen := map[int64]bool{}
 	for page := 1; page <= 10; page++ {
 		var batch struct {
 			Total int         `json:"total_count"`
@@ -696,33 +710,39 @@ func (a *Adapter) find(ctx context.Context, c verifiedControl, s Sweep) (int64, 
 		if total < 0 {
 			total = batch.Total
 		}
-		if total != batch.Total || total > 1000 {
-			return 0, fmt.Errorf("dispatch reconciliation incomplete")
+		if total != batch.Total || total < 0 || total > 1000 {
+			return 0, fmt.Errorf("candidate run enumeration unstable")
 		}
-		for _, r := range batch.Runs {
-			if seen[r.ID] {
-				return 0, fmt.Errorf("unstable run pagination")
+		for _, run := range batch.Runs {
+			if run.ID <= 0 || seen[run.ID] {
+				return 0, fmt.Errorf("candidate run identity ambiguous")
 			}
-			seen[r.ID] = true
-			if r.Title != sweepTitle(s) {
+			seen[run.ID] = true
+			if run.Title != sweepTitle(s) {
 				continue
 			}
-			if _, err := a.run(ctx, c, s, r.ID, 1); err != nil {
-				return 0, err
-			}
 			if found != 0 {
-				return 0, fmt.Errorf("duplicate matching runs; quarantine")
+				return 0, fmt.Errorf("duplicate frozen candidate run")
 			}
-			found = r.ID
+			found = run.ID
 		}
 		if len(batch.Runs) < 100 {
 			if len(seen) != total {
-				return 0, fmt.Errorf("incomplete run list")
+				return 0, fmt.Errorf("candidate run enumeration incomplete")
 			}
 			return found, nil
 		}
 	}
-	return 0, fmt.Errorf("dispatch reconciliation truncated")
+	return 0, fmt.Errorf("candidate run enumeration incomplete")
+}
+
+func (a *Adapter) find(ctx context.Context, c verifiedControl, s Sweep) (int64, error) {
+	id, err := a.discoverRun(ctx, c, s)
+	if err != nil || id == 0 {
+		return id, err
+	}
+	_, err = a.run(ctx, c, s, id, 1)
+	return id, err
 }
 
 type dispatchRequest struct {
@@ -749,11 +769,8 @@ func (a *Adapter) prepareDispatch(ctx context.Context, c verifiedControl, s Swee
 	if workflow.ID != c.requirement.WorkflowID || workflow.Path != c.requirement.WorkflowPath || workflow.State != "active" {
 		return dispatchRequest{}, fmt.Errorf("registered workflow contract mismatch")
 	}
-	for p, d := range c.requirement.ExecutionFiles {
-		b, err := a.content(ctx, s.Target, p)
-		if err != nil || Digest(b) != d {
-			return dispatchRequest{}, fmt.Errorf("dispatch execution closure mismatch")
-		}
+	if err := a.executionClosure(ctx, c, s.Target); err != nil {
+		return dispatchRequest{}, err
 	}
 	ref := dispatchRef(s)
 	var record struct{ Object struct{ SHA string } }

@@ -60,6 +60,9 @@ func (s *Store) PrepareBootstrap(ctx context.Context, a *Adapter) (Intent, error
 		if lanes != 0 {
 			return ErrInitialized
 		}
+		if err := candidateIDAvailable(ctx, conn, a.root.Bootstrap.Sweep.ID, ""); err != nil {
+			return err
+		}
 		seal, existing, err := bootstrapIntent(ctx, conn)
 		if err == nil {
 			if seal != a.bootstrapSeal() {
@@ -264,6 +267,9 @@ func (s *Store) RecoverBootstrap(ctx context.Context, a *Adapter, reason string)
 		}
 		if !s.clock().Before(a.root.ExpiresAt) || c.selection.Report(s.clock()).FullOnly {
 			return fmt.Errorf("bootstrap recovery expired")
+		}
+		if err = candidateIDAvailable(ctx, conn, next.Sweep.ID, ""); err != nil {
+			return err
 		}
 		var reused int
 		if err = conn.QueryRowContext(ctx, "SELECT count(*) FROM bootstrap_archive WHERE seal=? OR intent=?", a.bootstrapSeal(), next.Sweep.ID).Scan(&reused); err != nil {

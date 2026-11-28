@@ -99,6 +99,9 @@ func OpenStore(file string) (*Store, error) {
 	// Compatible additive schema: never replace an existing lane or debt.
 	if err := s.transaction(context.Background(), func(c *sql.Conn) error {
 		for _, q := range []string{
+			`CREATE TABLE IF NOT EXISTS candidate_run_authority (id TEXT PRIMARY KEY, snapshot BLOB NOT NULL)`,
+			`CREATE TABLE IF NOT EXISTS candidate_intent (candidate_id TEXT PRIMARY KEY, intent TEXT NOT NULL UNIQUE, sweep BLOB NOT NULL, status TEXT NOT NULL CHECK(status IN ('prepared','uncertain','bound','retired')), run INTEGER NOT NULL, attempt INTEGER NOT NULL)`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS one_candidate_send ON candidate_intent((1)) WHERE status IN ('prepared','uncertain')`,
 			`CREATE TABLE IF NOT EXISTS candidate_invalidation (id TEXT PRIMARY KEY, owner TEXT NOT NULL, reason TEXT NOT NULL, at TEXT NOT NULL)`,
 			`CREATE TABLE IF NOT EXISTS candidate (id TEXT PRIMARY KEY, pull INTEGER NOT NULL, revision INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('frozen','verified','main_verified','invalidated')), tuple BLOB NOT NULL, evidence BLOB, main_evidence BLOB)`,
 			`CREATE UNIQUE INDEX IF NOT EXISTS one_candidate ON candidate((1)) WHERE status IN ('frozen','verified')`,
