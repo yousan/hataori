@@ -202,7 +202,10 @@ export function Conversation(props: { x: ThreadInfo; subscribe: (f: (e: Event) =
             return;
           }
           add(evs);
-          if (evs[0].pos <= newest) return;
+          if (evs[0].pos <= newest) {
+            setFailed(false);
+            return;
+          }
           before = evs[0].pos;
         }
       } catch {

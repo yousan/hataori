@@ -32,6 +32,7 @@ type machinePageAPI struct {
 	queries        chan struct{}
 	workspaceError bool
 	history        []control.Event
+	historyError   bool
 }
 
 func (a *machinePageAPI) Threads(context.Context, control.Filter) ([]control.ThreadInfo, error) {
@@ -57,13 +58,25 @@ func (*machinePageAPI) Clients(context.Context) ([]control.ClientState, error) {
 func (*machinePageAPI) HostTerminals(context.Context) ([]control.HostTerminal, error) {
 	return nil, control.ErrForbidden
 }
-func (a *machinePageAPI) ThreadEvents(_ context.Context, id control.ThreadID, _ uint64, _ int) ([]control.Event, error) {
+func (a *machinePageAPI) ThreadEvents(_ context.Context, id control.ThreadID, before uint64, limit int) ([]control.Event, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if id != 1 {
 		return nil, nil
 	}
-	return append([]control.Event(nil), a.history...), nil
+	if a.historyError {
+		return nil, fmt.Errorf("fixture history unavailable")
+	}
+	var events []control.Event
+	for _, e := range a.history {
+		if before == 0 || e.Pos < before {
+			events = append(events, e)
+		}
+	}
+	if len(events) > limit {
+		events = events[len(events)-limit:]
+	}
+	return events, nil
 }
 func (a *machinePageAPI) Workspace(ctx context.Context, id control.ThreadID) (control.WorkspaceState, error) {
 	d, err := a.Thread(ctx, id, 0, 0)
@@ -111,8 +124,9 @@ func (a *machinePageAPI) Events(ctx context.Context, _ control.Filter, _ uint64)
 	ch := make(chan control.Event, 16)
 	ch <- control.Event{Kind: control.CaughtUp, Pos: a.pos}
 	a.streams = append(a.streams, ch)
-	// The server owns cancellation; channels stay open to avoid a send/close
-	// race while a canceled Strict Mode subscription is being replaced.
+	// The server owns cancellation. Normally channels stay open while a
+	// canceled Strict Mode subscription is replaced; the reconnect test
+	// explicitly closes and removes them under the same mutex as senders.
 	return ch, nil
 }
 func (a *machinePageAPI) away() {
@@ -350,6 +364,46 @@ func TestDashboardMachineConversationCache(t *testing.T) {
 			b.click(`.tree [data-thread="2"]`)
 			b.click(`button[data-view=conversation]`)
 			b.until("empty pending conversation has no cached history", `(() => { const el = document.querySelector('[data-conversation="2"]'); return el?.querySelector('[data-output-unavailable]') && !el.querySelector('[data-output-unavailable]').dataset.historyObserved && !el.querySelector('.conv-text'); })()`)
+		})
+	}
+}
+
+// disconnectEvents ends only streams created by this disposable fixture.
+// All fixture send/close operations hold mu, and the closed channels are
+// removed before later Events or availability calls can use them.
+func (a *machinePageAPI) disconnectEvents() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, ch := range a.streams {
+		close(ch)
+	}
+	a.streams = nil
+}
+
+func TestDashboardMachineConversationRecovery(t *testing.T) {
+	for _, lang := range []string{"en", "ja"} {
+		t.Run(lang, func(t *testing.T) {
+			a, b := machinePage(t, lang)
+			a.mu.Lock()
+			for i := 1; i <= 100; i++ {
+				a.history = append(a.history, control.Event{Kind: "text", Thread: 1, Scope: "visible", Pos: uint64(i), Time: time.Date(2026, 1, 2, 3, 4, 0, 0, time.UTC), Data: []byte(`{"text":"fixture recovery output"}`)})
+			}
+			a.history[99].Kind = "tool_started"
+			a.history[99].Data = []byte(`{"id":"fixture-recovery-tool","tool":"fixture recovery tool"}`)
+			a.mu.Unlock()
+			b.click(`.tree [data-thread="1"]`)
+			b.until("conversation switch", `!!document.querySelector('button[data-view=conversation]')`)
+			b.click(`button[data-view=conversation]`)
+			b.until("full history page loaded", `document.querySelectorAll('.conv-list > li').length === 100`)
+			a.mu.Lock()
+			a.historyError = true
+			a.mu.Unlock()
+			a.disconnectEvents()
+			b.until("failed history catch-up retains output", `document.querySelector('.conversation [data-output-unavailable]')?.textContent.includes('(') && document.querySelectorAll('.conv-list > li').length === 100`)
+			a.mu.Lock()
+			a.historyError = false
+			a.mu.Unlock()
+			b.until("full overlapping history page recovers", fmt.Sprintf(`!document.querySelector('.conversation [data-output-unavailable]') && document.querySelector('.conv-tool-detail')?.textContent.includes(%q) && document.querySelectorAll('.conv-list > li').length === 100`, map[string]string{"en": "still running", "ja": "実行中"}[lang]))
 		})
 	}
 }
