@@ -778,6 +778,14 @@ func (r *Runner) endEarlier(ctx context.Context, id int64, dir string) error {
 		case <-stopped:
 			return nil
 		case <-deadline:
+			r.at("earlier stop deadline")
+			// Both may be ready: an elapsed deadline does not undo a
+			// confirmed end and a stop that has already returned.
+			select {
+			case <-stopped:
+				return nil
+			default:
+			}
 		case <-ctx.Done():
 		}
 	}
