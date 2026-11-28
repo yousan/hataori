@@ -69,6 +69,10 @@ flaky-test fixes. Never rerun a queued macOS job to improve its position.
 
 ## Target phases: development, integration, release
 
+Repository implementations: [frozen candidate evidence](ci-release-candidate.md)
+and [public authority/initial-control handoff](ci-authority-handoff.md).
+These callable, unadopted components do not enable live promotion or routing.
+
 The target separates development feedback from release authorization.
 An opt-in integration branch (`develop` is the proposed name) is proposed; `main` stays the default and the
 operator's upgrade source until an explicitly approved compatible change.

@@ -61,6 +61,7 @@ func Bundle(repo, revision, binary string) (ActivationBundle, error) {
 		labels[name] = []string{"ubuntu-24.04"}
 	}
 	b.ExecutionFiles = closure
+	b.Commands = append(b.Commands, "ci-coordinator candidate-freeze AUTHORITY_DIR --pull N", "ci-coordinator candidate-verify AUTHORITY_DIR --pull N", "ci-coordinator candidate-main AUTHORITY_DIR --pull N", "ci-coordinator candidate-status AUTHORITY_DIR --pull N", "ci-coordinator candidate-invalidate AUTHORITY_DIR --reason DIAGNOSIS")
 	b.Requirement = ControlRequirement{WorkflowPath: ProofWorkflow, ExecutionFiles: closure, LinuxJobs: []string{"contract", "linux", "web"}, MacOSJobs: []string{"macos"}, CompatibilityJobs: comp, DevelopmentJobs: []string{"contract", "development"}, RequiredSteps: steps, RunnerLabels: labels, OptionalSkippedJobs: []string{"development", "compatibility", "compatibility ()"}}
 	b.RootTemplate = AuthorityRoot{Version: 1, MaxRequests: 128, CoordinatorDigest: binary, ControlRef: "main", IntegrationRef: "develop", CurrentControl: revision, Controls: map[string]ControlRequirement{revision: b.Requirement}, RoutingEnabled: false}
 	b.PolicyTemplate = Policy{Version: 1, Profile: "throughput", RollbackRoute: "main-full", Reason: "UNSIGNED TEMPLATE; actual owner/validity/rollback and merged policy required", Limits: Limits{MaxChanges: 10, MaxAgeSeconds: 21600, LeadTimeSeconds: 1800}}

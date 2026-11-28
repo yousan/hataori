@@ -27,6 +27,7 @@ type Coordinator struct {
 func NewCoordinator(a *Adapter, s *Store) *Coordinator { return &Coordinator{a, s} }
 
 type Outcome struct {
+	Candidate      *CandidateReport `json:",omitempty"`
 	Operation      string
 	Revision       int64
 	Policy         Report
@@ -49,6 +50,9 @@ func (c *Coordinator) Recover(ctx context.Context, reason string) (Outcome, erro
 }
 
 func (c *Coordinator) execute(ctx context.Context, operation string, pull int, run int64, reason string) (Outcome, error) {
+	if strings.HasPrefix(operation, "candidate-") {
+		return c.candidateOperation(ctx, operation, pull, reason)
+	}
 	if operation == "integrate" {
 		return c.integrate(ctx, pull)
 	}
@@ -297,7 +301,7 @@ func RunCLI(ctx context.Context, args []string, out io.Writer, binary string) in
 	var run int64
 	reason := ""
 	if len(args) == 4 && args[2] == "--reason" {
-		if (op != "recover" && op != "bootstrap-recover") || strings.TrimSpace(args[3]) == "" || len(args[3]) > 4096 {
+		if (op != "recover" && op != "bootstrap-recover" && op != "candidate-invalidate") || strings.TrimSpace(args[3]) == "" || len(args[3]) > 4096 {
 			writeCLI(out, Outcome{}, errors.New("recovery diagnosis required"))
 			return 2
 		}
@@ -319,6 +323,13 @@ func RunCLI(ctx context.Context, args []string, out io.Writer, binary string) in
 		}
 	}
 	allowed := map[string]bool{"bootstrap": true, "bootstrap-prepare": true, "bootstrap-pump": true, "observe": true, "admission": true, "integrate": true, "pump": true, "status": true, "control-transition": true, "done": true, "summary": true, "recover": true, "bootstrap-recover": true}
+	for _, name := range []string{"candidate-freeze", "candidate-verify", "candidate-main", "candidate-status", "candidate-invalidate"} {
+		allowed[name] = true
+	}
+	if strings.HasPrefix(op, "candidate-") && ((op != "candidate-invalidate" && pull == 0) || (op == "candidate-invalidate" && reason == "")) {
+		writeCLI(out, Outcome{}, errors.New("candidate identity or diagnosis required"))
+		return 2
+	}
 	if !allowed[op] || ((op == "admission" || op == "done" || op == "integrate") && pull == 0) || (op == "summary" && run == 0) || ((op == "recover" || op == "bootstrap-recover") && reason == "") {
 		writeCLI(out, Outcome{}, errors.New("invalid operation arguments"))
 		return 2
@@ -337,12 +348,17 @@ func RunCLI(ctx context.Context, args []string, out io.Writer, binary string) in
 		result.Intent = &i
 	} else if op == "recover" {
 		result, err = c.Recover(ctx, reason)
+	} else if op == "candidate-invalidate" {
+		result, err = c.execute(ctx, op, 0, 0, reason)
 	} else {
 		result, err = c.Execute(ctx, op, pull, run)
 	}
 	writeCLI(out, result, err)
 	if err != nil {
 		return 1
+	}
+	if result.Candidate != nil && !result.Candidate.PromotionAllowed {
+		return 1 // Evidence collected, but the unproved promotion gate stays closed.
 	}
 	if result.State != nil && result.State.Failed {
 		return 1
@@ -372,5 +388,5 @@ func writeCLI(w io.Writer, out Outcome, err error) {
 		Outcome Outcome
 		Closed  bool
 		Reason  string
-	}{out, err != nil || (out.State != nil && out.State.Failed) || (out.Route != nil && !out.Route.Allowed) || out.Policy.FullOnly, reason})
+	}{out, err != nil || (out.State != nil && out.State.Failed) || (out.Route != nil && !out.Route.Allowed) || (out.Candidate != nil && !out.Candidate.PromotionAllowed) || out.Policy.FullOnly, reason})
 }

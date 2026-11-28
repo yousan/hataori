@@ -108,6 +108,15 @@ jobs:
             CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -trimpath -o "$RUNNER_TEMP/hataori-$arch" ./cmd/hataori
             test -s "$RUNNER_TEMP/hataori-$arch"
           done
+      - name: Upload frozen candidate builds
+        if: startsWith(inputs.intent, 'candidate-')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-macos-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/hataori-arm64
+            ${{ runner.temp }}/hataori-amd64
+          if-no-files-found: error
 
   macos:
     needs: contract
