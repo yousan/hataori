@@ -192,7 +192,7 @@ func (c *codec) asyncQuestion(a *agent.Actions, p params) {
 		c.open = map[string]*openRequest{}
 	}
 	c.open[p.Item.ID] = &openRequest{async: true, thread: p.ThreadID, questions: qs}
-	info := &agent.RequestInfo{ID: p.Item.ID, Text: renderQuestions(qs)}
+	info := &agent.RequestInfo{ID: p.Item.ID, Text: renderQuestions(qs), NonBlocking: true}
 	if len(qs) == 1 {
 		for _, o := range qs[0].Options {
 			info.Choices = append(info.Choices, o.Label)

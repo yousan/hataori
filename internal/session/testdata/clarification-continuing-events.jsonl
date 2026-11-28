@@ -1,0 +1,14 @@
+{"kind":"request","data":{"approval":false,"choices":null}}
+{"kind":"turn_ended","data":{"background":0,"by":"caller","outcome":"blocked"}}
+{"kind":"state","data":{"from":"running","to":"waiting"}}
+{"kind":"tool_started","data":{"tool":"shell"}}
+{"kind":"tool_ended","data":{"tool":"shell"}}
+{"kind":"tool_started","data":{"tool":"codex_apps/github.add_issue_labels"}}
+{"kind":"tool_ended","data":{"tool":"codex_apps/github.add_issue_labels"}}
+{"kind":"tool_started","data":{"tool":"codex_apps/github.create_pull_request"}}
+{"kind":"tool_ended","data":{"tool":"codex_apps/github.create_pull_request"}}
+{"kind":"text","data":{"final":false}}
+{"kind":"tool_started","data":{"tool":"shell"}}
+{"kind":"tool_ended","data":{"tool":"shell"}}
+{"kind":"state","data":{"from":"waiting","to":"running"}}
+{"kind":"turn_started","data":{"by":"caller"}}

@@ -261,11 +261,15 @@ func Step(s Snapshot, in Input) (Result, error) {
 			return refuse()
 		}
 	case Answer:
-		if s.State != control.Waiting {
+		if s.State != control.Waiting && !(in.Request != "" && (inTurn || s.State == control.Idle)) {
 			return refuse()
 		}
-		to(control.Running, "")
-		start(OpenTurn{By: ByCaller, Principal: in.Principal, From: in.From}, in.Key)
+		// An asynchronous question can be answered in its original turn,
+		// or after that turn completed. Machine verifies the request is open.
+		if !inTurn {
+			to(control.Running, "")
+			start(OpenTurn{By: ByCaller, Principal: in.Principal, From: in.From}, in.Key)
+		}
 		d := given(in)
 		if in.Request != "" {
 			d["request"] = in.Request // the machine makes it the handle
@@ -411,11 +415,17 @@ func stepAgent(s Snapshot, in Input, r *Result,
 			return false
 		}
 		r.Out = append(r.Out, agentOut(e))
-		end(Ended{Outcome: Blocked, Background: e.Background, Subagents: e.Subagents})
-		to(control.Waiting, "")
+		if !e.Request.NonBlocking || e.Request.Approval {
+			end(Ended{Outcome: Blocked, Background: e.Background, Subagents: e.Subagents})
+			to(control.Waiting, "")
+		}
 	case agent.RequestWithdrawn:
 		if s.State != control.Waiting {
-			return false
+			if !live || e.Request == nil || e.Request.ID == "" {
+				return false
+			}
+			r.Out = append(r.Out, agentOut(e))
+			return true
 		}
 		r.Out = append(r.Out, agentOut(e))
 		to(control.Running, "")
