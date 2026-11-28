@@ -12,8 +12,16 @@ func (*Adapter) CanDeferInput() bool { return true }
 func (c *codec) DeferredInputReady(command [][]byte) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	_, thread, err := deferredCommand(command)
-	return err == nil && thread == c.session && c.ready && !c.closed && c.pendingReady == nil && c.nativeTurn == ""
+	id, thread, err := deferredCommand(command)
+	if err != nil || thread != c.session || !c.ready || c.closed || c.pendingReady != nil || c.nativeTurn != "" {
+		return false
+	}
+	for _, s := range c.sent {
+		if !s.steer && s.request != id {
+			return false // another requested turn has not been reconciled yet
+		}
+	}
+	return true
 }
 
 func deferredCommand(command [][]byte) (id int, thread string, err error) {

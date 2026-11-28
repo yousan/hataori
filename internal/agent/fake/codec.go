@@ -43,8 +43,9 @@ type codec struct {
 
 // written is an input written and not yet reported.
 type written struct {
-	id string
-	at time.Time // the first Tick after writing it
+	id           string
+	at           time.Time // the first Tick after writing it
+	awaitReceipt bool
 }
 
 func (c *codec) ReconcileHooks(waiting []string) agent.Actions {
@@ -330,8 +331,12 @@ var (
 func (c *codec) ended() agent.Actions {
 	c.running = false
 	var a agent.Actions
-	for _, in := range c.queue {
+	for i, in := range c.queue {
 		a = merge(a, c.write(in))
+		if in.IdleOnly {
+			c.queue = c.queue[i+1:]
+			return a // one complete deferred submission, never mixed with later input
+		}
 	}
 	c.queue = nil
 	return a
@@ -360,12 +365,13 @@ func (c *codec) Input(in agent.Input) (agent.Actions, error) {
 			for _, w := range c.waiting {
 				if w.id == in.ID {
 					w.at = in.WrittenAt
+					w.awaitReceipt = in.IdleOnly && in.WrittenAt.IsZero()
 					found = true
 					break
 				}
 			}
 			if !found {
-				c.waiting = append(c.waiting, &written{id: in.ID, at: in.WrittenAt})
+				c.waiting = append(c.waiting, &written{id: in.ID, at: in.WrittenAt, awaitReceipt: in.IdleOnly && in.WrittenAt.IsZero()})
 			}
 		}
 		return agent.Actions{}, nil
@@ -438,6 +444,10 @@ func (c *codec) Tick(now time.Time) agent.Actions {
 	var evs []agent.Event
 	kept := c.waiting[:0]
 	for _, w := range c.waiting {
+		if w.awaitReceipt {
+			kept = append(kept, w)
+			continue
+		}
 		switch {
 		case w.at.IsZero():
 			w.at = now
@@ -448,5 +458,9 @@ func (c *codec) Tick(now time.Time) agent.Actions {
 		kept = append(kept, w)
 	}
 	c.waiting = kept
-	return c.events(evs...)
+	a := c.events(evs...)
+	if !c.running && len(c.queue) != 0 {
+		a = merge(a, c.ended())
+	}
+	return a
 }

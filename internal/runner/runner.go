@@ -139,21 +139,22 @@ var _ core.Runner = (*Runner)(nil)
 
 // live is a session the runner follows.
 type live struct {
-	deferredBlocked bool
-	catchingUp      bool
-	catchupToken    string
-	id              int64
-	dir             string
-	adapter         agent.Adapter
-	spec            agent.Spec
-	codec           agent.Codec
-	client          *host.Client // to the session host: the relay of hook calls, and the first sign that it answers
-	started         time.Time
-	ready           bool  // the session left creating; no start check any more
-	resend          bool  // after a reconnect: send a first input that was not confirmed
-	pending         bool  // after a reconnect: hand over pending input once the logs are read
-	held            bool  // lv.mu is held from follow until the loop's first step has handed over the pending input
-	upTo            int64 // the last pending input there was at the reconnect; later ones are handed over by their call
+	deferredBlocked  bool
+	deferredProgress bool // current committed batch has ordinary I/O before any absent first attempt
+	catchingUp       bool
+	catchupToken     string
+	id               int64
+	dir              string
+	adapter          agent.Adapter
+	spec             agent.Spec
+	codec            agent.Codec
+	client           *host.Client // to the session host: the relay of hook calls, and the first sign that it answers
+	started          time.Time
+	ready            bool  // the session left creating; no start check any more
+	resend           bool  // after a reconnect: send a first input that was not confirmed
+	pending          bool  // after a reconnect: hand over pending input once the logs are read
+	held             bool  // lv.mu is held from follow until the loop's first step has handed over the pending input
+	upTo             int64 // the last pending input there was at the reconnect; later ones are handed over by their call
 	// drain is until when the agent, its session asleep, is still read
 	// before it is stopped: an agent may record a turn's last usage after
 	// the turn's end (agent.Event.Late). Zero: not asleep by hataori's hand.
@@ -1738,6 +1739,12 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 		lv.resend = true
 		r.handOverWritten(lv)
 	}
+	if ready, err := r.beforeDeferredRead(lv); err != nil || !ready {
+		if err != nil {
+			r.Log.Warn("deferred receiver probe waits", "session", lv.id, "err", err)
+		}
+		return true
+	}
 	exited := r.polled(lv.dir).Ended() // looked at before reading, so nothing written before the exit is missed
 	b := r.read(lv)
 	if b.err != nil {
@@ -1818,21 +1825,8 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 		r.Store.DB.QueryRow(`SELECT coalesce(max(id),0) FROM pending_inputs WHERE session_id=?`, lv.id).Scan(&lv.upTo)
 		return true
 	}
-	if err := r.reconcileDeferred(lv); err != nil {
-		r.holdDeferredActions(lv, b.actions)
-		r.Log.Warn("deferred input recovery waits", "session", lv.id, "err", err)
+	if !r.runReadActions(lv, b.actions) {
 		return true
-	}
-	if lv.deferredBlocked {
-		r.holdDeferredActions(lv, b.actions)
-		return true
-	}
-	for i, a := range b.actions {
-		r.act(lv, a)
-		if lv.deferredBlocked {
-			r.holdDeferredActions(lv, b.actions[i+1:])
-			return true
-		}
 	}
 	if len(lv.replayReplies) > 0 {
 		r.replayReplies(lv)

@@ -27,16 +27,17 @@ import (
 // receiver. That receiver is tested independently with a controlled writer in
 // host/input_batch_test.go. No process, terminal, CLI or provider is started.
 type deferredPeer struct {
-	mu         sync.Mutex
-	run        string
-	receipts   map[string]host.InputReceipt
-	data       map[string][][]byte
-	writes     int
-	bytes      []byte
-	lost, hold bool
-	refuse     bool
-	old        bool
-	ordinary   int
+	mu           sync.Mutex
+	run          string
+	receipts     map[string]host.InputReceipt
+	data         map[string][][]byte
+	writes       int
+	bytes        []byte
+	lost, hold   bool
+	refuse       bool
+	old          bool
+	ordinary     int
+	ordinaryData [][]byte
 }
 
 func (p *deferredPeer) listen(t *testing.T, dir string) {
@@ -73,6 +74,7 @@ func (p *deferredPeer) serve(c net.Conn) {
 		drop := false
 		if req.Op == "input" {
 			p.ordinary++
+			p.ordinaryData = append(p.ordinaryData, append([]byte(nil), req.Data...))
 		} else if req.Op == "input-capability" {
 			if p.old {
 				reply["error"] = "fixture old receiver has no capability"

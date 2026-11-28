@@ -192,6 +192,9 @@ func (c *codec) flush(a *agent.Actions) {
 	if !c.ready || c.closed || c.running || len(c.sent) > 0 || len(c.queue) == 0 {
 		return
 	}
+	if c.queue[0].IdleOnly && (len(a.Write) != 0 || len(a.Reply) != 0) {
+		return // finish ordinary cleanup/replies before emitting a deferred submission
+	}
 	in := c.queue[0]
 	c.queue = c.queue[1:]
 	p := map[string]any{"threadId": c.session, "input": []any{c.textInput(in.Text)}}
@@ -261,6 +264,10 @@ func (c *codec) Tick(now time.Time) agent.Actions {
 	}
 	remaining := c.sent[:0]
 	for _, s := range c.sent {
+		if s.input.IdleOnly && s.input.Written && s.input.WrittenAt.IsZero() {
+			remaining = append(remaining, s) // receiver has not proved a completed write
+			continue
+		}
 		// The app-server answers steer requests; if it exits, the session ends.
 		// Expiring one would incorrectly end the still-running turn.
 		if s.steer {
@@ -275,7 +282,7 @@ func (c *codec) Tick(now time.Time) agent.Actions {
 			if s.request != 0 {
 				delete(c.requests, s.request)
 				if !s.steer {
-					c.running = false
+					c.running = s.input.IdleOnly && c.nativeTurn != ""
 				}
 			}
 		} else {
@@ -392,6 +399,12 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 	method := c.requests[id]
 	delete(c.requests, id)
 	if m.Error != nil {
+		deferredFailure := false
+		for _, s := range c.sent {
+			if s.request == id && s.input.IdleOnly {
+				deferredFailure = true
+			}
+		}
 		c.rememberDeferred(id, deferredReply{err: true})
 		c.confirmDeferred(a, id)
 		msg := m.Error.Message
@@ -423,7 +436,7 @@ func (c *codec) response(a *agent.Actions, m message, line []byte) {
 					break
 				}
 			}
-			c.running = false
+			c.running = deferredFailure && c.nativeTurn != ""
 			c.flush(a)
 		default:
 			c.unknown(a, line)

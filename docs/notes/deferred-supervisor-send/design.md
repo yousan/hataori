@@ -284,3 +284,43 @@ runner/host fixtures locally; terminal E2E and full suites stay in CI.
 Final code requires separate independent implementation and authority reviews,
 applicable full ready-head checks and the actual merge-main push checks, merge
 and issue closure. Every existing explicit Claude gate remains with its owner.
+
+## Implementation review repair: ordinary native progress
+
+Independent implementation and authority reviews withheld implementation
+approval when pending-receipt reconstruction could strand or duplicate later
+ordinary input, or discard an automatic native RPC response. Both reviewers
+approved this narrow repair for implementation; that is not final-head approval.
+
+A receiver-proven absent request rechecks authority, target and questions before
+testing native idle. Absence is not uncertain I/O: ordinary native replies and
+codec ticks remain possible while only the frozen input's unstarted deadline is
+suspended. Another unacknowledged native turn/start also excludes eligibility.
+An already committed batch containing ordinary I/O cannot initiate absent bytes
+until a subsequent fresh read/commit. Frozen bytes/request/run/key never change.
+
+Before a new freeze, defer an emitted management action if later actions in that
+read batch contain any keys, writes or replies. Execute ordinary progress under
+existing policy, then reconstruct the still-unsent management input. The adapter
+also keeps IdleOnly input queued when the same action already contains cleanup
+or response writes. No mixed action is silently rendered or replayed as ordinary
+management input. A failed ordinary effect cannot authorize a later freeze in
+that batch. Return before first/pending handover whenever reconstruction is due.
+
+A pending/ambiguous receiver still fences I/O. Probe receipts before consuming
+new native output, without submitting absent bytes. While the receipt remains
+pending or unknown, leave that output unread so one-shot RPC responses are not
+checkpointed and discarded. Reconstruct all codec-held input before revisiting
+durable pending rows, even if the held input emitted no action and entered before
+the freeze. Preserve the recovery horizon for later accepted input/answers.
+Withdrawal/timeout/failure of the deferred input must preserve another known
+native turn's running state. Immediate sends keep their existing semantics.
+
+Required capture-backed regressions include absent/new question plus human
+answer, automatic native approval under active/dirty-idle/pending boundaries,
+same-batch ordinary response before freeze, mixed cleanup, pre-freeze and
+post-freeze held ordinary input, unstarted deadline versus ordinary tick
+progress, and withdrawal during another native turn. Adversarial orderings use
+immutable captured messages; they do not claim new live-provider observations.
+Guard removals must fail behavioral assertions. Final independent exact-head
+reviews and actual full head/main CI remain completion gates.

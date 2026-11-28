@@ -161,7 +161,7 @@ func (r *Runner) actDeferred(lv *live, a agent.Actions) (bool, error) {
 	// Only complete pipe submissions are supported. Terminal paste and submit
 	// have separate effects, even if transported in one byte batch.
 	if state, ok := lv.codec.(agent.DeferredInputCodec); !ok || !state.DeferredInputReady(a.Write) {
-		lv.warmPending, lv.pending, lv.deferredBlocked = true, true, true
+		lv.warmPending, lv.pending = true, true
 		return true, nil // no freeze/mark/write; reconstruct the held input
 	}
 	c, run, err := r.deferredClient(context.Background(), lv)
@@ -199,14 +199,6 @@ func (r *Runner) submitDeferred(lv *live, c *host.Client, input string, b core.D
 		return err
 	} // ambiguous connection: reconcile the original key
 	if got.State == "absent" {
-		state, ok := lv.codec.(agent.DeferredInputCodec)
-		if !ok {
-			return r.failDeferred(lv, input, "the codec cannot recheck current native idle eligibility")
-		}
-		if !state.DeferredInputReady(b.Command) {
-			lv.deferredBlocked = true
-			return nil
-		}
 		var denied error
 		err = r.Store.Update(context.Background(), func(tx *store.Tx) error {
 			denied = r.Deferred.BeforeAbsentTx(context.Background(), tx, lv.id, input)
@@ -220,6 +212,16 @@ func (r *Runner) submitDeferred(lv *live, c *host.Client, input string, b core.D
 		}
 		if denied != nil {
 			return r.failDeferred(lv, input, "authorization or question changed before the first receiver attempt")
+		}
+		state, ok := lv.codec.(agent.DeferredInputCodec)
+		if !ok {
+			return r.failDeferred(lv, input, "the codec cannot recheck current native idle eligibility")
+		}
+		if lv.deferredProgress || !state.DeferredInputReady(b.Command) {
+			// Proven absence is not uncertain I/O. Let ordinary native replies
+			// progress; only this input's unstarted timeout remains suspended.
+			lv.deferredBlocked = false
+			return nil
 		}
 		got, err = c.InputBatch(host.InputBatch{Run: b.Run, Key: b.Key, Data: b.Data})
 		if err != nil {
@@ -411,11 +413,99 @@ func (r *Runner) commitDeferredRestore(lv *live, a agent.Actions) error {
 // pending, reconstruct them from durable input/reply/read evidence before any
 // later write. Do not leave an unsent steer waiting forever for its ACK.
 func (r *Runner) holdDeferredActions(lv *live, actions []agent.Actions) {
-	lv.pending = true
+	// Even no-action inputs may already be held inside this codec from
+	// before the freeze. Reconstruct before revisiting their durable rows.
+	lv.pending, lv.warmPending = true, true
+}
+
+func actionsHaveIO(actions []agent.Actions) bool {
 	for _, a := range actions {
-		if len(a.Write) > 0 || len(a.Keys) > 0 || len(a.Reply) > 0 {
-			lv.warmPending = true
-			return
+		if len(a.Keys) != 0 || len(a.Write) != 0 || len(a.Reply) != 0 {
+			return true
 		}
 	}
+	return false
+}
+
+func deferredAction(a agent.Actions) bool {
+	for _, id := range a.Inputs {
+		if strings.HasPrefix(id, core.DeferredKeyPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// Probe before consuming fresh native output. A pending/unknown receiver must
+// not make one-shot native responses get committed and then lost on rewarm.
+// This is lookup-only: absence always proceeds through fresh read/commit and
+// policy/question validation before any first physical attempt.
+func (r *Runner) beforeDeferredRead(lv *live) (bool, error) {
+	if r.Deferred == nil {
+		return true, nil
+	}
+	if lv.warmPending {
+		return false, nil // Written restoration failed; reconstruct its exact ACK first
+	}
+	lv.deferredBlocked = false
+	all, err := r.Deferred.Handoffs(context.Background(), lv.id)
+	if err != nil {
+		lv.deferredBlocked = true
+		r.holdDeferredActions(lv, nil)
+		return false, err
+	}
+	for input, b := range all {
+		if b.Result == "written" {
+			continue
+		}
+		c, run, e := r.deferredClient(context.Background(), lv)
+		if e != nil {
+			lv.deferredBlocked = true
+			r.holdDeferredActions(lv, nil)
+			if r.polled(lv.dir).Ended() {
+				return true, nil // fresh output/exit and normal terminal reconciliation
+			}
+			return false, e
+		}
+		got, e := c.InputReceipt(b.Run, b.Key)
+		c.Close()
+		var refused *host.InputBatchRefused
+		if run != b.Run || errors.As(e, &refused) {
+			if e = r.failDeferred(lv, input, "the original receiver run was lost or explicitly refused reconciliation; no new receiver was used"); e != nil {
+				lv.deferredBlocked = true
+				return false, e
+			}
+			r.holdDeferredActions(lv, nil)
+			return false, nil
+		}
+		if e != nil || got.State == "pending" {
+			lv.deferredBlocked = true
+			r.holdDeferredActions(lv, nil)
+			return false, e
+		}
+		if got.State == "absent" {
+			lv.deferredBlocked = false
+			continue
+		}
+		if got.State != "written" || got.Digest != b.Digest || got.CompletedAt == 0 {
+			if e = r.failDeferred(lv, input, "the original receiver returned a failed or invalid receipt; not retried"); e != nil {
+				lv.deferredBlocked = true
+				return false, e
+			}
+			r.holdDeferredActions(lv, nil)
+			return false, nil
+		}
+		if e = r.Store.Update(context.Background(), func(tx *store.Tx) error {
+			return r.Deferred.ResultTx(context.Background(), tx, lv.id, input, "written", got.CompletedAt)
+		}); e != nil {
+			lv.deferredBlocked = true
+			r.holdDeferredActions(lv, nil)
+			return false, e
+		}
+		lv.deferredBlocked = false
+		if e = r.refreshDeferred(lv, input); e != nil {
+			return false, e
+		}
+	}
+	return true, nil
 }

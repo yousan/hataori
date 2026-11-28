@@ -2005,7 +2005,13 @@ completion and are preserved across reconstructions. Host receipt is not an
 agent ACK. A pending receipt fences later codec I/O; consumed later actions
 require reconstruction before writing. Later input/answer rows stay in the
 recovery horizon and wait before entering the codec, so an input held without
-an emitted action cannot be enqueued twice after recovery. Cached exact ACK restoration propagates
+an emitted action cannot be enqueued twice after recovery. A pending/unknown
+receipt is probed before new output is consumed. Proven absence allows ordinary
+native replies/ticks, rechecks questions before idle waiting, and suspends only
+the deferred input's pre-write deadline. Ordinary batch I/O completes before a
+subsequent fresh read can authorize absent bytes; an unfrozen input waits rather
+than acquiring a fence around remaining one-shot native responses.
+Cached exact ACK restoration propagates
 store failures and reconstructs again rather than losing the acknowledgement.
 A complete receiver rejection (including non-evicting capacity exhaustion) is
 terminal, distinct from an ambiguous connection failure. Global terminal holder
