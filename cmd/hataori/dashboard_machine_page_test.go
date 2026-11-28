@@ -31,6 +31,7 @@ type machinePageAPI struct {
 	cut            chan struct{}
 	queries        chan struct{}
 	workspaceError bool
+	history        []control.Event
 }
 
 func (a *machinePageAPI) Threads(context.Context, control.Filter) ([]control.ThreadInfo, error) {
@@ -56,8 +57,13 @@ func (*machinePageAPI) Clients(context.Context) ([]control.ClientState, error) {
 func (*machinePageAPI) HostTerminals(context.Context) ([]control.HostTerminal, error) {
 	return nil, control.ErrForbidden
 }
-func (*machinePageAPI) ThreadEvents(context.Context, control.ThreadID, uint64, int) ([]control.Event, error) {
-	return nil, nil
+func (a *machinePageAPI) ThreadEvents(_ context.Context, id control.ThreadID, _ uint64, _ int) ([]control.Event, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if id != 1 {
+		return nil, nil
+	}
+	return append([]control.Event(nil), a.history...), nil
 }
 func (a *machinePageAPI) Workspace(ctx context.Context, id control.ThreadID) (control.WorkspaceState, error) {
 	d, err := a.Thread(ctx, id, 0, 0)
@@ -322,4 +328,28 @@ func TestDashboardMachineWorkspaceFailure(t *testing.T) {
 	}
 	a.mu.Unlock()
 	b.until("failed read retains the successful snapshot with its time", `document.querySelector('.details [data-workspace-unavailable]')?.textContent.includes('cached') && document.querySelector('.details [data-field=lines] dd')?.textContent.includes('7')`)
+}
+
+func TestDashboardMachineConversationCache(t *testing.T) {
+	for _, lang := range []string{"en", "ja"} {
+		t.Run(lang, func(t *testing.T) {
+			a, b := machinePage(t, lang)
+			a.mu.Lock()
+			a.history = []control.Event{
+				{Kind: "text", Thread: 1, Scope: "visible", Pos: 1, Time: time.Date(2026, 1, 2, 3, 4, 0, 0, time.UTC), Data: []byte(`{"text":"fixture conversation output"}`)},
+				{Kind: "tool_started", Thread: 1, Scope: "visible", Pos: 2, Time: time.Date(2026, 1, 2, 3, 4, 0, 0, time.UTC), Data: []byte(`{"id":"fixture-tool","tool":"fixture tool"}`)},
+			}
+			a.mu.Unlock()
+			b.click(`.tree [data-thread="1"]`)
+			b.until("conversation switch", `!!document.querySelector('button[data-view=conversation]')`)
+			b.click(`button[data-view=conversation]`)
+			b.until("conversation history", `document.querySelector('.conv-text')?.textContent === 'fixture conversation output'`)
+			a.away()
+			b.until("retained conversation with receipt age", `(() => { const el = document.querySelector('.conversation [data-output-unavailable]'); return Date.parse(el?.dataset.historyObserved) > Date.now() - 10000 && el.textContent.includes('(') && document.querySelector('.conv-text')?.textContent === 'fixture conversation output'; })()`)
+			b.until("tool completion remains unknown", fmt.Sprintf(`document.querySelector('.conv-tool-detail')?.textContent.includes(%q)`, map[string]string{"en": "completion not observed", "ja": "完了は未確認"}[lang]))
+			b.click(`.tree [data-thread="2"]`)
+			b.click(`button[data-view=conversation]`)
+			b.until("empty pending conversation has no cached history", `(() => { const el = document.querySelector('[data-conversation="2"]'); return el?.querySelector('[data-output-unavailable]') && !el.querySelector('[data-output-unavailable]').dataset.historyObserved && !el.querySelector('.conv-text'); })()`)
+		})
+	}
 }

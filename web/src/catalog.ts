@@ -24,6 +24,7 @@ const en = {
   "machine.statsCached": "Cached statistics · last read {age} ago ({time})",
   "machine.outputCached": "Output unavailable · cached {age} ago ({time})",
   "machine.outputUnavailable": "Output unavailable · no cached output",
+  "machine.historyCached": "Live output unavailable · history received {age} ago ({time})",
   "machine.attachmentLost": "Read-only again: the connection was lost. Keys were not replayed.",
 
   "app.title": "hataori dashboard",
@@ -233,6 +234,7 @@ const en = {
   "conv.tool": "Tool {tool}",
   "conv.toolEnded": "Started {started}, ended {ended}, after {seconds} s.",
   "conv.toolRunning": "Started {started}, still running.",
+  "conv.toolUnobserved": "Started {started}; completion not observed.",
   "conv.toolIn": "In subagent {parent}.",
   "conv.withheld": "text withheld",
   "conv.loading": "Reading older entries…",
@@ -414,6 +416,7 @@ const ja: Catalog = {
   "machine.statsCached": "統計のキャッシュ · 最後の読み取り: {age}前 ({time})",
   "machine.outputCached": "出力を取得できません · {age}前のキャッシュ ({time})",
   "machine.outputUnavailable": "出力を取得できません · キャッシュなし",
+  "machine.historyCached": "ライブ出力を取得できません · {age}前に取得した履歴 ({time})",
   "machine.attachmentLost": "読み取り専用: 接続が切れました。キーは再送されません。",
 
   "app.title": "hataori ダッシュボード",
@@ -616,6 +619,7 @@ const ja: Catalog = {
   "conv.tool": "ツール {tool}",
   "conv.toolEnded": "{started} に開始、{ended} に終了（{seconds} 秒）。",
   "conv.toolRunning": "{started} に開始、実行中。",
+  "conv.toolUnobserved": "{started} に開始。完了は未確認。",
   "conv.toolIn": "サブエージェント {parent} 内。",
   "conv.withheld": "テキストは表示できません",
   "conv.loading": "以前の内容を読み込み中…",

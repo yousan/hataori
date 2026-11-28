@@ -178,7 +178,6 @@ export function ThreadPane(props: {
           {chosenLine(typeof start.chosen.data.choice === "string" ? start.chosen.data.choice : "", who(start.chosen.data))}
         </p>
       )}
-      {view !== "terminal" && (unavailable(x) || x.io_paused) && <p className="cached" role="status" data-output-unavailable="">{t("machine.outputUnavailable")}</p>}
       {!terminal && x.state === "asleep" && (
         <p className="no-process" data-no-process="">
           {t("pane.noProcess")}
@@ -193,7 +192,7 @@ export function ThreadPane(props: {
           offer={terminal && attach && attach.canSwitch !== false && !blocked && !typing?.allowed ? attach.onSwitch : undefined}
         />
       ) : (
-        <Conversation x={x} subscribe={subscribe} opens={opens} />
+        <Conversation x={x} now={now} subscribe={subscribe} opens={opens} />
       )}
       {mayAct &&
         requests.map((r) => (

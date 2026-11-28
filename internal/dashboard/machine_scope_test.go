@@ -21,6 +21,8 @@ import (
 
 // Availability and terminal output are fixtures. Scope filtering and public
 // field selection use the actual core, database and dashboard HTTP handlers.
+// The private session-input marker is not a worker credential; worker-bound
+// credential and attachment checks require the remote integration fixture.
 type machineScopeRunner struct {
 	core.Runner
 }
@@ -62,7 +64,7 @@ func TestMachineDashboardScopeAndPrivateFields(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := st.DB.Exec(`INSERT INTO sessions (id,thread_id,agent,state,created_at,updated_at,first_input) VALUES (?,?,'fake','running',?,?,?)`,
-			id, id, at.UnixMilli(), at.UnixMilli(), `{"text":"private-credential-marker"}`); err != nil {
+			id, id, at.UnixMilli(), at.UnixMilli(), `{"text":"private-session-input-marker"}`); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -80,7 +82,7 @@ func TestMachineDashboardScopeAndPrivateFields(t *testing.T) {
 	token := signIn(t, s)
 	for _, path := range []string{ThreadsPath, ThreadPath + "?thread=1&recent=0&events=0", ThreadEventsPath + "?thread=1", WorkspacePath + "?thread=1", TerminalPath + "?thread=1", ScopesPath} {
 		a := do(t, s, req{path: path, token: token})
-		for _, marker := range []string{"private-destination-marker", "private-root-marker", "private-credential-marker", "hidden-machine-marker", "hidden-scope-marker", "hidden-destination-marker", "hidden-root-marker"} {
+		for _, marker := range []string{"private-destination-marker", "private-root-marker", "private-session-input-marker", "hidden-machine-marker", "hidden-scope-marker", "hidden-destination-marker", "hidden-root-marker"} {
 			if strings.Contains(a.body, marker) {
 				t.Fatalf("%s exposed %s: %s", path, marker, a.body)
 			}
