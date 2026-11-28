@@ -11,6 +11,11 @@ func (a *Adapter) CanDeferInput() bool { return !a.c.Terminal }
 func (c *codec) DeferredInputReady(command [][]byte) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for _, w := range c.waiting {
+		if !w.idleOnly {
+			return false
+		}
+	}
 	return !c.terminal && !c.running && len(command) == 1
 }
 

@@ -46,6 +46,7 @@ type written struct {
 	id           string
 	at           time.Time // the first Tick after writing it
 	awaitReceipt bool
+	idleOnly     bool
 }
 
 func (c *codec) ReconcileHooks(waiting []string) agent.Actions {
@@ -332,6 +333,10 @@ func (c *codec) ended() agent.Actions {
 	c.running = false
 	var a agent.Actions
 	for i, in := range c.queue {
+		if in.IdleOnly && len(c.waiting) != 0 {
+			c.queue = c.queue[i:]
+			return a // earlier ordinary input must be acknowledged and finish first
+		}
 		a = merge(a, c.write(in))
 		if in.IdleOnly {
 			c.queue = c.queue[i+1:]
@@ -371,11 +376,11 @@ func (c *codec) Input(in agent.Input) (agent.Actions, error) {
 				}
 			}
 			if !found {
-				c.waiting = append(c.waiting, &written{id: in.ID, at: in.WrittenAt, awaitReceipt: in.IdleOnly && in.WrittenAt.IsZero()})
+				c.waiting = append(c.waiting, &written{id: in.ID, at: in.WrittenAt, awaitReceipt: in.IdleOnly && in.WrittenAt.IsZero(), idleOnly: in.IdleOnly})
 			}
 		}
 		return agent.Actions{}, nil
-	case c.running:
+	case c.running || in.IdleOnly && len(c.waiting) != 0:
 		c.queue = append(c.queue, in)
 		return agent.Actions{}, nil
 	}
@@ -387,7 +392,7 @@ func (c *codec) write(in agent.Input) agent.Actions {
 	var a agent.Actions
 	if in.ID != "" {
 		a.Inputs = []string{in.ID}
-		c.waiting = append(c.waiting, &written{id: in.ID, at: in.WrittenAt})
+		c.waiting = append(c.waiting, &written{id: in.ID, at: in.WrittenAt, idleOnly: in.IdleOnly})
 		in.Text = inputIDPrefix + in.ID + "\n" + in.Text
 	}
 	if c.terminal {

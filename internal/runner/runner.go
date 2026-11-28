@@ -140,6 +140,7 @@ var _ core.Runner = (*Runner)(nil)
 // live is a session the runner follows.
 type live struct {
 	deferredBlocked  bool
+	deferredDrain    bool // verified ended receiver: commit final evidence, never perform effects
 	deferredProgress bool // current committed batch has ordinary I/O before any absent first attempt
 	catchingUp       bool
 	catchupToken     string
@@ -1787,6 +1788,16 @@ func (r *Runner) stepLocked(lv *live) (following bool) {
 	for p, o := range b.files {
 		lv.files[p] = o
 	}
+	if lv.deferredDrain {
+		// Final native ACKs were committed above. No actions, replies or
+		// first/pending inputs may run against this ended receiver.
+		if len(b.events) != 0 {
+			return true
+		}
+		r.exit(lv)
+		r.finishSessionCatchup(lv)
+		return false
+	}
 	for _, e := range b.events {
 		if e.Kind == agent.SessionEnded && lv.taken != nil && e.Reason != agent.WrongSession && e.Reason != clearReason {
 			// The agent in the window ended: the window closed.
@@ -2016,10 +2027,10 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		seq = lv.seq
 		first, rep, slept = nil, nil, false
 
-		noReplacement := false
-		if r.Deferred != nil && cannotResume(b.events) {
-			var e error
-			noReplacement, e = r.Deferred.PreventReplacementTx(ctx, tx, lv.id)
+		noReplacement := lv.deferredDrain
+		if r.Deferred != nil && !lv.deferredDrain && cannotResume(b.events) {
+			bound, e := r.Deferred.PreventReplacementTx(ctx, tx, lv.id)
+			noReplacement = noReplacement || bound
 			if e != nil {
 				return e
 			}
@@ -2060,8 +2071,16 @@ func (r *Runner) commit(lv *live, b batch) (*firstInput, error) {
 		}
 		appliedBatch := b
 		appliedBatch.events = applied
-		if err := r.firstInputStep(ctx, tx, lv, appliedBatch, &first); err != nil {
-			return err
+		if lv.deferredDrain {
+			// Clear only reported inputs; do not accept a new first input
+			// while draining an ended original receiver.
+			if err := clearReported(ctx, tx, lv.id, applied); err != nil {
+				return err
+			}
+		} else {
+			if err := r.firstInputStep(ctx, tx, lv, appliedBatch, &first); err != nil {
+				return err
+			}
 		}
 		if err := r.endAside(ctx, tx, lv, b, &slept); err != nil {
 			return err

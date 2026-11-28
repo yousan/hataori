@@ -309,3 +309,137 @@ func TestDeferredPreFreezeHeldInputSurvivesPendingReceipt(t *testing.T) {
 		t.Fatal("pre-freeze held input duplicated/stranded", f.p.count(), f.p.ordinaryCount())
 	}
 }
+
+func TestDeferredEndedReceiverDrainsBeforeExit(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		ack, written bool
+	}{{"unknown-unconfirmed", false, false}, {"unknown-exact-ACK", true, false}, {"written-unconfirmed", false, true}, {"written-exact-ACK", true, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newDeferredProgress(t, "approval_accept", agent.AllowAll)
+			_, _, response, started, user, _, _ := deferredNativeScenario(t, "approval_accept")
+			f.queueCrash("deferred frozen")
+			writes := 0
+			if tc.written {
+				f.pump()
+				writes = 1
+			}
+			if e := f.p.closePeer(); e != nil {
+				t.Fatal(e)
+			}
+			// Only our disposable peer is closed. A recorded exit and absent
+			// socket exercise the real owned-holder liveness, without a PID.
+			if e := os.WriteFile(filepath.Join(f.x.lv.dir, host.StatusFile), []byte(`{"exit_code":0}`), 0600); e != nil {
+				t.Fatal(e)
+			}
+			if !f.x.r.polled(f.x.lv.dir).Ended() {
+				t.Fatal("fixture receiver is not positively ended")
+			}
+			if tc.ack {
+				f.append(response, started, user)
+			} else {
+				// A real native request would normally emit a one-shot reply.
+				// Terminal drain must commit evidence without executing it.
+				f.append(started, user, nativeApproval(t, "approval_accept"))
+			}
+			if !f.x.r.step(f.x.lv) || !f.x.lv.deferredDrain {
+				t.Fatal("final native evidence was not drained before exit")
+			}
+			want := "handoff"
+			if tc.ack {
+				want = "delivered"
+			}
+			if f.state() != want {
+				t.Fatal("terminal drain lost exact evidence", f.state(), want)
+			}
+			// An empty committed drain must reach normal Exit, not rebuild
+			// forever. No native SessionEnded message is present in this test.
+			if f.x.r.step(f.x.lv) || !f.x.lv.ended {
+				t.Fatal("ended receiver remained in a recovery loop")
+			}
+			if !tc.ack {
+				want = "failed"
+			}
+			if f.state() != want || f.p.count() != writes || f.p.ordinaryCount() != 0 {
+				t.Fatal("terminal drain changed receipt or performed I/O", f.state(), f.p.count(), f.p.ordinaryCount())
+			}
+			var n int
+			if e := f.x.r.Store.DB.QueryRow(`SELECT count(*) FROM sessions`).Scan(&n); e != nil || n != 2 {
+				t.Fatal("terminal drain created a replacement", n, e)
+			}
+		})
+	}
+}
+
+func TestDeferredFailureWithoutReceiver(t *testing.T) {
+	f := newDeferredProgress(t, "start", agent.AllowAll)
+	f.queueCrash("deferred frozen")
+	if e := f.p.closePeer(); e != nil {
+		t.Fatal(e)
+	}
+	if e := f.x.r.failDeferred(f.x.lv, "deferred:1", "fixture terminal failure"); e != nil {
+		t.Fatal("event-only refusal attempted to reach missing receiver", e)
+	}
+	if f.state() != "failed" {
+		t.Fatal(f.state())
+	}
+}
+
+func TestDeferredFailurePropagatesCommitError(t *testing.T) {
+	f := newDeferredProgress(t, "start", agent.AllowAll)
+	f.queueCrash("deferred frozen")
+	if _, e := f.x.r.Store.DB.Exec(`CREATE TRIGGER fixture_refusal_fault BEFORE UPDATE OF last_seq ON sessions WHEN NEW.id=1 AND NEW.last_seq!=OLD.last_seq BEGIN SELECT RAISE(ABORT,'fixture refusal commit failure'); END`); e != nil {
+		t.Fatal(e)
+	}
+	if e := f.x.r.failDeferred(f.x.lv, "deferred:1", "fixture terminal failure"); e == nil {
+		t.Fatal("refusal event commit failure was swallowed")
+	}
+	if !f.x.lv.warmPending || !f.x.lv.deferredBlocked {
+		t.Fatal("consumed refusal was not fenced for reconstruction")
+	}
+}
+
+func TestDeferredEndedDrainCannotReplaceDeliveredWorker(t *testing.T) {
+	f := newDeferredProgress(t, "start", agent.AllowAll)
+	_, _, response, started, user, _, _ := deferredNative(t)
+	f.queueCrash("deferred frozen")
+	if e := f.p.closePeer(); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(f.x.lv.dir, host.StatusFile), []byte(`{"exit_code":0}`), 0600); e != nil {
+		t.Fatal(e)
+	}
+	f.append(response, started, user)
+	if !f.x.r.step(f.x.lv) || f.state() != "delivered" {
+		t.Fatal("fixture did not commit exact final ACK")
+	}
+	// State-machine seam only, not invented provider output. Prevent a
+	// regression from ever reaching a launch, including in a negative test.
+	// Force the creating state that makes CannotResume replaceable; a live
+	// running-state SessionEnded alone does not exercise that branch.
+	if _, e := f.x.r.Store.DB.Exec(`UPDATE sessions SET state='creating' WHERE id=1`); e != nil {
+		t.Fatal(e)
+	}
+	f.x.r.point = func(point string) {
+		if point == "after cannot resume" {
+			panic("replacement launch attempted during terminal drain")
+		}
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			t.Fatal(p)
+		}
+	}()
+	lv := f.x.lv
+	b := batch{events: []agent.Event{{Kind: agent.SessionEnded, Status: agent.Failed, Reason: agent.CannotResume}}, offset: lv.offset, files: lv.files}
+	if _, e := f.x.r.commit(lv, b); e != nil {
+		t.Fatal(e)
+	}
+	var n int
+	if e := f.x.r.Store.DB.QueryRow(`SELECT count(*) FROM sessions`).Scan(&n); e != nil || n != 2 {
+		t.Fatal("terminal drain created a replacement", n, e)
+	}
+	if f.state() != "delivered" {
+		t.Fatal("late terminal event erased exact delivery")
+	}
+}

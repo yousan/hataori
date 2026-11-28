@@ -5,8 +5,9 @@ an existing busy worker. Immediate sends retain their existing behavior.
 
 The narrow [design](design.md) received independent authority and feasibility
 approval at design commit `0a3a134cdaa6d5d317fd751f6d25c3b6cb5d420f` before
-implementation. That approval is not implementation acceptance. Implementation
-and final independent reviews/CI are still in progress.
+implementation. That approval is not implementation acceptance. Exact-head
+implementation/authority reviews and final-head/merge-main CI are recorded in
+the pull request; design approval alone does not satisfy the completion gates.
 
 The operation is `DeferredSend` (protocol 3.48), exposed through explicit
 `defer_to_thread`, `inspect_deferred_send` and `cancel_deferred_send` tools.

@@ -324,3 +324,23 @@ progress, and withdrawal during another native turn. Adversarial orderings use
 immutable captured messages; they do not claim new live-provider observations.
 Guard removals must fail behavioral assertions. Final independent exact-head
 reviews and actual full head/main CI remain completion gates.
+
+## Implementation review repair: ended receiver drain
+
+Independent implementation and authority reviewers approved this bounded repair
+after identifying a reconstruction loop on original receiver death. A positively
+ended receiver with an unresolved handoff enters a terminal drain: commit unread
+native evidence first, including exact ACKs, while permitting no actions, replies,
+first/pending handover or replacement/launch effects. Retain that fence even when
+an ACK removes the handoff; recheck ended status on every further step. An empty
+committed drain reaches normal Exit, failing only still-unconfirmed receipts.
+No receipt absence or dead receiver authorizes input to a different run. Failure
+cleanup commits event-only actions directly and rejects any attempted new I/O.
+
+Fake pipes also separate ordinary input before an IdleOnly input in the held
+queue. The latter remains ineligible while any earlier ordinary request awaits
+its ACK or native turn completion; splitting the actions cannot grant overlap.
+Regressions cover both queue orders and ended-receiver ACK/no-ACK drains without
+a native SessionEnded, no effects/replacement, and terminal failure versus exact
+delivery. These are isolated state/retained-capture fixtures, not live-provider
+observations. Exact-head review and actual head/main CI remain required.

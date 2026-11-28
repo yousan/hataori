@@ -36,6 +36,7 @@ type deferredPeer struct {
 	lost, hold   bool
 	refuse       bool
 	old          bool
+	closePeer    func() error
 	ordinary     int
 	ordinaryData [][]byte
 }
@@ -47,6 +48,7 @@ func (p *deferredPeer) listen(t *testing.T, dir string) {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { ln.Close() })
+	p.closePeer = ln.Close
 	go func() {
 		for {
 			c, e := ln.Accept()

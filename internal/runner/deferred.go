@@ -120,9 +120,9 @@ func (r *Runner) failDeferred(lv *live, input, reason string) error {
 		}
 	}
 	if c, ok := lv.codec.(agent.InputRefuser); ok {
-		return r.do(lv, c.RefuseInput([]string{codecID}, agent.NotDelivered))
+		return r.commitDeferredRestore(lv, c.RefuseInput([]string{codecID}, agent.NotDelivered))
 	}
-	return r.do(lv, agent.Actions{Events: []agent.Event{{Kind: agent.TurnEnded, Input: codecID, Status: agent.Failed, Reason: agent.NotDelivered}}})
+	return r.commitDeferredRestore(lv, agent.Actions{Events: []agent.Event{{Kind: agent.TurnEnded, Input: codecID, Status: agent.Failed, Reason: agent.NotDelivered}}})
 }
 
 // actDeferred returns handled even on a refusal: an opt-in instruction can
@@ -388,12 +388,12 @@ func (r *Runner) restoreWrittenInput(lv *live, in agent.Input) {
 	}
 }
 
-// Written restoration may emit a cached exact ACK. Its commit error must
+// Written restoration or refusal may emit events without any new I/O. Their commit error must
 // propagate: the codec has consumed that ACK and must reconstruct it again.
 // The ordinary do path and its existing error behavior are unchanged.
 func (r *Runner) commitDeferredRestore(lv *live, a agent.Actions) error {
 	if len(a.Keys) > 0 || len(a.Write) > 0 || len(a.Reply) > 0 {
-		return errors.New("deferred Written restoration attempted new I/O")
+		return errors.New("deferred event restoration attempted new I/O")
 	}
 	if len(a.Events) == 0 {
 		return nil
@@ -444,6 +444,15 @@ func (r *Runner) beforeDeferredRead(lv *live) (bool, error) {
 	if r.Deferred == nil {
 		return true, nil
 	}
+	if lv.deferredDrain {
+		// Retain the fence after an ACK removes the final handoff. A later
+		// receiver can never inherit this terminal drain or its queued input.
+		lv.deferredBlocked = true
+		if !r.polled(lv.dir).Ended() {
+			return false, core.ErrMachineUnchecked
+		}
+		return true, nil
+	}
 	if lv.warmPending {
 		return false, nil // Written restoration failed; reconstruct its exact ACK first
 	}
@@ -454,6 +463,10 @@ func (r *Runner) beforeDeferredRead(lv *live) (bool, error) {
 		r.holdDeferredActions(lv, nil)
 		return false, err
 	}
+	if len(all) != 0 && r.polled(lv.dir).Ended() {
+		lv.deferredDrain, lv.deferredBlocked = true, true
+		return true, nil // includes completed host writes still awaiting exact ACK
+	}
 	for input, b := range all {
 		if b.Result == "written" {
 			continue
@@ -461,10 +474,11 @@ func (r *Runner) beforeDeferredRead(lv *live) (bool, error) {
 		c, run, e := r.deferredClient(context.Background(), lv)
 		if e != nil {
 			lv.deferredBlocked = true
-			r.holdDeferredActions(lv, nil)
 			if r.polled(lv.dir).Ended() {
-				return true, nil // fresh output/exit and normal terminal reconciliation
+				lv.deferredDrain = true
+				return true, nil // commit exact final ACKs before terminal failure
 			}
+			r.holdDeferredActions(lv, nil)
 			return false, e
 		}
 		got, e := c.InputReceipt(b.Run, b.Key)
