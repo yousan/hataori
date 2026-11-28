@@ -86,6 +86,9 @@ func openStore(path string, key ed25519.PublicKey, create bool) (_ *store, err e
 	if err := owned(info, true); err != nil {
 		return nil, err
 	}
+	if err = checkPlatformACL(path); err != nil {
+		return nil, err
+	}
 	physical, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return nil, err
@@ -170,6 +173,9 @@ func secureAncestors(path string) error {
 		if !ok || !i.IsDir() || st.Uid != 0 && st.Uid != uint32(os.Geteuid()) || i.Mode().Perm()&0o022 != 0 && !(st.Uid == 0 && i.Mode()&os.ModeSticky != 0) {
 			return errors.New("worker install: installation ancestor can be replaced by another user")
 		}
+		if err = checkPlatformACL(part); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -192,7 +198,10 @@ func (s *store) dir(name string, create bool) error {
 	if e != nil {
 		return e
 	}
-	return owned(i, true)
+	if err := owned(i, true); err != nil {
+		return err
+	}
+	return checkPlatformACL(filepath.Join(s.path, name))
 }
 func (s *store) read(name string, limit int64) ([]byte, error) {
 	i, err := s.root.Lstat(name)
@@ -200,6 +209,9 @@ func (s *store) read(name string, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	if err = owned(i, false); err != nil {
+		return nil, err
+	}
+	if err = checkPlatformACL(filepath.Join(s.path, name)); err != nil {
 		return nil, err
 	}
 	f, err := s.root.OpenFile(name, os.O_RDONLY|unix.O_NOFOLLOW, 0)
@@ -223,6 +235,9 @@ func (s *store) newFile(name string, b []byte, mode os.FileMode) error {
 		return err
 	}
 	_, err = f.Write(b)
+	if err == nil {
+		err = checkPlatformACL(filepath.Join(s.path, name))
+	}
 	if err == nil {
 		err = f.Sync()
 	}
@@ -306,6 +321,9 @@ func Install(path string, req Request) (Result, error) {
 	if err = f.Close(); err != nil {
 		return Result{}, err
 	}
+	if err = checkPlatformACL(filepath.Join(s.path, temp)); err != nil {
+		return Result{}, err
+	}
 	name := binaryName(m, a)
 	if err = s.root.Link(temp, name); errors.Is(err, os.ErrExist) {
 		err = s.verifyBinary(name, a)
@@ -342,6 +360,9 @@ func (s *store) verifyBinary(name string, a Artifact) error {
 		return err
 	}
 	if err = owned(i, false); err != nil {
+		return err
+	}
+	if err = checkPlatformACL(filepath.Join(s.path, name)); err != nil {
 		return err
 	}
 	if i.Size() != a.Size || i.Mode().Perm() != 0o500 {

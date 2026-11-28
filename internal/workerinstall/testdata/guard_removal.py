@@ -78,6 +78,10 @@ CASES = [
      "ok && (!within(segment.Offset, segment.Filesz) || segment.Maxprot != 0 && segment.Filesz > segment.Memsz)",
      "ok && false && (!within(segment.Offset, segment.Filesz) || segment.Maxprot != 0 && segment.Filesz > segment.Memsz)",
      "TestCompletePlatformBinaries"),
+    ("extended-permission-mutation-rights", "permissions.go",
+     "if kind&0xf == 1 && rights & ^readOnlyRights != 0 {",
+     "if false && kind&0xf == 1 && rights & ^readOnlyRights != 0 {",
+     "TestDarwinACLBufferBoundsAndMutationRights"),
     ("systemd-detached-host-preservation", "service.go",
      "KillMode=process", "KillMode=control-group",
      "TestExplicitServiceTemplatesKeepHosts"),
@@ -129,6 +133,7 @@ def main():
                 "redaction": "Disposable absolute test paths, if printed, are replaced with <fixture-path>.",
                 "source_sha256": {name: hashlib.sha256(b).hexdigest() for name, b in originals.items()},
                 "results": results,
+                "native_acl_guard_proof": "TestDarwinACLGuardRemoval runs only in macOS CI; not executed locally. A passing native test proves the unsafe-ACL regression fails when its guard is bypassed in a child process.",
                 "sources_restored": all((PACKAGE / name).read_bytes() == b for name, b in originals.items())}
     output = PACKAGE / "testdata/negative-guards.json"
     output.write_text(json.dumps(evidence, indent=2) + "\n")
