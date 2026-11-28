@@ -16,11 +16,21 @@ func isMissingDeferred(err error) bool { return errors.Is(err, sql.ErrNoRows) }
 
 // Ordinary pending rowids and the "first" slot are reusable. The current
 // input's durable origin key, not that slot alone, binds a queue generation.
-const deferredBinding = `session=? AND input_ref=? AND (
+const deferredOriginBinding = `(
  (input_ref='first' AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=deferred_sends.session AND s.first_input!=''
   AND json_extract(s.first_input,'$.key')='deferred:' || deferred_sends.id AND json_extract(s.first_input,'$.via')='deferred'))
  OR EXISTS(SELECT 1 FROM pending_inputs p WHERE p.session_id=deferred_sends.session AND cast(p.id AS TEXT)=deferred_sends.input_ref
   AND json_extract(p.data,'$.origin.key')='deferred:' || deferred_sends.id AND json_extract(p.data,'$.origin.via')='deferred'))`
+
+const deferredBinding = `session=? AND input_ref=? AND ` + deferredOriginBinding
+
+// HasAcceptedInput protects an accepted ordinary delivery slot until its
+// handover/reconstruction finishes. Queued preacceptance work may still sleep.
+func (d *DeferredInputs) HasAcceptedInput(ctx context.Context, sid int64) (bool, error) {
+	var found bool
+	err := d.Core.Store.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM deferred_sends WHERE session=? AND state='accepted' AND `+deferredOriginBinding+`)`, sid).Scan(&found)
+	return found, err
+}
 
 func boundDeferred(ctx context.Context, q deferredReader, sid int64, input string) (deferredRecord, error) {
 	return readDeferred(ctx, q, deferredBinding, sid, input)

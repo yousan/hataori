@@ -344,9 +344,11 @@ The terminal drain also retains its follower if the normal Exit transaction
 fails; only a durable terminal state allows that follower to finish.
 The runner rolls back preliminary freeze/absent-policy denial transitions before
 recording that captured denial through the atomic cleanup outcome. Frozen
-handoffs also hold automatic and explicit idle sleep, including resumed first
-inputs and written receipts awaiting ACK. A lookup error refuses sleep. Ordinary
-and pre-freeze sleep policy remains unchanged.
+handoffs and current-origin-bound accepted inputs also hold automatic and
+explicit idle sleep, including resumed first inputs and written receipts awaiting
+ACK. An accepted dirty-batch input cannot lose its receiver before reconstruction.
+A lookup error refuses sleep. Ordinary and queued preacceptance sleep policy
+remains unchanged.
 
 Fake pipes also separate ordinary input before an IdleOnly input in the held
 queue. The latter remains ineligible while any earlier ordinary request awaits

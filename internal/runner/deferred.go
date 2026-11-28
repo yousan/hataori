@@ -96,14 +96,17 @@ func (r *Runner) codecInput(lv *live, in agent.Input) (agent.Actions, error) {
 
 type deferredFailure struct{ codecID, reason string }
 
-// A frozen handoff needs its original receiver through exact ACK or explicit
-// failure. Idle sleep must not destroy that run, including a resumed first slot.
+// Accepted input needs its current delivery path, and a frozen handoff needs
+// its original receiver, through exact ACK or explicit failure.
 func (r *Runner) deferredSleepBlocked(lv *live) (bool, error) {
 	if r.Deferred == nil {
 		return false, nil
 	}
 	all, err := r.Deferred.Handoffs(context.Background(), lv.id)
-	return len(all) != 0, err
+	if len(all) != 0 || err != nil {
+		return len(all) != 0, err
+	}
+	return r.Deferred.HasAcceptedInput(context.Background(), lv.id)
 }
 
 func (r *Runner) failDeferred(lv *live, input, reason string) error {

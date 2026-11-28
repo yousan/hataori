@@ -274,6 +274,22 @@ func TestDeferredSameBatchProgressDoesNotFreeze(t *testing.T) {
 	if f.state() != "accepted" || f.p.count() != 0 || f.p.ordinaryCount() != 1 {
 		t.Fatal("dirty batch crossed freeze or lost its reply", f.state(), f.p.count(), f.p.ordinaryCount())
 	}
+	r, lv := f.x.r, f.x.lv
+	r.IdlePeriod = time.Nanosecond
+	r.point = func(point string) {
+		if point == "before idle stop" {
+			panic("accepted deferred input lost its receiver before reconstruction")
+		}
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			t.Fatal(p) // abort before any stop/PID action in a negative test
+		}
+	}()
+	r.checkIdle(lv)
+	if slept, e := r.Sleep(context.Background(), 1); e != nil || slept || lv.asleep || !lv.drain.IsZero() {
+		t.Fatal("accepted input was put to sleep before fresh handover", slept, e)
+	}
 	f.pump()
 	f.pump()
 	if f.p.count() != 1 || f.p.ordinaryCount() != 1 {
@@ -519,10 +535,14 @@ func TestDeferredDeniedAbsentRecoversCleanupFault(t *testing.T) {
 
 func TestDeferredHandoffPreventsSleep(t *testing.T) {
 	for _, slot := range []string{"pending", "first"} {
-		for _, receipt := range []string{"unknown", "written", "lookup-error"} {
+		for _, receipt := range []string{"accepted", "unknown", "written", "lookup-error"} {
 			t.Run(slot+"/"+receipt, func(t *testing.T) {
 				f := newDeferredProgress(t, "start", agent.AllowAll)
-				f.queueCrash("deferred frozen")
+				point := "deferred frozen"
+				if receipt == "accepted" {
+					point = "before pending dispatch"
+				}
+				f.queueCrash(point)
 				if receipt == "written" {
 					f.pump()
 				}
@@ -536,7 +556,7 @@ func TestDeferredHandoffPreventsSleep(t *testing.T) {
 				}
 				if slot == "first" {
 					// State-only resumed-first binding. No process is resumed.
-					first, e := json.Marshal(firstInput{Key: fmt.Sprintf("deferred:%d", f.q.Number), Via: control.ViaDeferred, Sent: true, Written: true, Text: f.text})
+					first, e := json.Marshal(firstInput{Key: fmt.Sprintf("deferred:%d", f.q.Number), Via: control.ViaDeferred, Sent: true, Written: receipt != "accepted", Text: f.text})
 					if e != nil {
 						t.Fatal(e)
 					}
@@ -575,6 +595,23 @@ func TestDeferredHandoffPreventsSleep(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestDeferredAcceptedSleepGuardKeepsOriginBinding(t *testing.T) {
+	f := newDeferredProgress(t, "start", agent.AllowAll)
+	f.queueCrash("before pending dispatch")
+	if found, e := f.c.Deferred.HasAcceptedInput(context.Background(), 1); e != nil || !found {
+		t.Fatal("accepted current input not protected", found, e)
+	}
+	if found, e := f.c.Deferred.HasAcceptedInput(context.Background(), 2); e != nil || found {
+		t.Fatal("another session inherited the accepted input", found, e)
+	}
+	if _, e := f.x.r.Store.DB.Exec(`UPDATE pending_inputs SET data=json_set(data,'$.origin.key','ordinary-reused-slot') WHERE session_id=1`); e != nil {
+		t.Fatal(e)
+	}
+	if found, e := f.c.Deferred.HasAcceptedInput(context.Background(), 1); e != nil || found {
+		t.Fatal("reused ordinary slot inherited the deferred sleep hold", found, e)
 	}
 }
 
