@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 ENV = {**os.environ, "GOMAXPROCS": "1"}
@@ -30,6 +31,9 @@ MUTATIONS = [
     ("fixture registration freeze", "cmd/hataori/first_worker_ssh_test.go", "func (o *firstWorkerSSHOwner) close() error {\n\to.freeze()\n\trecords := o.processes.snapshot()\n\tchildren, observationErr := firstWorkerDescendants(records)", "func (o *firstWorkerSSHOwner) close() error {\n\trecords := o.processes.snapshot()\n\tchildren, observationErr := firstWorkerDescendants(records)\n\to.freeze()", "./cmd/hataori", "^TestFirstWorkerLateSSHDescendantExitEvidence$"),
 
 ]
+
+if sys.platform == "linux":
+    MUTATIONS.append(("fixture procfs fallback", "cmd/hataori/first_worker_identity_linux_test.go", "return firstWorkerScanChildren(root, pid)", "return nil, nil", "./cmd/hataori", "^TestFirstWorkerProcChildrenFallback$"))
 
 
 def run(package, pattern):
@@ -69,6 +73,7 @@ def main():
                 "fixture generation quiescence": "generation cleanup returned before authorized handler finished",
                 "fixture parent lease": "foreign main generation was admitted",
                 "fixture registration freeze": "late SSH descendant evidence missing",
+                "fixture procfs fallback": "fallback descendant tree incomplete",
             }
             proved = proved and expected[name] in output
             results.append({"guard": name, "command": " ".join(command), "expected_failure": proved, "exit_code": result.returncode,

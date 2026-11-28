@@ -30,7 +30,10 @@ at a time in a disposable development checkout and restores every source in
 operation deduplication, catch-up-before-dispatch and current worker removal
 proof. Five additional fixture mutations prove creator ownership, child exit
 waiting, generation quiescence, parent binding and registration freeze ordering. `negative-guards.json`
-records the observed failing assertions.
+records the observed failing assertions. On Linux a ninth fixture mutation
+removes the procfs fallback: the private missing-interface regression must
+lose its real descendant evidence and fail. The fallback checks parent/birth
+identities and never grants signal authority to discovered processes.
 Compilation failures, whole-test timeouts and skipped tests do not count as
 proof. The observed input-dedup mutation reached the faulted write/recovery
 phase and failed the original-turn count assertion; the catch-up mutation

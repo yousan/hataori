@@ -30,6 +30,14 @@ Established server children and wrapper helpers have separate read-only exit
 evidence: kernel parent relationships and birth identities, retained after the
 creator is reaped. Linux traverses tasks of the owned process; Darwin traverses
 the creator's fixed private process group and filters parent relationships.
+When Linux omits a task child-list interface, a read-only numeric procfs
+metadata scan supplies parent candidates instead of silently reporting an
+empty tree. The existing traversal rechecks parent and birth identities under
+the unreaped creator; unreadable candidate metadata fails observation closed.
+The fallback regression hides task/list interfaces in a private proc view of
+only newly owned fixture processes and the test parent, verifies both real
+descendants and their exits, and refuses unreadable candidate metadata.
+No discovered candidate receives cleanup authority.
 Generation shutdown freezes new child registration under its registration
 mutex before observing all live connection descendants, closes owned streams, waits for
 in-flight authorized handlers, then takes the final process snapshot. This
@@ -63,6 +71,8 @@ The focused serial gate retains all original first-worker scenarios and adds:
 child exit waiting, generation quiescence, parent binding and registration
 freeze ordering alongside the
 original deduplication, catch-up and sole-copy deletion guard failures.
+On Linux a ninth mutation removes the procfs fallback and must fail the
+missing-interface descendant regression.
 The independent cleanup backstop remains active during exit-barrier mutation.
 All mutations restore their source in `finally`. Compilation failures, skipped
 tests and whole-test timeouts are not accepted as guard evidence.

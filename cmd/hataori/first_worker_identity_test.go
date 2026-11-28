@@ -53,6 +53,10 @@ func firstWorkerDescendants(records []*firstWorkerProcess) ([]firstWorkerIdentit
 	return identities, nil
 }
 func firstWorkerObserveDescendants(pid int) ([]firstWorkerIdentity, error) {
+	return firstWorkerObserveDescendantsWith(pid, firstWorkerChildren)
+}
+
+func firstWorkerObserveDescendantsWith(pid int, children func(int, int) ([]int, error)) ([]firstWorkerIdentity, error) {
 	var identities []firstWorkerIdentity
 	var visit func(firstWorkerIdentity) error
 	visit = func(parent firstWorkerIdentity) error {
@@ -63,7 +67,7 @@ func firstWorkerObserveDescendants(pid int) ([]firstWorkerIdentity, error) {
 		if ended || birth != parent.birth {
 			return nil
 		}
-		ids, err := firstWorkerChildren(parent.pid, pid)
+		ids, err := children(parent.pid, pid)
 		if err != nil {
 			return err
 		}
