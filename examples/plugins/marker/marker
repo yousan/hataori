@@ -28,7 +28,7 @@ import sys
 import threading
 import time
 
-PROTOCOL = "3.19"  # the version it speaks: hook requests (3.16) and the outbox point (3.19)
+PROTOCOL = "4.0"  # the current major, including hook requests and the outbox point
 
 DEFAULTS = {
     "rewrite": "REWRITE-ME",  # message_sending: a post that holds it is posted with it replaced

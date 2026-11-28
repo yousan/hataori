@@ -2109,8 +2109,9 @@ func (a *api) Limits(ctx context.Context) ([]control.AgentLimits, error) {
 	// The current public API has no machine/directory dimension. Preserve its
 	// local view using the newest local report per agent, never a sum of
 	// allowances from different installations or configuration directories.
+	// Observation age is independent of which directory last reported.
 	rows, err := a.c.Store.DB.QueryContext(ctx, `SELECT agent, at, every, windows FROM (
-		SELECT agent, at, every, windows, row_number() OVER (PARTITION BY agent ORDER BY at DESC, config_dir) AS rank
+		SELECT agent, at, every, windows, row_number() OVER (PARTITION BY agent ORDER BY report_at DESC, config_dir) AS rank
 		FROM agent_limits WHERE machine = 'local') WHERE rank = 1 ORDER BY agent`)
 	if err != nil {
 		return nil, fmt.Errorf("core: limits: %w", err)

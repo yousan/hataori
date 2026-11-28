@@ -22,7 +22,7 @@ import (
 func TestWorkerAttachmentRefusesOldDaemonBeforeSending(t *testing.T) {
 	var sent atomic.Bool
 	path := fakeDaemon(t, "3.42", func(message) []string { sent.Store(true); return nil })
-	c, err := dialPath(path, Version)
+	c, err := dialPath(path, "3.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestWorkerAttachmentRefusesOldDaemonBeforeSending(t *testing.T) {
 func TestExplicitMachineRefusesOldDaemonBeforeSending(t *testing.T) {
 	var sent atomic.Bool
 	path := fakeDaemon(t, "3.45", func(message) []string { sent.Store(true); return nil })
-	c, err := dialPath(path, Version)
+	c, err := dialPath(path, "3.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestVersions(t *testing.T) {
 	root := t.TempDir()
 	_, owner := newCore(t, root)
 	srv := serve(t, root, owner)
-	c, err := dialPath(srv.Path(), "3.11")
+	c, err := dialPath(srv.Path(), "4.11")
 	if err != nil {
 		t.Fatalf("a newer minor version is refused: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestVersions(t *testing.T) {
 		t.Fatalf("a call with a newer minor version: %v", err)
 	}
 	c.Close()
-	for _, v := range []string{"4.0", "2.0", "1.13"} {
+	for _, v := range []string{"5.0", "3.48", "2.0", "1.13"} {
 		_, err := dialPath(srv.Path(), v)
 		if err == nil || !strings.Contains(err.Error(), "client speaks "+v) || !strings.Contains(err.Error(), "daemon speaks "+Version) {
 			t.Errorf("client %s: %v", v, err)
@@ -129,7 +129,7 @@ func fakeDaemon(t *testing.T, version string, answer func(req message) []string)
 
 // A field or an event kind the client does not know is ignored.
 func TestUnknownFieldsAndKinds(t *testing.T) {
-	path := fakeDaemon(t, "3.4", func(m message) []string {
+	path := fakeDaemon(t, Version, func(m message) []string {
 		switch m.Op {
 		case "Threads":
 			return []string{`{"id":1,"result":[{"id":1,"scope":"s","links":[{"client":"c","channel":"s","thread":"k","shard":7}],"state":"idle","colour":"red"}],"later":{"x":1}}`}
@@ -227,7 +227,7 @@ func TestWayNeeds32(t *testing.T) {
 		mu.Unlock()
 		return []string{fmt.Sprintf(`{"id":%d,"result":"http://127.0.0.1:7466/signin?t=x"}`, m.ID)}
 	}
-	old, err := dialPath(fakeDaemon(t, "3.0", answer), Version)
+	old, err := dialPath(fakeDaemon(t, "3.0", answer), "3.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestWayNeeds32(t *testing.T) {
 	if link, err := old.SignInLink(ctx, ""); err != nil || link == "" {
 		t.Fatalf("the default from a 3.0 daemon: %q, %v", link, err)
 	}
-	current, err := dialPath(fakeDaemon(t, "3.2", answer), Version)
+	current, err := dialPath(fakeDaemon(t, "3.2", answer), "3.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestResearchNeeds334(t *testing.T) {
 		research bool
 		ok       bool
 	}{{"3.33", true, false}, {"3.33", false, true}, {"3.34", true, true}} {
-		c, err := dialPath(fakeDaemon(t, tc.daemon, answer), Version)
+		c, err := dialPath(fakeDaemon(t, tc.daemon, answer), "3.0")
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -1,7 +1,7 @@
 {
   "id": "marker",
   "version": "1.0.0",
-  "protocol": "3.19",
+  "protocol": "4.0",
   "operations": ["Threads", "Events"],
   "events": ["thread_created", "turn_started", "input", "text", "turn_ended", "post_sent"],
   "hooks": [

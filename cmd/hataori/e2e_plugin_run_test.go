@@ -124,7 +124,7 @@ func testPlugin() int {
 func writePlugin(t *testing.T, id, body string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
-	manifest := `{"id": "` + id + `", "version": "1", "protocol": "3.0", "operations": ["Threads", "Events"], "events": ["turn_ended"]}`
+	manifest := `{"id": "` + id + `", "version": "1", "protocol": "` + wire.Version + `", "operations": ["Threads", "Events"], "events": ["turn_ended"]}`
 	if err := os.WriteFile(filepath.Join(dir, plugin.ManifestFile), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}

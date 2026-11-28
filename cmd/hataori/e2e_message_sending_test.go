@@ -31,7 +31,7 @@ func outboxRoot(t *testing.T, conversation bool, timeout, onFailure string) (*ch
 	if timeout != "" {
 		h["timeout"] = timeout
 	}
-	manifest, _ := json.Marshal(map[string]any{"id": "p", "version": "0.1.0", "protocol": "3.19", "hooks": []any{h},
+	manifest, _ := json.Marshal(map[string]any{"id": "p", "version": "0.1.0", "protocol": wire.Version, "hooks": []any{h},
 		"operations": []string{"Events"}, "events": []string{"post_sent"}, "conversation": conversation})
 	if err := os.WriteFile(filepath.Join(dir, plugin.ManifestFile), manifest, 0o600); err != nil {
 		t.Fatal(err)
