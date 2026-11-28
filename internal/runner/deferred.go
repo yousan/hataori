@@ -96,6 +96,16 @@ func (r *Runner) codecInput(lv *live, in agent.Input) (agent.Actions, error) {
 
 type deferredFailure struct{ codecID, reason string }
 
+// A frozen handoff needs its original receiver through exact ACK or explicit
+// failure. Idle sleep must not destroy that run, including a resumed first slot.
+func (r *Runner) deferredSleepBlocked(lv *live) (bool, error) {
+	if r.Deferred == nil {
+		return false, nil
+	}
+	all, err := r.Deferred.Handoffs(context.Background(), lv.id)
+	return len(all) != 0, err
+}
+
 func (r *Runner) failDeferred(lv *live, input, reason string) error {
 	codecID := input
 	if !strings.HasPrefix(input, core.DeferredKeyPrefix) {
@@ -163,11 +173,8 @@ func (r *Runner) actDeferred(lv *live, a agent.Actions) (bool, error) {
 	var denied error
 	err = r.Store.Update(context.Background(), func(tx *store.Tx) error {
 		b, denied = r.Deferred.FreezeTx(context.Background(), tx, lv.id, input, b)
-		if errors.Is(denied, core.ErrForbidden) {
-			return nil
-		}
 		if denied != nil {
-			return denied
+			return denied // rollback a denial; atomic refusal below owns cleanup
 		}
 		return r.setWrittenTx(context.Background(), tx, lv, []string{input}, true, a.InputText)
 	})
@@ -192,12 +199,9 @@ func (r *Runner) submitDeferred(lv *live, c *host.Client, input string, b core.D
 		var denied error
 		err = r.Store.Update(context.Background(), func(tx *store.Tx) error {
 			denied = r.Deferred.BeforeAbsentTx(context.Background(), tx, lv.id, input)
-			if errors.Is(denied, core.ErrForbidden) {
-				return nil
-			}
-			return denied
+			return denied // rollback preliminary failure until refusal cleanup commits
 		})
-		if err != nil {
+		if err != nil && !errors.Is(err, core.ErrForbidden) {
 			return err
 		}
 		if denied != nil {

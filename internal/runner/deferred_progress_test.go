@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -450,6 +451,130 @@ func TestDeferredEndedDrainRetriesExitCommit(t *testing.T) {
 	}
 	if f.x.r.step(f.x.lv) || !f.x.lv.ended || f.state() != "failed" || f.p.count() != 0 {
 		t.Fatal("terminal transaction did not recover without I/O")
+	}
+}
+
+func TestDeferredDeniedAbsentRecoversCleanupFault(t *testing.T) {
+	for _, cause := range []string{"question", "authority"} {
+		t.Run(cause, func(t *testing.T) {
+			f := newDeferredProgress(t, "approval_accept", agent.AskInChat)
+			f.queueCrash("deferred frozen")
+			r, lv := f.x.r, f.x.lv
+			r.warm(lv)
+			lv.warmPending = false
+			r.handOverWritten(lv)
+			if cause == "question" {
+				_, _, _, started, user, _, _ := deferredNativeScenario(t, "approval_accept")
+				f.append(started, user, nativeApproval(t, "approval_accept"))
+				b := r.read(lv)
+				if b.err != nil {
+					t.Fatal(b.err)
+				}
+				if _, e := r.commit(lv, b); e != nil {
+					t.Fatal(e)
+				}
+				lv.offset = b.offset
+				for p, off := range b.files {
+					lv.files[p] = off
+				}
+			} else {
+				f.c.Scopes["s"] = core.Scope{Enabled: false}
+			}
+			if _, e := r.Store.DB.Exec(`CREATE TRIGGER fixture_denied_cleanup BEFORE UPDATE OF last_seq ON sessions WHEN NEW.id=1 AND NEW.last_seq!=OLD.last_seq BEGIN SELECT RAISE(ABORT,'fixture denied cleanup fault'); END`); e != nil {
+				t.Fatal(e)
+			}
+			if e := r.reconcileDeferred(lv); e == nil {
+				t.Fatal("denied cleanup fault was swallowed")
+			}
+			if f.state() != "handoff" || !lv.warmPending || f.p.count() != 0 {
+				t.Fatal("preliminary denial escaped atomic cleanup", f.state(), lv.warmPending, f.p.count())
+			}
+			if _, e := r.Store.DB.Exec(`DROP TRIGGER fixture_denied_cleanup`); e != nil {
+				t.Fatal(e)
+			}
+			r.step(lv)
+			r.step(lv)
+			var pending int
+			if e := r.Store.DB.QueryRow(`SELECT count(*) FROM pending_inputs WHERE session_id=1`).Scan(&pending); e != nil {
+				t.Fatal(e)
+			}
+			if f.state() != "failed" || pending != 0 || f.p.count() != 0 {
+				t.Fatal("denial failed to recover cleanup", f.state(), pending, f.p.count())
+			}
+			if cause == "question" {
+				var handle control.RequestID
+				if e := r.Store.DB.QueryRow(`SELECT handle FROM requests WHERE session_id=1 AND state='open'`).Scan(&handle); e != nil {
+					t.Fatal(e)
+				}
+				if e := f.owner.Answer(context.Background(), handle, control.Answer{Allow: true}); e != nil {
+					t.Fatal(e)
+				}
+				if f.p.ordinaryCount() != 1 || f.p.count() != 0 {
+					t.Fatal("deferred denial consumed the human answer")
+				}
+			}
+		})
+	}
+}
+
+func TestDeferredHandoffPreventsSleep(t *testing.T) {
+	for _, slot := range []string{"pending", "first"} {
+		for _, receipt := range []string{"unknown", "written", "lookup-error"} {
+			t.Run(slot+"/"+receipt, func(t *testing.T) {
+				f := newDeferredProgress(t, "start", agent.AllowAll)
+				f.queueCrash("deferred frozen")
+				if receipt == "written" {
+					f.pump()
+				}
+				r, lv := f.x.r, f.x.lv
+				// State-only logical idle after a distinct native turn ended.
+				// The frozen input still awaits its own exact acknowledgement.
+				for _, q := range []string{`UPDATE sessions SET state='idle',updated_at=1 WHERE id=1`, `UPDATE threads SET state='idle' WHERE id=1`, `UPDATE turns SET ended_at=1,status='completion' WHERE session_id=1 AND ended_at IS NULL`} {
+					if _, e := r.Store.DB.Exec(q); e != nil {
+						t.Fatal(e)
+					}
+				}
+				if slot == "first" {
+					// State-only resumed-first binding. No process is resumed.
+					first, e := json.Marshal(firstInput{Key: fmt.Sprintf("deferred:%d", f.q.Number), Via: control.ViaDeferred, Sent: true, Written: true, Text: f.text})
+					if e != nil {
+						t.Fatal(e)
+					}
+					for _, q := range []struct {
+						sql  string
+						args []any
+					}{{`UPDATE sessions SET first_input=? WHERE id=1`, []any{string(first)}}, {`UPDATE deferred_sends SET input_ref='first' WHERE id=?`, []any{f.q.Number}}, {`DELETE FROM pending_inputs WHERE session_id=1`, nil}} {
+						if _, e := r.Store.DB.Exec(q.sql, q.args...); e != nil {
+							t.Fatal(e)
+						}
+					}
+				}
+				if receipt == "lookup-error" {
+					if _, e := r.Store.DB.Exec(`UPDATE deferred_sends SET handoff='{' WHERE id=?`, f.q.Number); e != nil {
+						t.Fatal(e)
+					}
+				}
+				r.IdlePeriod = time.Nanosecond
+				r.point = func(point string) {
+					if point == "before idle stop" {
+						panic("idle stop attempted before deferred receipt resolution")
+					}
+				}
+				defer func() {
+					if p := recover(); p != nil {
+						t.Fatal(p) // negative test stops before any stop/PID action
+					}
+				}()
+				r.checkIdle(lv)
+				if lv.asleep || !lv.drain.IsZero() {
+					t.Fatal("automatic idle discarded the original receiver")
+				}
+				slept, e := r.Sleep(context.Background(), 1)
+				if slept || !lv.drain.IsZero() || (receipt == "lookup-error" && e == nil) {
+					t.Fatal("explicit sleep discarded unresolved handoff", slept, e)
+				}
+			})
+		}
 	}
 }
 

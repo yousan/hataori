@@ -2469,6 +2469,9 @@ func (r *Runner) checkIdle(lv *live) {
 		control.State(state) != control.Idle || r.activeAge(ctx, r.Store.DB, lv.id, time.UnixMilli(updated)) < r.idlePeriod() {
 		return
 	}
+	if blocked, err := r.deferredSleepBlocked(lv); blocked || err != nil {
+		return
+	}
 	if r.attached(lv) {
 		return
 	}
@@ -2506,6 +2509,7 @@ func (r *Runner) checkIdle(lv *live) {
 	}
 	if slept {
 		lv.asleep = true
+		r.at("before idle stop")
 		go r.stop(lv.dir, time.Second, 2*time.Second)
 	}
 }
@@ -2536,7 +2540,13 @@ func (r *Runner) Sleep(ctx context.Context, thread control.ThreadID) (bool, erro
 // sleep is Sleep of lv, with lv.mu held.
 func (r *Runner) sleep(ctx context.Context, lv *live) (bool, error) {
 	id := lv.id
-	if lv.asleep || lv.failed || lv.taken != nil || r.attached(lv) {
+	if lv.asleep || lv.failed || lv.taken != nil {
+		return false, nil
+	}
+	if blocked, err := r.deferredSleepBlocked(lv); blocked || err != nil {
+		return false, err
+	}
+	if r.attached(lv) {
 		return false, nil
 	}
 	slept := false
