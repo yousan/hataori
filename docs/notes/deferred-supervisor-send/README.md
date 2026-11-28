@@ -9,6 +9,9 @@ question refusal, cancellation/revocation, autonomy and approval, and send-budge
 timing. No interrupt, replacement worker, model wake or budget bypass is part of
 this change.
 
+The proposed design and its unresolved transport boundary are in
+[design.md](design.md). A design review is not implementation acceptance.
+
 Completion requires meaningful restart/recovery and authority regressions,
 independent implementation and authority reviews of the final head, full
 applicable head and actual merge-main CI, a merged PR and a closed issue.
