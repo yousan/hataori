@@ -120,3 +120,4 @@ To get `hataori` on a Mac, either build it with Go (`go install github.com/yousa
 - [Control protocol](docs/protocol.md)
 - [Testing](docs/testing.md)
 - [Working on hataori](AGENTS.md)
+- [Story-point estimation](docs/development/story-points.md)
