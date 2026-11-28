@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -20,9 +22,6 @@ import (
 // This child is an isolated transport/process fixture, not provider evidence.
 // It writes no login files, starts no session host, and receives no ambient env.
 func TestWorkerLoginProcessHelper(t *testing.T) {
-	if os.Getenv("WORKER_LOGIN_HELPER") != "1" {
-		return
-	}
 	var args []string
 	for i, s := range os.Args {
 		if s == "--" {
@@ -31,12 +30,22 @@ func TestWorkerLoginProcessHelper(t *testing.T) {
 		}
 	}
 	if len(args) == 0 {
-		os.Exit(64)
+		return
 	}
 	if args[0] == "guard" {
 		os.Exit(LoginGuardMain(args[1:]))
 	}
+	if os.Getenv("WORKER_LOGIN_HELPER") != "1" {
+		return
+	}
 	switch args[0] {
+	case "empty-env-owner":
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		cmd, err := startLoginCommand(ctx, agent.Launch{Argv: []string{"/bin/sh", "-c", `test -z "$WORKER_LOGIN_FORBIDDEN"`}}, os.Getenv("WORKER_LOGIN_DIR"), helperArgv("guard"), io.Discard)
+		if err != nil || !cmd.wait(ctx) {
+			os.Exit(1)
+		}
 	case "owned-owner":
 		a := &loginTestAdapter{mode: "lifetime", extraEnv: []string{"WORKER_LOGIN_LIFETIME=" + os.Getenv("WORKER_LOGIN_LIFETIME")}}
 		f, err := startLoginAttempt(context.Background(), a, agent.Spec{Dir: os.Getenv("WORKER_LOGIN_DIR")}, helperArgv("guard"), 30*time.Second)
@@ -45,7 +54,12 @@ func TestWorkerLoginProcessHelper(t *testing.T) {
 		}
 		fmt.Println("ready")
 		<-f.done
-	case "lifetime":
+	case "lifetime", "detached-lifetime":
+		if args[0] == "detached-lifetime" {
+			if _, err := syscall.Setsid(); err != nil {
+				os.Exit(1)
+			}
+		}
 		c, err := net.Dial("tcp", os.Getenv("WORKER_LOGIN_LIFETIME"))
 		if err != nil {
 			os.Exit(1)

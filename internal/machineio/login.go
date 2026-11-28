@@ -18,18 +18,19 @@ var ErrLoginLost = errors.New("worker login ended; login material was not replay
 // Login is an ephemeral conversation. It never uses Call, a receipt or a
 // reconnect callback. The parent context must cover the whole attempt.
 type Login struct {
-	conn      net.Conn
-	reader    *bufio.Reader
-	protocol  *workerproto.Connection
-	request   workerproto.Message
-	attempt   string
-	stop      func() bool
-	mu        sync.Mutex
-	pending   map[string]bool
-	closed    bool
-	ended     bool
-	cancelID  string
-	cancelAck chan struct{}
+	conn       net.Conn
+	reader     *bufio.Reader
+	protocol   *workerproto.Connection
+	request    workerproto.Message
+	attempt    string
+	stop       func() bool
+	mu         sync.Mutex
+	pending    map[string]bool
+	closed     bool
+	ended      bool
+	cancelID   string
+	cancelAck  chan struct{}
+	cleanupAck sync.Once
 }
 
 // StartLogin opens exactly once against main-owned binding/configuration.
@@ -146,7 +147,7 @@ func (l *Login) Next() (workerproto.LoginData, error) {
 				return workerproto.LoginData{}, ErrLoginLost
 			}
 			l.ended = true
-			close(l.cancelAck)
+			l.cleanupAck.Do(func() { close(l.cancelAck) })
 			l.mu.Unlock()
 			return workerproto.LoginData{}, ErrLoginLost
 		}
@@ -162,6 +163,7 @@ func (l *Login) Next() (workerproto.LoginData, error) {
 			if stream.State == "complete" {
 				l.mu.Lock()
 				l.ended = true
+				l.cleanupAck.Do(func() { close(l.cancelAck) })
 				l.mu.Unlock()
 				return workerproto.LoginData{}, io.EOF
 			}
@@ -190,19 +192,13 @@ func (l *Login) Cancel() error {
 	l.cancelID = operationID()
 	body, _ := json.Marshal(workerproto.LoginAttempt{Attempt: l.attempt})
 	m := workerproto.Message{Kind: "request", ID: l.cancelID, Binding: l.request.Binding, Op: "login_cancel", Body: body}
-	b, err := workerproto.Encode(m)
-	if err == nil {
+	if b, err := workerproto.Encode(m); err == nil {
 		l.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-		var n int
-		n, err = l.conn.Write(b)
-		if n != len(b) {
-			err = ErrLoginLost
-		}
+		l.conn.Write(b) // partial/failed writes are never retried
 	}
 	l.mu.Unlock()
-	if err != nil {
-		return ErrLoginLost
-	}
+	// Even a failed cancel write may race a valid complete frame already in
+	// flight. Wait only for the same verified cleanup barrier, without retry.
 	select {
 	case <-l.cancelAck:
 		return nil

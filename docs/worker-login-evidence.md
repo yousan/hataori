@@ -50,8 +50,11 @@ status command, failed status execution despite success-shaped output,
 bounded output/queues/status duration, disconnect during blocked stdin,
 correlated cancellation before immediate replacement, and abrupt death of an
 owned fixture process. A dedicated EOF guard ends its own live group after
-the direct child exits, including a fixture descendant; no saved PID lookup
-or process-name cleanup is used.
+the direct child exits, including a fixture descendant. It also terminates
+its still-owned direct child if that child changes session. The private guard
+descriptors are close-on-exec; an empty filtered environment cannot inherit
+the resident's ambient environment. No saved PID lookup or process-name
+cleanup is used.
 
 The new `agent.WorkerLoginStatus` contract opts an adapter into a bounded,
 guarded status command whose zero exit certifies login. Only the Codex adapter
@@ -75,6 +78,9 @@ control writes an encoded input frame into an isolated file and proves the
 marker scan detects it. Compilation failures do not count as regressions.
 The script uses serial Go overlays without editing the original sources and
 records the source hashes. These controls are not real provider evidence.
+The inventory does not by itself establish that every acceptance guard has
+been reviewed and covered; that gate stays unchecked until independent review
+accepts the complete integrated evidence.
 
 ## Remaining blockers
 
@@ -96,12 +102,23 @@ records the source hashes. These controls are not real provider evidence.
 5. Disposable real-CLI successful completion/status evidence for device auth
    and code-back flows. No real code-back provider adapter is enabled here;
    the missing implementation/capture cannot be replaced by a synthetic flow.
-6. Fresh independent implementation and authority/credentials/destructive
+6. Process containment evidence for the supported CLI: the guard terminates
+   the direct child and descendants still in its group. Descendants that
+   independently detach into another session/group are not contained by that
+   mechanism. The fixture does not establish that the real CLI never creates
+   them. This remains a runtime/containment blocker, not a general claim that
+   every possible descendant is terminated.
+7. Fresh independent implementation and authority/credentials/destructive
    reviews after fixes. Initial reviews rejected the draft; their findings
    are not approvals for the revised source.
-7. Final-head and exact post-merge-main Linux/macOS CI, accepted evidence,
+8. Final-head and exact post-merge-main Linux/macOS CI, accepted evidence,
    merge and issue closure. A passing intermediate CI run meets none of the
    missing runtime or ownership gates.
+
+The adopted CI phase-1 policy skips full OS/tmux suites for drafts before
+runner allocation. Intermediate draft static/build checks are development
+feedback. Full final-head Linux/macOS execution is required after the complete
+candidate is ready; draft skips never satisfy that gate and are not rerun.
 
 The daemon, chat login file, common configuration/design documents and
 released protocol/golden files remain unedited pending explicit coordination.

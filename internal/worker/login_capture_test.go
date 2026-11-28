@@ -17,6 +17,26 @@ type capturedLoginAdapter struct {
 	decoder agent.LoginFlow
 }
 
+type loginWithoutStatus struct {
+	agent.Adapter
+	flow agent.LoginFlow
+}
+
+func (a *loginWithoutStatus) LoginLaunch(s agent.Spec) (agent.Launch, error) {
+	return a.flow.LoginLaunch(s)
+}
+func (a *loginWithoutStatus) LoginDecode(b []byte) agent.LoginStep { return a.flow.LoginDecode(b) }
+func (a *loginWithoutStatus) LoginCode(s string) ([]byte, error)   { return a.flow.LoginCode(s) }
+
+func TestWorkerLoginRefusesAdapterWithoutBoundedStatus(t *testing.T) {
+	a := &loginTestAdapter{mode: "wait"}
+	f, err := startLoginAttempt(context.Background(), &loginWithoutStatus{Adapter: a, flow: a}, agent.Spec{Dir: t.TempDir()}, helperArgv("guard"), 5*time.Second)
+	if err == nil {
+		f.stop()
+		t.Fatal("adapter without bounded status was admitted")
+	}
+}
+
 func (a *capturedLoginAdapter) LoginDecode(b []byte) agent.LoginStep { return a.decoder.LoginDecode(b) }
 func (a *capturedLoginAdapter) LoginCode(string) ([]byte, error)     { return nil, agent.ErrNoCodeBack }
 

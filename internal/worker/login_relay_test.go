@@ -3,6 +3,7 @@ package worker
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -88,6 +89,15 @@ func testWorkerLoginOwnerOutageAndPersistence(t *testing.T, useDefault bool) {
 	if count.Load() != 0 {
 		t.Fatal("unauthorized request reached transport")
 	}
+	if _, err := st.DB.ExecContext(ctx, `UPDATE machines SET installation='another-installation' WHERE key='build'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Start(ctx, "chat:owner", "fake", outage); err == nil || count.Load() != 0 {
+		t.Fatal("unpinned installation reached transport")
+	}
+	if _, err := st.DB.ExecContext(ctx, `UPDATE machines SET installation=? WHERE key='build'`, f.binding.Worker); err != nil {
+		t.Fatal(err)
+	}
 	if err := r.Start(ctx, "chat:owner", "fake", outage); err != nil {
 		t.Fatal(err)
 	}
@@ -102,6 +112,11 @@ func testWorkerLoginOwnerOutageAndPersistence(t *testing.T, useDefault bool) {
 			}
 		case <-ctx.Done():
 			t.Fatal("worker did not request a code")
+		}
+	}
+	for _, from := range []string{"chat:guest", "chat:someone"} {
+		if err := r.Code(ctx, from, "fake", outage, "marker-secret"); !errors.Is(err, relay.ErrForbidden) {
+			t.Fatal("non-owner sent a code to the waiting command")
 		}
 	}
 	if err := r.Code(ctx, "chat:owner", "fake", other, "marker-secret"); err == nil {

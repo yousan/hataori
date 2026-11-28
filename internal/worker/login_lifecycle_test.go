@@ -198,3 +198,55 @@ func TestWorkerLoginOutputGuard(t *testing.T) {
 		t.Fatal("oversized output was accepted")
 	}
 }
+
+func TestWorkerLoginGuardDescriptorsArePrivate(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	launch := agent.Launch{Argv: []string{"/bin/sh", "-c", `if ( : <&3 ) 2>/dev/null; then exit 9; fi; if ( : >&4 ) 2>/dev/null; then exit 9; fi; exit 0`}, Env: []string{"WORKER_LOGIN_HELPER=1", "GOMAXPROCS=1", "GORACE=atexit_sleep_ms=0"}}
+	cmd, err := startLoginCommand(ctx, launch, t.TempDir(), helperArgv("guard"), io.Discard)
+	if err != nil || !cmd.wait(ctx) {
+		t.Fatal("guard descriptors reached the CLI")
+	}
+}
+
+func TestWorkerLoginGuardEndsDirectChildThatChangesSession(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	a := &loginTestAdapter{mode: "detached-lifetime", extraEnv: []string{"WORKER_LOGIN_LIFETIME=" + listener.Addr().String()}}
+	f, err := startLoginAttempt(context.Background(), a, agent.Spec{Dir: t.TempDir()}, helperArgv("guard"), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.stop()
+	listener.(*net.TCPListener).SetDeadline(time.Now().Add(3 * time.Second))
+	c, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close() // negative control exits without any PID-based cleanup
+	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	reader := bufio.NewReader(c)
+	if line, err := reader.ReadString('\n'); err != nil || line != "alive\n" {
+		t.Fatal("detached direct child did not establish its lifetime socket")
+	}
+	f.stop()
+	if _, err := reader.ReadByte(); err != io.EOF {
+		t.Fatal("direct login child survived by changing session")
+	}
+}
+
+func TestWorkerLoginEmptyEnvironmentDoesNotInherit(t *testing.T) {
+	// The parent is itself isolated before the negative control can exercise
+	// exec's nil-environment inheritance. No ambient credential is exposed.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	argv := helperArgv("empty-env-owner")
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Env = []string{"WORKER_LOGIN_HELPER=1", "WORKER_LOGIN_FORBIDDEN=fixture-only", "WORKER_LOGIN_DIR=" + t.TempDir(), "GOMAXPROCS=1", "GORACE=atexit_sleep_ms=0"}
+	if err := cmd.Run(); err != nil {
+		t.Fatal("empty login environment inherited the parent's fixture marker")
+	}
+}

@@ -36,7 +36,11 @@ func startLoginCommand(ctx context.Context, launch agent.Launch, dir string, gua
 	defer sw.Close()
 	argv := append(append([]string{}, guard...), launch.Argv...)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.Env, cmd.Dir = safeEnvironment(launch.Env), dir
+	env := safeEnvironment(launch.Env)
+	if env == nil {
+		env = []string{}
+	}
+	cmd.Env, cmd.Dir = env, dir
 	cmd.ExtraFiles = []*os.File{gr, sw}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel, cmd.WaitDelay = gw.Close, time.Second
