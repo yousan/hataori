@@ -18,6 +18,13 @@ launches do not declare support. Confined Codex supervisor support does not
 establish ordinary settings-free research support. No new Codex launch mode,
 login, authentication or provider call is introduced.
 
+The supported path also omits project/local statusline settings when composing
+its explicit generated settings. Otherwise those commands would be restored
+despite `--setting-sources user`. Only research/settings-free lookup omits the
+project directory; the permitted user statusline and normal local/shared/user
+precedence remain intact. Pure launch-description tests isolate HOME and CLI
+configuration directories to fixture directories with synthetic settings only.
+
 The runner independently requires `Launch.NoProjectSettings` on every actual
 ordinary research launch, including resume. Metadata is not permission to
 bypass that check and does not attest installation, authentication or a remote
@@ -57,14 +64,18 @@ Focused local regressions cover:
   ordinary starts, with durable adapter identity and research flag checks.
 - Start/resume launch descriptions for supported adapters and unsupported
   Codex; these descriptions invoke no CLI or provider.
+- Synthetic user, shared and local statuslines: start/resume research retains
+  only the user command while ordinary launches retain normal precedence.
+  The regression fails before the project-lookup repair and when it is removed.
 - A declared capability with no actual launch attestation: the real runner
   refuses before writing requested files or starting a host, on start/resume.
 - Loaded instruction and digest refresh, independence from supervisor adapter
   selection, capability-qualified tool information and immutable MCP captures.
 
-Five Go-overlay guard removals produced actual behavioral assertion failures:
+Six Go-overlay guard removals produced actual behavioral assertion failures:
 preflight, undeclared-capability refusal, unsupported fallback advice,
-configuration refresh and the supported settings-source flag. Original source
+configuration refresh, the supported settings-source flag and project-statusline
+lookup omission. Original source
 hashes remained unchanged. Formatting, repository vet, these focused tests and
 command-importer compilation pass serially. No local tmux/full suite, CLI,
 provider, process lookup/signals or production input is used.

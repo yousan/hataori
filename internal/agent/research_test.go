@@ -13,6 +13,11 @@ import (
 
 // Launch builds descriptions only: no CLI, provider or login is invoked.
 func TestSettingsFreeResearchDeclarationAndLaunch(t *testing.T) {
+	// Launch descriptions can consult statusline settings. Keep even that
+	// read-only lookup in empty fixture homes, never ambient user config.
+	for _, key := range []string{"HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME"} {
+		t.Setenv(key, t.TempDir())
+	}
 	for _, tc := range []struct {
 		name string
 		new  agent.Factory
