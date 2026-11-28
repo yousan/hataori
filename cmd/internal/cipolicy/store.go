@@ -102,6 +102,7 @@ func OpenStore(file string) (*Store, error) {
 			`CREATE TABLE IF NOT EXISTS admission (id INTEGER PRIMARY KEY, pull INTEGER NOT NULL, head TEXT NOT NULL, base TEXT NOT NULL, grant_digest TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('reserved','integrated','withdrawn')), expires TEXT NOT NULL)`,
 			`CREATE TABLE IF NOT EXISTS admission_grant (pull INTEGER NOT NULL, head TEXT NOT NULL, base TEXT NOT NULL, digest TEXT NOT NULL, expires TEXT NOT NULL, PRIMARY KEY(pull,head,base,digest))`,
 			`CREATE UNIQUE INDEX IF NOT EXISTS one_admission ON admission((1)) WHERE status='reserved'`,
+			`CREATE TABLE IF NOT EXISTS bootstrap_intent (id INTEGER PRIMARY KEY CHECK(id=1), seal TEXT NOT NULL, sweep BLOB NOT NULL, status TEXT NOT NULL CHECK(status IN ('prepared','uncertain','bound')), run INTEGER NOT NULL, attempt INTEGER NOT NULL)`,
 			`CREATE TABLE IF NOT EXISTS recovery (revision INTEGER PRIMARY KEY, owner TEXT NOT NULL, reason TEXT NOT NULL, control TEXT NOT NULL, authority TEXT NOT NULL, watermark TEXT NOT NULL, at TEXT NOT NULL)`,
 		} {
 			if _, err := c.ExecContext(context.Background(), q); err != nil {
@@ -138,6 +139,13 @@ func (s *Store) Initialize(ctx context.Context, b Baseline) error {
 		now := s.clock()
 		if b.repositoryID <= 0 || b.ref == "" || !digestOK(b.key) || b.control.revision == "" || b.control.selection.Report(now).FullOnly || !now.Before(b.expires) || now.Before(b.at) || now.Sub(b.at) > 30*time.Second {
 			return fmt.Errorf("verified bootstrap required")
+		}
+		seal, intent, proofErr := bootstrapIntent(ctx, c)
+		if proofErr != nil && proofErr != sql.ErrNoRows {
+			return proofErr
+		}
+		if proofErr == nil && (b.proofSeal != seal || intent.Status != "bound" || intent.Sweep.Target != b.target) {
+			return fmt.Errorf("bootstrap outbox proof required")
 		}
 		state, err := NewState(b.control.selection, b.target)
 		if err != nil {

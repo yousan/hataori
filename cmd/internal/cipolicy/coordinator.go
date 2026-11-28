@@ -55,12 +55,19 @@ func (c *Coordinator) execute(ctx context.Context, operation string, pull int, r
 		out.Summary = &v
 		return out, err
 	}
-	if operation == "bootstrap" {
-		b, err := c.adapter.Bootstrap(ctx)
-		if err != nil {
-			return out, err
+	if operation == "bootstrap-prepare" || operation == "bootstrap-pump" {
+		var i Intent
+		var err error
+		if operation == "bootstrap-prepare" {
+			i, err = c.store.PrepareBootstrap(ctx, c.adapter)
+		} else {
+			i, err = c.store.PumpBootstrap(ctx, c.adapter)
 		}
-		if err = c.store.Initialize(ctx, b); err != nil {
+		out.Intent = &i
+		return out, err
+	}
+	if operation == "bootstrap" {
+		if err := c.store.bootstrap(ctx, c.adapter); err != nil {
 			return out, err
 		}
 	}
@@ -288,7 +295,7 @@ func RunCLI(ctx context.Context, args []string, out io.Writer, binary string) in
 			return 2
 		}
 	}
-	allowed := map[string]bool{"bootstrap": true, "observe": true, "admission": true, "pump": true, "status": true, "control-transition": true, "done": true, "summary": true, "recover": true}
+	allowed := map[string]bool{"bootstrap": true, "bootstrap-prepare": true, "bootstrap-pump": true, "observe": true, "admission": true, "pump": true, "status": true, "control-transition": true, "done": true, "summary": true, "recover": true}
 	if !allowed[op] || ((op == "admission" || op == "done") && pull == 0) || (op == "summary" && run == 0) || (op == "recover" && reason == "") {
 		writeCLI(out, Outcome{}, errors.New("invalid operation arguments"))
 		return 2
