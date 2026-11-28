@@ -66,10 +66,14 @@ type Tokens interface {
 
 // Scope is a scope's supervisor, as the config names it.
 type Scope struct {
-	Model        string // the model; when empty, what the default agent's model order gives a thread of the scope
+	Agent        string // the selected adapter; the instance default when empty
+	Model        string // the model; when empty, what the selected agent's model order gives a thread of the scope
 	Effort       string // the effort; DefaultEffort when empty
 	Instructions string // the config's instructions, last in the config's layer (ConfigLayer)
 	Repos        []Repo // the only repositories its Start may clone; none: it starts nothing
+	// WorkerResearch is derived from loaded ordinary-worker adapter metadata,
+	// independently of Agent, before assembling instructions/config digests.
+	WorkerResearch ResearchCapability
 	// Autonomy is Watch, Propose or Act: what its token's connection may
 	// do on its own (Caller). It is read when the token is bound, at each
 	// launch and after a restart.
@@ -155,6 +159,7 @@ func (s *Sessions) Confine(ctx context.Context, l runner.ConfinedLaunch) (runner
 	if !ok {
 		return runner.Confined{}, fmt.Errorf("scope %q names no supervisor", l.Scope)
 	}
+	sv = s.researchScope(l.Scope, sv)
 	kind, err := s.Core.Kind(ctx, l.Thread)
 	if err != nil {
 		return runner.Confined{}, err
@@ -197,11 +202,12 @@ func (s *Sessions) Config(scope, agentName string) (runner.LaunchConfig, bool) {
 	if !ok {
 		return runner.LaunchConfig{}, false
 	}
-	model := sv.Model
-	if agentName != s.Core.Agent {
-		model = "" // one of the default agent's, which the section names
+	sv = s.researchScope(scope, sv)
+	model, effort := sv.Model, sv.Effort
+	if agentName != cmp.Or(sv.Agent, s.Core.Agent) {
+		model, effort = "", "" // section choices belong to the selected adapter
 	}
-	model, effort := s.Core.ModelOf(scope, agentName, model, cmp.Or(sv.Effort, DefaultEffort))
+	model, effort = s.Core.ModelOf(scope, agentName, model, cmp.Or(effort, DefaultEffort))
 	digest := func(parts ...string) string {
 		sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 		return hex.EncodeToString(sum[:])
@@ -482,7 +488,7 @@ func (s *Sessions) StartOne(ctx context.Context, scope string) (control.ThreadID
 		return 0, fmt.Errorf("supervisor: scope %q: %w", scope, ErrNoChat)
 	}
 	caller := control.Caller{Principal: s.Owner, Scopes: []string{scope}, May: control.OpRead | control.OpStart}
-	return s.Core.StartConfined(ctx, caller, control.StartRequest{Key: key, Scope: scope,
+	return s.Core.StartConfined(ctx, caller, control.StartRequest{Key: key, Scope: scope, Agent: sv.Agent,
 		Input: control.Input{Text: FirstInput}, Model: sv.Model, Effort: cmp.Or(sv.Effort, DefaultEffort)},
 		control.KindSupervisor, core.InDir(dir))
 }
@@ -529,4 +535,18 @@ func (s *Sessions) Dir(ctx context.Context, scope string) (string, error) {
 		return "", fmt.Errorf("supervisor: the directory of %q: %w", scope, err)
 	}
 	return dir, nil
+}
+
+// DeferredPolicy returns current trusted policy without database I/O. The core
+// resolves the configured person again inside the eventual acceptance.
+func (s *Sessions) DeferredPolicy(scope string, thread control.ThreadID) (control.Caller, []string, error) {
+	sc, ok := s.Scopes[scope]
+	if !ok {
+		return control.Caller{}, nil, control.ErrForbidden
+	}
+	var repos []string
+	for _, r := range sc.Repos {
+		repos = append(repos, r.Address)
+	}
+	return Caller(scope, thread, sc.Autonomy), repos, nil
 }

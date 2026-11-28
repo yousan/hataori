@@ -118,10 +118,39 @@ func TestClaudeCodeToolsList(t *testing.T) {
 				t.Fatalf("the instructions changed since the capture:\n%v\n%v", got, was)
 			}
 		case "tools/list":
-			current := []string{ToolList, ToolRead, ToolSend, ToolInterrupt, ToolStart, ToolIssues, ToolIssue, ToolPulls, ToolPull, ToolChecks, ToolDeployed, ToolRemind, ToolCancelRemind, ToolFiles, ToolFile, ToolWrite, ToolEdit}
+			current := []string{ToolList, ToolRead, ToolSend, ToolDefer, ToolDeferred, ToolCancelDeferred, ToolInterrupt, ToolStart, ToolIssues, ToolIssue, ToolPulls, ToolPull, ToolChecks, ToolDeployed, ToolRemind, ToolCancelRemind, ToolFiles, ToolFile, ToolWrite, ToolEdit, ToolWork}
 			if names := toolNames(t, r["result"]); !slices.Equal(names, current) {
 				t.Fatalf("tools/list gives %v, want the current tools %v", names, current)
 			}
+			// Keep the external capture immutable. Placement adds one optional
+			// property; research adds an explicit capability qualification. All
+			// other captured fields still match, including the original wording.
+			for _, tool := range r["result"].(map[string]any)["tools"].([]any) {
+				x := tool.(map[string]any)
+				if x["name"] == ToolStart {
+					props := x["inputSchema"].(map[string]any)["properties"].(map[string]any)
+					machine, ok := props["machine"].(map[string]any)
+					if !ok || machine["type"] != "string" {
+						t.Fatal("start lacks typed machine option")
+					}
+					delete(props, "machine")
+					research := props["research"].(map[string]any)
+					description := research["description"].(string)
+					if !strings.HasSuffix(description, researchCapabilityNote) {
+						t.Fatal("research lacks capability qualification")
+					}
+					research["description"] = strings.TrimSuffix(description, researchCapabilityNote)
+				}
+			}
+
+			// New opt-in tools have their own schema/dispatch regression. The
+			// actual external exchange remains immutable for existing tools.
+			ts := r["result"].(map[string]any)["tools"].([]any)
+			ts = slices.DeleteFunc(ts, func(v any) bool {
+				n := v.(map[string]any)["name"]
+				return n == ToolDefer || n == ToolDeferred || n == ToolCancelDeferred || n == ToolWork
+			})
+			r["result"].(map[string]any)["tools"] = ts
 			a, _ := json.Marshal(r["result"])
 			b, _ := json.Marshal(want[string(id)]["result"])
 			if !bytes.Equal(a, b) {
@@ -146,6 +175,9 @@ func TestClaudeCodeToolsList(t *testing.T) {
 	}
 	var prefixed []string
 	for _, x := range tools {
+		if x.Name == ToolDefer || x.Name == ToolDeferred || x.Name == ToolCancelDeferred || x.Name == ToolWork {
+			continue
+		}
 		prefixed = append(prefixed, "mcp__hataori__"+x.Name)
 	}
 	slices.Sort(prefixed)

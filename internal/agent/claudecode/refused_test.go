@@ -67,8 +67,8 @@ func TestRefusedEnterIsPressedAgain(t *testing.T) {
 	w.input(t, c, "in-1", first)
 	w.refuse = true
 	evs, now := w.tick(c, time.Now(), 2*DefaultInputTimeout)
-	if len(evs) != 0 {
-		t.Fatalf("events while the Enter is refused: %+v", evs)
+	if len(evs) != 1 || evs[0].Kind != agent.InputWaiting || evs[0].Input != "in-1" {
+		t.Fatalf("waiting notice while the Enter is refused: %+v", evs)
 	}
 	w.input(t, c, "in-2", "the next")
 	w.want(t, first)
@@ -167,18 +167,18 @@ func TestRefusedPasteWaitsForATurn(t *testing.T) {
 }
 
 // An interrupt of a message that was not handed over ends its turn and
-// drops it (#741).
+// drops it and every safely queued input after it (#903).
 func TestInterruptOfARefusedPaste(t *testing.T) {
 	c, w := started(t), &handing{refuse: true}
 	w.input(t, c, "in-1", "held up")
 	w.input(t, c, "in-2", "the next")
 	a := c.Interrupt()
-	if len(a.Keys) != 0 || len(a.Events) != 1 || a.Events[0].Status != agent.Interrupted || a.Events[0].Input != "in-1" {
+	if len(a.Keys) != 0 || len(a.Events) != 2 || a.Events[0].Status != agent.Interrupted || a.Events[0].Input != "in-1" || a.Events[1].Status != agent.Interrupted || a.Events[1].Input != "in-2" {
 		t.Fatalf("the interrupt: %+v", a)
 	}
 	w.refuse = false
 	w.tick(c, time.Now(), 5*time.Second)
-	w.want(t, "the next", enterKey)
+	w.want(t)
 }
 
 // An interrupt while a message's Enter is owed is none: the CLI has no turn

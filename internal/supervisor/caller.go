@@ -58,11 +58,12 @@ func Caller(scope string, thread control.ThreadID, autonomy string) control.Call
 		// supervisor's own thread, and neither answers for a person (#871).
 		OrdinaryOnly: true,
 		Mark:         Mark,
+		DeferInput:   true,
 		Research:     true, // of its own starts only (#681)
 	}
 	switch autonomy {
 	case Watch:
-		c.May, c.Research = control.OpRead, false
+		c.May, c.Research, c.DeferInput = control.OpRead, false, false
 	case Act:
 	default:
 		c.Propose = true
@@ -96,4 +97,11 @@ func (w *watching) Send(ctx context.Context, id control.ThreadID, key string, in
 
 func (w *watching) AskInterrupt(ctx context.Context, id control.ThreadID, key, reason string) (control.RequestID, error) {
 	return "", w.refuse("AskInterrupt")
+}
+
+func (w *watching) DeferredSend(ctx context.Context, r control.DeferredSendRequest) (control.DeferredSend, error) {
+	if r.Action == "queue" {
+		return control.DeferredSend{}, w.refuse("DeferredSend")
+	}
+	return w.API.DeferredSend(ctx, r)
 }

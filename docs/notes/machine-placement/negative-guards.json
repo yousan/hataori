@@ -1,0 +1,164 @@
+[
+  {
+    "guard": "ready gate",
+    "command": "go test -p 1 ./internal/placement -run ^TestEveryEligibilityGate/away$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestEveryEligibilityGate (0.00s)",
+      "--- FAIL: TestEveryEligibilityGate/away (0.00s)",
+      "placement_test.go:53: refusal \"\", want \"ready\"",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/placement\t0.003s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "reservation before workspace",
+    "command": "go test -p 1 ./internal/core -run ^TestPlacementConcurrentExplicitStartsReserveBeforeWorkspace$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementConcurrentExplicitStartsReserveBeforeWorkspace (0.14s)",
+      "placement_test.go:97: refusals=0 workspaces=2",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.149s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "original accepted operation",
+    "command": "go test -p 1 ./internal/core -run ^TestPlacementWorkspaceRecordPreservesAcceptedOperation$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementWorkspaceRecordPreservesAcceptedOperation (0.13s)",
+      "placement_test.go:395: workspace rewrite lost accepted operation {\"principal\":\"owner\",\"key\":\"\",\"text\":\"\",\"no_input\":true,\"dir\":\"dir\"}",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.140s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "resident admission",
+    "command": "go test -p 1 ./internal/worker -run ^TestPlacementResidentRechecksEveryLimit$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementResidentRechecksEveryLimit (0.33s)",
+      "--- FAIL: TestPlacementResidentRechecksEveryLimit/resident (0.08s)",
+      "placement_test.go:41: limit admitted start: {\"operation\":\"start\",\"key\":\"limited-start\",\"request_hash\":\"5e89a714760e488000e1d4067f217a274ec2ea1464f12a0a2d350732fdccfdef\",\"state\":\"complete\",\"result\":{\"host\":\"ef409f0c48b780d00b55b7ffb6460fa2\"}}",
+      "--- FAIL: TestPlacementResidentRechecksEveryLimit/starting (0.07s)",
+      "placement_test.go:41: limit admitted start: {\"operation\":\"start\",\"key\":\"limited-start\",\"request_hash\":\"89248e7239a3ac25d0bbbeafa85e30d54c3d81b9a9ddc23b55c6032c2ba5112c\",\"state\":\"complete\",\"result\":{\"host\":\"8eeb0bbd8510a247fb9dbefc121e5a1b\"}}",
+      "--- FAIL: TestPlacementResidentRechecksEveryLimit/load (0.06s)"
+    ]
+  },
+  {
+    "guard": "terminal trash history",
+    "command": "go test -p 1 ./internal/worker -run ^TestPlacementRestoredWorkspaceTransfersAndRestarts$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementRestoredWorkspaceTransfersAndRestarts (4.75s)",
+      "placement_test.go:143: worker: invalid trash workspace identity",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/worker\t4.771s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "earlier local holder proof",
+    "command": "go test -p 1 ./internal/runner -run ^TestPlacementLocalPriorUnknownBlocksReplacementAndRelease$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementLocalPriorUnknownBlocksReplacementAndRelease (0.13s)",
+      "placement_test.go:57: unknown prior host admitted replacement <nil>",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.143s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "original phase2 host recovery",
+    "command": "go test -p 1 ./internal/runner -run ^TestPlacementLocalRecoveryUsesOriginalHostBeforeNewAdmission$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementLocalRecoveryUsesOriginalHostBeforeNewAdmission (0.15s)",
+      "placement_test.go:90: original completed host blocked by current resource use waiting for room on the recorded machine: local: machine is not ready",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.155s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "canceled dispatch survives restarts",
+    "command": "go test -p 1 ./internal/runner -run ^TestPlacementRevocationStaysCanceledAcrossTwoRestarts$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementRevocationStaysCanceledAcrossTwoRestarts (0.36s)",
+      "--- FAIL: TestPlacementRevocationStaysCanceledAcrossTwoRestarts/phase-0 (0.17s)",
+      "placement_test.go:172: second restart followed canceled first input 1",
+      "--- FAIL: TestPlacementRevocationStaysCanceledAcrossTwoRestarts/phase-2 (0.19s)",
+      "placement_test.go:172: second restart followed canceled first input 1",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "durable placement mode",
+    "command": "go test -p 1 ./cmd/hataori -run ^TestPlacementModeSurvivesRemovingLastLimitAndRevocation$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementModeSurvivesRemovingLastLimitAndRevocation (0.38s)",
+      "--- FAIL: TestPlacementModeSurvivesRemovingLastLimitAndRevocation/0 (0.14s)",
+      "placement_test.go:65: removing last limit disabled durable authorization",
+      "--- FAIL: TestPlacementModeSurvivesRemovingLastLimitAndRevocation/1 (0.12s)",
+      "placement_test.go:65: removing last limit disabled durable authorization",
+      "--- FAIL: TestPlacementModeSurvivesRemovingLastLimitAndRevocation/2 (0.12s)"
+    ]
+  },
+  {
+    "guard": "reconnect launch authority",
+    "command": "go test -p 1 ./internal/runner -run ^TestPlacementRevocationStaysCanceledAcrossTwoRestarts/phase-0$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestPlacementRevocationStaysCanceledAcrossTwoRestarts (0.18s)",
+      "--- FAIL: TestPlacementRevocationStaysCanceledAcrossTwoRestarts/phase-0 (0.18s)",
+      "placement_test.go:158: revocation did not retain canceled dispatch 0 <nil>",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/runner\t0.186s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "waiting launch operation",
+    "command": "go test -p 1 ./internal/core -run ^TestWhatWaitedIsLaunchedAsWithoutAWait$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestWhatWaitedIsLaunchedAsWithoutAWait (0.17s)",
+      "places_test.go:334: with no wait {AcceptedOperation:2 Session:3 Thread:3 Agent:fake Dir:/tmp/TestWhatWaitedIsLaunchedAsWithoutAWait3886319217/002/scope Model:m-default Effort:e-default Principal:owner From:chat:U1 Key:waited Input:{Text:waited Link:0x1bc56e00c8d0 Before: After: Via:} Context: NoInput:false Confined:true placed:<nil>}, after one {AcceptedOperation:0 Session:3 Thread:3 Agent:fake Dir:/tmp/TestWhatWaitedIsLaunchedAsWithoutAWait3886319217/002/scope Model:m-default Effort:e-default Principal:owner From:chat:U1 Key:waited Input:{Text:waited Link:0x1bc56e00c8d0 Before: After: Via:} Context: NoInput:false Confined:true placed:<nil>}",
+      "FAIL",
+      "FAIL\tgithub.com/yousan/hataori/internal/core\t0.172s",
+      "FAIL"
+    ]
+  },
+  {
+    "guard": "startup retry operation",
+    "command": "go test -p 1 ./internal/core -run ^TestConversationRetryWaitsForAPlace$ -parallel 1 -count=1",
+    "expected_failure": true,
+    "exit_code": 1,
+    "evidence": [
+      "--- FAIL: TestConversationRetryWaitsForAPlace (0.69s)",
+      "--- FAIL: TestConversationRetryWaitsForAPlace/trust/occupied=true (0.19s)",
+      "retry_places_test.go:87: retry launch {AcceptedOperation:0 Session:4 Thread:1 Agent:fake Dir:/tmp/TestConversationRetryWaitsForAPlacetrustoccupied=true1180076748/002/scope Model:m-default Effort:e-default Principal:owner From:chat:U1 Key:retry Input:{Text:retry Link:0x3e5a491a5ad0 Before:before After:after Via:chat} Context:earlier context NoInput:false Confined:true placed:<nil>}, want original input {AcceptedOperation:2 Principal:owner From:chat:U1 Key:retry Text:retry Sent:false Written:false WrittenText:<nil> Current:false Wake:false NoInput:false Dir:/tmp/TestConversationRetryWaitsForAPlacetrustoccupied=true1180076748/002/scope Link:0x3e5a49160ff0 Via:chat Context:earlier context Before:before After:after Placed:<nil>}",
+      "--- FAIL: TestConversationRetryWaitsForAPlace/trust/occupied=false (0.19s)",
+      "retry_places_test.go:87: retry launch {AcceptedOperation:0 Session:4 Thread:1 Agent:fake Dir:/tmp/TestConversationRetryWaitsForAPlacetrustoccupied=false2795589032/002/scope Model:m-default Effort:e-default Principal:owner From:chat:U1 Key:retry Input:{Text:retry Link:0x3e5a492015c0 Before:before After:after Via:chat} Context:earlier context NoInput:false Confined:true placed:<nil>}, want original input {AcceptedOperation:2 Principal:owner From:chat:U1 Key:retry Text:retry Sent:false Written:false WrittenText:<nil> Current:false Wake:false NoInput:false Dir:/tmp/TestConversationRetryWaitsForAPlacetrustoccupied=false2795589032/002/scope Link:0x3e5a491cd260 Via:chat Context:earlier context Before:before After:after Placed:<nil>}",
+      "--- FAIL: TestConversationRetryWaitsForAPlace/without_settings/occupied=true (0.17s)"
+    ]
+  }
+]

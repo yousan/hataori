@@ -1,0 +1,30 @@
+{
+  "id": 46126592224,
+  "run_attempt": 1,
+  "workflow_id": 415474141,
+  "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+  "head_branch": "main",
+  "event": "push",
+  "path": ".github/workflows/ci.yml",
+  "status": "completed",
+  "conclusion": "success",
+  "display_title": "Merge pull request #1114 from yousan/issue-1113-coordinator-seams",
+  "created_at": "2026-11-28T08:36:12Z",
+  "updated_at": "2026-11-28T09:05:11Z",
+  "repository": {
+    "id": 1454788309,
+    "full_name": "yousan/hataori"
+  },
+  "head_repository": {
+    "id": 1454788309,
+    "full_name": "yousan/hataori"
+  },
+  "actor": {
+    "id": 561613,
+    "login": "yousan"
+  },
+  "triggering_actor": {
+    "id": 561613,
+    "login": "yousan"
+  }
+}

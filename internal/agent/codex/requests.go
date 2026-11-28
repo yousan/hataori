@@ -223,7 +223,7 @@ func (c *codec) answer(answer agent.Answer) (agent.Actions, error) {
 	}
 	if r.async {
 		if c.turnID != "" {
-			id := c.write(&a, "turn/steer", map[string]any{"threadId": c.session, "expectedTurnId": c.turnID, "input": []any{map[string]any{"type": "text", "text": whole}}}, true)
+			id := c.write(&a, "turn/steer", map[string]any{"threadId": c.session, "expectedTurnId": c.turnID, "input": []any{c.textInput(whole)}}, true)
 			if c.steers == nil {
 				c.steers = map[int]string{}
 			}

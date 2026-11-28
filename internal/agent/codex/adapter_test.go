@@ -219,3 +219,63 @@ func TestCodexCodecOptions(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerProbeAndLaunchUseOnlyLocalLoginEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	record := filepath.Join(dir, "environment")
+	script := filepath.Join(dir, "probe-fixture")
+	version, err := os.ReadFile("testdata/0.163.0/VERSION")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, _ := strings.Cut(string(version), "\n")
+	var status struct {
+		Stdout, Stderr string
+		ExitCode       int `json:"exit_code"`
+	}
+	b, err := os.ReadFile("testdata/0.163.0/login_status/notes.json")
+	if err != nil || json.Unmarshal(b, &status) != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "stdout"), []byte(status.Stdout), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "stderr"), []byte(status.Stderr), 0600); err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf("#!/bin/sh\n/usr/bin/env >> %q\nif [ \"$1\" = --version ]; then printf '%%s\\n' '%s'; else /bin/cat %q; /bin/cat %q >&2; exit %d; fi\n", record, first, filepath.Join(dir, "stdout"), filepath.Join(dir, "stderr"), status.ExitCode)
+	if err := os.WriteFile(script, []byte(content), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{command: script, passEnv: []string{"GITHUB_TOKEN", "BOT_MARKER", "SUPERVISOR_MARKER", "SSH_AUTH_SOCK"}, environ: func() []string {
+		return []string{"HOME=" + dir, "CODEX_HOME=/default-login", "GITHUB_TOKEN=secret", "BOT_MARKER=secret", "SUPERVISOR_MARKER=secret", "SSH_AUTH_SOCK=secret"}
+	}}
+	local := a.ForWorker()
+	spec := agent.Spec{Dir: dir, ConfigDir: filepath.Join(dir, "alternate-login")}
+	h, err := local.Probe(context.Background(), spec)
+	if err != nil || !h.Installed || !h.LoggedIn || h.Unknown {
+		t.Fatalf("probe: %+v %v", h, err)
+	}
+	launch, err := local.Launch(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probeEnv, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range []string{string(probeEnv), strings.Join(launch.Env, "\n")} {
+		if !strings.Contains(env, "CODEX_HOME="+spec.ConfigDir) || strings.Contains(env, "/default-login") || strings.Contains(env, "secret") {
+			t.Fatalf("incorrect worker environment: %s", env)
+		}
+	}
+	if len(a.passEnv) != 4 {
+		t.Fatal("ForWorker mutated the main adapter")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h, err = local.Probe(ctx, spec)
+	if err != nil || h.Installed || !h.Unknown {
+		t.Fatalf("cancelled probe claimed missing installation: %+v %v", h, err)
+	}
+}

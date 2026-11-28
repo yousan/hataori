@@ -171,11 +171,15 @@ func TestRefused(t *testing.T) {
 		{"HostScreen", with(`"Threads",`, `"Threads", "HostScreen",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[1]"`, "never"}},
 		{"OperateHost", with(`"Threads",`, `"Threads", "OperateHost",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[1]"`, "never"}},
 		{"AttachTerminal", with(`"Threads",`, `"Threads", "AttachTerminal",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[1]"`, `"AttachTerminal" is never`}},
+		{"AttachWorker", with(`"Threads",`, `"Threads", "AttachWorker",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[1]"`, `"AttachWorker" is never`}},
 		{"Close", with(`"Threads",`, `"Close", "Threads",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[0]"`, `"Close" is never`}},
 		{"Remove", with(`"Threads",`, `"Threads", "Remove",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[1]"`, `"Remove" is never`}},
+		{"DeferredSend", with(`"Threads",`, `"Threads", "DeferredSend",`), `[` + entry + `}]`, []string{`"plugins[0].path"`, `"operations[1]"`, `"DeferredSend" is never`}},
 		{"AttachTerminal in the config", manifest, `[` + entry + `, "operations": ["Threads", "AttachTerminal"]}]`, []string{`"plugins[0].operations[1]"`, `"AttachTerminal" is never`}},
+		{"AttachWorker in the config", manifest, `[` + entry + `, "operations": ["Threads", "AttachWorker"]}]`, []string{`"plugins[0].operations[1]"`, `"AttachWorker" is never`}},
 		{"Close in the config", manifest, `[` + entry + `, "operations": ["Close"]}]`, []string{`"plugins[0].operations[0]"`, `"Close" is never`}},
 		{"Remove in the config", manifest, `[` + entry + `, "operations": ["Remove"]}]`, []string{`"plugins[0].operations[0]"`, `"Remove" is never`}},
+		{"DeferredSend in the config", manifest, `[` + entry + `, "operations": ["DeferredSend"]}]`, []string{`"plugins[0].operations[0]"`, `"DeferredSend" is never`}},
 		{"HostScreen in the config", manifest, `[` + entry + `, "operations": ["HostScreen"]}]`, []string{`"plugins[0].operations[0]"`, "never"}},
 		{"relative path", manifest, `[{"id": "scan", "path": "bin/scan", "sha256": "` + sum + `", "scopes": ["c1"]}]`, []string{`"plugins[0].path"`}},
 		{"short sha256", manifest, `[{"id": "scan", "path": "PATH", "sha256": "` + sum[:63] + `", "scopes": ["c1"]}]`, []string{`"plugins[0].sha256"`}},
@@ -284,6 +288,9 @@ func TestCaller(t *testing.T) {
 	// A Grant not made by Load that names what no plugin is given gets it
 	// neither as a class nor in its limit.
 	wide := Grant{ID: "wide", Scopes: []string{"c1"}, Operations: slices.Clone(operations)}.Caller()
+	if wide.DeferInput || slices.Contains(wide.Limit.Operations, "DeferredSend") {
+		t.Fatal("a forged plugin grant acquired supervisor-only deferred input")
+	}
 	for _, op := range never {
 		if slices.Contains(wide.Limit.Operations, op) {
 			t.Errorf("%s is in the limit", op)

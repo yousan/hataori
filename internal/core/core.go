@@ -20,6 +20,7 @@ import (
 
 	"github.com/yousan/hataori/internal/control"
 	"github.com/yousan/hataori/internal/people"
+	"github.com/yousan/hataori/internal/placement"
 	"github.com/yousan/hataori/internal/session"
 	"github.com/yousan/hataori/internal/store"
 )
@@ -43,7 +44,7 @@ var (
 // Scope is what the core needs to know about one scope.
 type Scope struct {
 	// Machines restricts ordinary starts; nil permits all, empty permits
-	// none. Until worker placement ships, only local can accept a start.
+	// none. Confined threads remain local independently of this list.
 	Machines []string
 	Name     string // the config's name for it; wins over its channel's name
 	Enabled  bool
@@ -186,16 +187,17 @@ type RemovalRefusal interface {
 
 // Launch is what Runner.Start needs.
 type Launch struct {
-	Session   int64
-	Thread    control.ThreadID
-	Agent     string
-	Dir       string
-	Model     string
-	Effort    string
-	Principal control.Principal
-	From      string // the "<client>:<id>" the input came from, if relayed
-	Key       string
-	Input     control.Input
+	AcceptedOperation control.Ops
+	Session           int64
+	Thread            control.ThreadID
+	Agent             string
+	Dir               string
+	Model             string
+	Effort            string
+	Principal         control.Principal
+	From              string // the "<client>:<id>" the input came from, if relayed
+	Key               string
+	Input             control.Input
 	// Context is what the thread said before, for a session that replaces
 	// one whose conversation the agent no longer has; empty otherwise.
 	Context string
@@ -215,11 +217,15 @@ type Launch struct {
 // the session, and sets sessions.launch; the runner clears launch when it
 // launches the agent, and keeps the input until a turn reports its id.
 type FirstInput struct {
+	AcceptedOperation control.Ops `json:"accepted_operation,omitempty"` // original grant, rechecked from provenance at dispatch
+
 	Principal   control.Principal `json:"principal"`
 	From        string            `json:"from,omitempty"`
 	Key         string            `json:"key"`
 	Text        string            `json:"text"`
 	Sent        bool              `json:"sent,omitempty"`         // the turn was started for it, and it was handed to the codec
+	TurnID      int64             `json:"turn_id,omitempty"`      // caller turn bound to this initial input
+	WrittenAt   int64             `json:"written_at,omitempty"`   // wall time of the original write, for active delivery budgets
 	Written     bool              `json:"written,omitempty"`      // it was written to the agent; see agent.Input.Written
 	WrittenText *string           `json:"written_text,omitempty"` // text recorded by the codec when written; nil for older inputs
 	Current     bool              `json:"current,omitempty"`      // Written was set by a runner that sets this; else it is agent.Input.Earlier
@@ -249,7 +255,13 @@ type FirstInput struct {
 // earlier is what an input's text is given to the agent after (owed).
 func pend(ctx context.Context, tx *store.Tx, sid int64, req string, v any, earlier string) (int64, error) {
 	b, _ := json.Marshal(v)
-	res, err := tx.ExecContext(ctx, `INSERT INTO pending_inputs (session_id, request, data, context) VALUES (?, ?, ?, ?)`, sid, req, string(b), earlier)
+	var turn int64
+	if req != "" {
+		if err := tx.QueryRowContext(ctx, `SELECT coalesce(max(id),0) FROM turns WHERE session_id=? AND ended_at IS NULL`, sid).Scan(&turn); err != nil {
+			return 0, err
+		}
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO pending_inputs (session_id, request, data, context,caller_turn) VALUES (?, ?, ?, ?,?)`, sid, req, string(b), earlier, turn)
 	if err != nil {
 		return 0, fmt.Errorf("core: pending input: %w", err)
 	}
@@ -294,6 +306,10 @@ type AgentDefaults struct{ Model, Effort string }
 // Core is the core of one instance. It has no operations of its own: use
 // As to get an API bound to a caller.
 type Core struct {
+	Deferred  *DeferredInputs
+	Placement *MachinePlacement
+	Away      *MachineAway
+
 	// LocalAgents is local's agent allowlist; nil permits configured agents.
 	// Confined threads are independent of ordinary machine restrictions.
 	LocalAgents []string
@@ -315,10 +331,13 @@ type Core struct {
 	// Agents are the configured agents by registered name, with the defaults
 	// of each. Nil: Agent is the only one, with no defaults of its own.
 	Agents map[string]AgentDefaults
-	Agent  string // the registered name of the agent new sessions use
-	Model  string // default model of a scope without one
-	Effort string // default effort of a scope without one
-	Log    *slog.Logger
+	// CanOmitProjectSettings is loaded adapter capability metadata. Nil or
+	// false refuses research before artifacts; each launch is checked again.
+	CanOmitProjectSettings func(agent string) bool
+	Agent                  string // the registered name of the agent new sessions use
+	Model                  string // default model of a scope without one
+	Effort                 string // default effort of a scope without one
+	Log                    *slog.Logger
 	// SignIn makes dashboard sign-in links; nil when the instance has no
 	// dashboard.
 	SignIn SignIn
@@ -468,9 +487,12 @@ func (c *Core) AsFresh(caller control.Caller) control.API {
 var ErrAwake = errors.New("the thread is not asleep")
 
 type api struct {
-	c      *Core
-	caller control.Caller
-	fresh  bool // AsFresh
+	deferredID   int64 // daemon-only dispatch; never restored from caller provenance
+	heldReplay   bool
+	heldActionID int64
+	c            *Core
+	caller       control.Caller
+	fresh        bool // AsFresh
 }
 
 // check is the one authorization function: the caller must be allowed op,
@@ -916,14 +938,44 @@ const terminalsTimeout = time.Second
 func (a *api) summary(ctx context.Context, t *control.ThreadInfo) (int64, error) {
 	db := a.c.Store.DB
 	var sid int64
-	err := db.QueryRowContext(ctx, `SELECT s.id, s.agent, s.model, s.effort,
+	err := db.QueryRowContext(ctx, `SELECT s.id, s.agent, s.model, s.effort,s.io_error,
 		(SELECT count(*) FROM turns u JOIN sessions v ON v.id = u.session_id WHERE v.thread_id = s.thread_id)
-		FROM sessions s WHERE s.thread_id = ? ORDER BY s.id DESC LIMIT 1`, int64(t.ID)).Scan(&sid, &t.Agent, &t.Model, &t.Effort, &t.Turns)
+		FROM sessions s WHERE s.thread_id = ? ORDER BY s.id DESC LIMIT 1`, int64(t.ID)).Scan(&sid, &t.Agent, &t.Model, &t.Effort, &t.IOPaused, &t.Turns)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("core: thread summary: %w", err)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		sid = 0
+	}
+	if err := db.QueryRowContext(ctx, `SELECT coalesce(machine,'') FROM threads WHERE id=?`, int64(t.ID)).Scan(&t.Machine); err != nil {
+		return 0, err
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*)>0,coalesce(max(reason),'') FROM pending_placements WHERE thread_id=?`, int64(t.ID)).Scan(&t.PlacementPending, &t.PlacementReason); err != nil {
+		return 0, err
+	}
+	if t.IOPaused == ErrPlacementWait.Error() {
+		t.PlacementPending = true
+		t.PlacementReason = t.IOPaused
+	}
+	if t.Machine != "" && a.c.Placement != nil && a.c.Placement.Status != nil {
+		status := a.c.Placement.Status(t.Machine)
+		t.Availability = &status
+	}
+	if a.c.Away != nil && t.Machine != "" && t.Machine != store.LocalMachine {
+		status, err := a.c.Away.Status(ctx, t.Machine)
+		if err != nil {
+			return 0, err
+		}
+		if status.State != "ready" {
+			status.LastKnownState = t.State
+			var at int64
+			if err := db.QueryRowContext(ctx, `SELECT updated_at FROM sessions WHERE id=?`, sid).Scan(&at); err != nil {
+				return 0, err
+			}
+			knownAt := time.UnixMilli(at)
+			status.LastKnownAt = &knownAt
+		}
+		t.Availability = &status
 	}
 	var (
 		turn, used, size sql.NullInt64
@@ -1409,6 +1461,9 @@ func (c *Core) ModelOf(scope, agent, model, effort string) (string, string) {
 // confined one.
 func (a *api) start(ctx context.Context, r control.StartRequest, kind control.ThreadKind, in Dir) (control.ThreadID, error) {
 	confined := kind.Confined()
+	if confined && r.Machine != "" && r.Machine != store.LocalMachine {
+		return 0, fmt.Errorf("core: confined threads stay local: %w", session.ErrRefused)
+	}
 	if err := a.act(control.OpStart, "Start", r.Scope); err != nil {
 		return 0, err
 	}
@@ -1439,6 +1494,9 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 		a.c.Log.Warn("start refused", "scope", r.Scope, "agent", chosen, "reason", "unknown agent")
 		return 0, fmt.Errorf("core: start in %q: agent %q: %w", r.Scope, chosen, control.ErrUnknownAgent)
 	}
+	if r.Research && (a.c.CanOmitProjectSettings == nil || !a.c.CanOmitProjectSettings(chosen)) {
+		return 0, fmt.Errorf("core: settings-free research is unsupported by agent %q: it cannot omit the repository's project settings; no worker was created: %w", chosen, session.ErrRefused)
+	}
 	// An approved proposal's call names the effort the proposal showed:
 	// one asked for, checked here when it was proposed, or the config's.
 	if r.Effort != "" && !slices.Contains(control.Efforts, r.Effort) && a.caller.Via != control.ViaProposal {
@@ -1462,12 +1520,31 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 		}
 		return id, a.c.sameKind(ctx, id, kind)
 	}
-	if !confined {
+	if a.c.Placement == nil && r.Machine != "" && r.Machine != store.LocalMachine {
+		return 0, fmt.Errorf("core: machine is not configured: %w", session.ErrRefused)
+	}
+	if !confined && a.c.Placement == nil {
 		if sc.Machines != nil && !slices.Contains(sc.Machines, store.LocalMachine) {
 			return 0, fmt.Errorf("core: start in %q: local is not permitted by scopes[].machines; worker placement is not available: %w", r.Scope, session.ErrRefused)
 		}
 		if a.c.LocalAgents != nil && !slices.Contains(a.c.LocalAgents, chosen) {
 			return 0, fmt.Errorf("core: start in %q: agent %q is not permitted by local's machines[].agents: %w", r.Scope, chosen, session.ErrRefused)
+		}
+	}
+	var observations map[string]placement.Observation
+	if !confined && a.c.Placement != nil {
+		defer a.c.locks.lock("machine-placement")()
+		observations = a.c.placementObservations(ctx, chosen)
+		if r.Machine != "" {
+			if err := a.c.Store.Update(ctx, func(tx *store.Tx) error {
+				key, why, err := a.c.choosePlacement(ctx, tx, r.Scope, chosen, r.Machine, 0, observations)
+				if err == nil && key == "" {
+					return fmt.Errorf("core: explicit machine refused: %s: %w", why, session.ErrRefused)
+				}
+				return err
+			}); err != nil {
+				return 0, err
+			}
 		}
 	}
 	if kind == control.KindSupervisor {
@@ -1526,6 +1603,34 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		now := time.Now().UnixMilli()
 		state, launch := control.Creating, 1
+		var machine any = store.LocalMachine
+		var placementReason string
+		placementWait := false
+		if !confined && a.c.Placement != nil {
+			key, why, err := a.c.choosePlacement(ctx, tx, r.Scope, chosen, r.Machine, 0, observations)
+			if err != nil {
+				return err
+			}
+			placementReason = why
+			if key != "" && r.Machine == "" {
+				var earlier int
+				if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pending_placements`).Scan(&earlier); err != nil {
+					return err
+				}
+				if earlier > 0 {
+					key = ""
+					placementReason = "earlier automatic starts are waiting"
+				}
+			}
+			if key == "" {
+				if r.Machine != "" {
+					return fmt.Errorf("core: explicit machine refused: %s: %w", why, session.ErrRefused)
+				}
+				machine, state, launch, placementWait = nil, control.Asleep, 0, true
+			} else {
+				machine = key
+			}
+		}
 		if kind == control.KindConversation {
 			var err error
 			if waits, err = a.c.noPlace(ctx, tx, r.Scope); err != nil {
@@ -1536,8 +1641,8 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 			}
 		}
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO threads (scope, key, title, repo, started_by, state, created_at, updated_at, confined, kind, no_project_settings) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			r.Scope, link.Thread, name, r.Repo, string(a.caller.Principal), string(state), now, now, confined, string(kind), r.Research)
+			`INSERT INTO threads (scope, key, title, repo, started_by, state, created_at, updated_at, confined, kind, no_project_settings, machine) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			r.Scope, link.Thread, name, r.Repo, string(a.caller.Principal), string(state), now, now, confined, string(kind), r.Research, machine)
 		if err != nil {
 			return fmt.Errorf("core: create thread: %w", err)
 		}
@@ -1575,7 +1680,7 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 		r.Input.Via = a.caller.Via
 		// A confined thread's directory is known now, so a daemon that dies
 		// before the launch recovers it in the same one.
-		first := FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Text: r.Input.Text, Link: r.Input.Link,
+		first := FirstInput{AcceptedOperation: control.OpStart, Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Text: r.Input.Text, Link: r.Input.Link,
 			Before: r.Input.Before, After: r.Input.After, Via: r.Input.Via, Dir: dir}
 		kept := first
 		if waits {
@@ -1590,6 +1695,21 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 			return fmt.Errorf("core: create session: %w", err)
 		}
 		sessionID, _ = res.LastInsertId()
+		if !confined && a.c.Placement != nil {
+			if placementWait {
+				data, err := json.Marshal(placementRequest{Caller: a.caller})
+				if err != nil {
+					return err
+				}
+				if err := tx.PutPendingPlacement(ctx, store.PendingPlacement{Thread: thread, Agent: chosen, Data: string(data), Reason: placementReason, CreatedAt: now}); err != nil {
+					return err
+				}
+				waits = true
+			} else if err := reservePlacement(ctx, tx, thread, machine.(string), chosen, a.c.now()); err != nil {
+				return err
+			}
+
+		}
 		d := map[string]any{"thread": thread, "session": sessionID, "repo": r.Repo,
 			"principal": string(a.caller.Principal), "model": model, "effort": effort, "kind": string(kind)}
 		if a.caller.From != "" {
@@ -1603,7 +1723,14 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 		}
 		data, _ := json.Marshal(d)
 		_, err = tx.Append(ctx, control.Event{Thread: id, Scope: r.Scope, Time: a.c.now(), Kind: "thread_created", Data: data})
-		if err != nil || !waits {
+		if err == nil && !confined && a.c.Placement != nil {
+			machineKey := ""
+			if machine != nil {
+				machineKey = machine.(string)
+			}
+			err = placementEvent(ctx, tx, id, machineKey, placementReason, placementWait, a.c.now())
+		}
+		if err != nil || !waits || placementWait {
 			return err
 		}
 		return keep(ctx, tx, id, kept, a.caller.NoAnswer)
@@ -1623,7 +1750,7 @@ func (a *api) start(ctx context.Context, r control.StartRequest, kind control.Th
 		return id, nil
 	}
 
-	if err := a.c.launch(ctx, Launch{Session: sessionID, Thread: id, Agent: chosen,
+	if err := a.c.launch(ctx, Launch{AcceptedOperation: control.OpStart, Session: sessionID, Thread: id, Agent: chosen,
 		Model: model, Effort: effort, Principal: a.caller.Principal, From: a.caller.From, Key: r.Key, Input: r.Input,
 		Confined: confined, Dir: dir}, r.Repo); err != nil {
 		return id, err
@@ -1763,8 +1890,42 @@ func (c *Core) sameKind(ctx context.Context, id control.ThreadID, kind control.T
 // starts its agent; a confined session's directory, l.Dir, is always
 // given by Workspaces.Confined. A failure is recorded as the session's end.
 func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
+	defer c.locks.lock(fmt.Sprintf("launch:%d", l.Session))()
+	if c.Placement != nil {
+		var launch int
+		var state string
+		if err := c.Store.DB.QueryRowContext(ctx, `SELECT launch,state FROM sessions WHERE id=?`, l.Session).Scan(&launch, &state); err != nil {
+			return err
+		}
+		if launch == 0 || state != "creating" {
+			return nil
+		}
+	}
 	var err error
+	if err := c.AdmitSession(ctx, l.Session); err != nil {
+		return c.waitForMachine(ctx, l.Session, err)
+	}
+	var machine string
+	if err := c.Store.DB.QueryRowContext(ctx, `SELECT coalesce(machine,'') FROM threads WHERE id=?`, int64(l.Thread)).Scan(&machine); err != nil {
+		return err
+	}
+	remote := machine != store.LocalMachine
+	if remote {
+		maker, ok := c.Runner.(interface {
+			MakeRemoteWorkspace(context.Context, int64, string) (string, error)
+		})
+		if !ok {
+			return fmt.Errorf("core: owning machine has no workspace implementation")
+		}
+		if l.Dir == "" {
+			l.Dir, err = maker.MakeRemoteWorkspace(ctx, l.Session, repo)
+			if err != nil {
+				return c.waitForMachine(ctx, l.Session, err)
+			}
+		}
+	}
 	record := func(f FirstInput) error {
+		f.AcceptedOperation, f.NoInput = l.AcceptedOperation, l.NoInput
 		f.Principal, f.From, f.Key, f.Text, f.Context, f.Link = l.Principal, l.From, l.Key, l.Input.Text, l.Context, l.Input.Link
 		f.Before, f.After, f.Via = l.Input.Before, l.Input.After, l.Input.Via
 		fi, _ := json.Marshal(f)
@@ -1780,20 +1941,25 @@ func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 			return err
 		})
 	}
+	if remote {
+		if err := record(FirstInput{Dir: l.Dir}); err != nil {
+			return err
+		}
+	}
 	if l.Confined {
 		// No clone: its directory, made empty only if it is not there yet.
 		if l.Dir, err = c.Workspaces.Confined(ctx, l.Thread, l.Dir); err == nil {
 			err = record(FirstInput{Dir: l.Dir})
 		}
 	}
-	if l.Dir == "" && l.placed != nil && err == nil {
+	if !remote && l.Dir == "" && l.placed != nil && err == nil {
 		// A Make before the daemon died may have put it in place.
 		var ok bool
 		if l.Dir, ok, err = c.Workspaces.Adopt(ctx, l.Thread, *l.placed); err == nil && ok {
 			err = record(FirstInput{Dir: l.Dir})
 		}
 	}
-	if l.Dir == "" && err == nil {
+	if !remote && l.Dir == "" && err == nil {
 		l.Dir, err = c.Workspaces.Make(ctx, l.Thread, repo, func(p Placement) error {
 			return record(FirstInput{Placed: &p})
 		})
@@ -1804,6 +1970,9 @@ func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 	}
 	if err == nil {
 		err = c.Runner.Start(ctx, l)
+	}
+	if err != nil && (remote || errors.Is(err, ErrPlacementWait) || c.uncertainLocalLaunch(ctx, l.Session)) {
+		return c.waitForMachine(ctx, l.Session, err)
 	}
 	if err != nil {
 		// The thread exists; its session failed to start.
@@ -1818,10 +1987,31 @@ func (c *Core) launch(ctx context.Context, l Launch, repo string) error {
 // resume starts the agent of a woken session. A failure is recorded as the
 // session's end.
 func (c *Core) resume(ctx context.Context, sid int64, f FirstInput) error {
+	defer c.locks.lock(fmt.Sprintf("launch:%d", sid))()
+	if c.Placement != nil {
+		var launch int
+		var state string
+		if err := c.Store.DB.QueryRowContext(ctx, `SELECT launch,state FROM sessions WHERE id=?`, sid).Scan(&launch, &state); err != nil {
+			return err
+		}
+		if launch == 0 || state != "creating" {
+			return nil
+		}
+	}
+	if err := c.AdmitSession(ctx, sid); err != nil {
+		return c.waitForMachine(ctx, sid, err)
+	}
 	// The input as it was given: nothing of an earlier launch's progress.
-	f = FirstInput{Principal: f.Principal, From: f.From, Key: f.Key, Text: f.Text, Wake: true, Link: f.Link, Via: f.Via,
+	f = FirstInput{AcceptedOperation: f.AcceptedOperation, Principal: f.Principal, From: f.From, Key: f.Key, Text: f.Text, Wake: true, Link: f.Link, Via: f.Via,
 		Context: f.Context, Before: f.Before, After: f.After}
 	if err := c.Runner.Resume(ctx, sid, f); err != nil {
+		var machine string
+		if e := c.Store.DB.QueryRowContext(ctx, `SELECT t.machine FROM threads t JOIN sessions s ON s.thread_id=t.id WHERE s.id=?`, sid).Scan(&machine); e != nil {
+			return e
+		}
+		if errors.Is(err, ErrPlacementWait) || machine != store.LocalMachine || c.uncertainLocalLaunch(ctx, sid) {
+			return c.waitForMachine(ctx, sid, err)
+		}
 		if ferr := c.Machine.Apply(ctx, sid, session.Input{Kind: session.Exit, Reason: "resume: " + err.Error()}); ferr != nil {
 			c.Log.Error("recording a failed resume", "session", sid, "err", ferr)
 		}
@@ -1837,7 +2027,7 @@ func (c *Core) resume(ctx context.Context, sid int64, f FirstInput) error {
 // reconnects. Call it after the runner has reconnected.
 func (c *Core) Recover(ctx context.Context) error {
 	rows, err := c.Store.DB.QueryContext(ctx, `SELECT s.id, s.agent, s.model, s.effort, s.first_input, t.id, t.repo, t.confined, t.scope
-		FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.state = ? AND s.launch IN (1, 2) ORDER BY s.id`, string(control.Creating))
+		FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.state = ? AND s.launch IN (1, 2) AND NOT EXISTS(SELECT 1 FROM pending_placements p WHERE p.thread_id=t.id) ORDER BY s.id`, string(control.Creating))
 	if err != nil {
 		return fmt.Errorf("core: recover: %w", err)
 	}
@@ -1863,7 +2053,16 @@ func (c *Core) Recover(ctx context.Context) error {
 	}
 	rows.Close()
 	for _, x := range found {
-		if _, ok := c.Scopes[x.scope]; !ok {
+		if c.Placement != nil && !x.l.Confined {
+			allowed, err := c.RevalidatePlacementLaunch(ctx, x.l.Session)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				continue
+			}
+		}
+		if sc, ok := c.Scopes[x.scope]; !ok || !sc.Enabled {
 			// Nothing starts in a scope that left the config: its start
 			// failed, as the thread's reader sees.
 			c.Log.Warn("a start is not made after a restart", "session", x.l.Session, "scope", x.scope, "reason", "the scope is not in the config")
@@ -1875,6 +2074,12 @@ func (c *Core) Recover(ctx context.Context) error {
 		in := x.f.Input()
 		if x.f.Wake && x.f.NoInput {
 			if err = c.Runner.Wake(ctx, x.l.Session, x.f.Principal); err != nil {
+				if c.Placement != nil {
+					if err := c.waitForMachine(ctx, x.l.Session, err); err != nil {
+						return err
+					}
+					continue
+				}
 				if ferr := c.Machine.Apply(ctx, x.l.Session, session.Input{Kind: session.Exit, Reason: "resume: " + err.Error()}); ferr != nil {
 					c.Log.Error("recording a failed resume", "session", x.l.Session, "err", ferr)
 				}
@@ -1882,6 +2087,7 @@ func (c *Core) Recover(ctx context.Context) error {
 		} else if x.f.Wake {
 			err = c.resume(ctx, x.l.Session, x.f)
 		} else {
+			x.l.AcceptedOperation = x.f.AcceptedOperation
 			x.l.Dir, x.l.Principal, x.l.From, x.l.Key, x.l.Input, x.l.Context = x.f.Dir, x.f.Principal, x.f.From, x.f.Key, in, x.f.Context
 			x.l.placed, x.l.NoInput = x.f.Placed, x.f.NoInput
 			err = c.launch(ctx, x.l, x.repo)
@@ -1931,6 +2137,9 @@ func (a *api) Limits(ctx context.Context) ([]control.AgentLimits, error) {
 
 func (a *api) Workspace(ctx context.Context, id control.ThreadID) (control.WorkspaceState, error) {
 	if _, err := a.checkThread(ctx, control.OpRead, "Workspace", id); err != nil {
+		return control.WorkspaceState{}, err
+	}
+	if err := a.c.requireLocalWorkspace(ctx, id); err != nil {
 		return control.WorkspaceState{}, err
 	}
 	dir, err := a.c.workspaceDir(ctx, id)
@@ -2027,7 +2236,21 @@ func (c *Core) workspaceDir(ctx context.Context, id control.ThreadID) (string, e
 // WorkspaceDir is the directory of the thread's workspace, as stored with
 // the thread; an error when it has none yet.
 func (c *Core) WorkspaceDir(ctx context.Context, id control.ThreadID) (string, error) {
+	if err := c.requireLocalWorkspace(ctx, id); err != nil {
+		return "", err
+	}
 	return c.workspaceDir(ctx, id)
+}
+
+func (c *Core) requireLocalWorkspace(ctx context.Context, id control.ThreadID) error {
+	var machine string
+	if err := c.Store.DB.QueryRowContext(ctx, `SELECT machine FROM threads WHERE id=?`, int64(id)).Scan(&machine); err != nil {
+		return err
+	}
+	if machine != store.LocalMachine {
+		return fmt.Errorf("core: this operation requires a local workspace; thread %v belongs to worker %s", id, machine)
+	}
+	return nil
 }
 
 // started returns the thread a Start key created, if it was used before.
@@ -2085,6 +2308,7 @@ func (a *api) Send(ctx context.Context, id control.ThreadID, key string, in cont
 // earlier answer that took the input and recorded no outcome: nothing is
 // taken or interrupted then, and the caller decides again (#523).
 type sendGuard struct {
+	deferred                     int64
 	session, turn                int64
 	interrupted, ended, repeated bool
 	// proposal makes it an approved proposal's send instead (#650): a
@@ -2092,6 +2316,8 @@ type sendGuard struct {
 	// handle of the question it was proposed to answer, it is sent only
 	// while the thread waits on that question, else errGuardEnded.
 	proposal bool
+	held     bool // durable absence replay: bind the original session/run atomically
+	run      string
 	question string
 }
 
@@ -2116,6 +2342,9 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 	if a.caller.Propose {
 		// Nothing is sent: a person decides (Caller.Propose).
 		return a.proposeSend(ctx, scope, id, key, in)
+	}
+	if held, err := a.hold(ctx, id, "send", key, "", heldAction{Input: in, Busy: busy}); err != nil || held {
+		return err
 	}
 	asked := busy
 	if a.caller.RefuseBusy {
@@ -2157,9 +2386,17 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		if err != nil {
 			return err
 		}
-		if (guard == nil || guard.proposal) && (state == control.Closed || state == control.Removed) {
+		if (guard == nil || guard.proposal || guard.deferred != 0) && (state == control.Closed || state == control.Removed) {
 			// Nothing is accepted: a message does not wake a closed thread.
 			return fmt.Errorf("core: send to %v: %w", id, ErrClosed)
+		}
+		if guard != nil && guard.deferred != 0 {
+			if a.c.Deferred == nil || a.deferredID != guard.deferred {
+				return ErrForbidden
+			}
+			if err := a.c.Deferred.guardTx(ctx, tx, guard.deferred, id); err != nil {
+				return err
+			}
 		}
 		if in.Link, err = a.c.ownLink(ctx, tx, id, in.Link, a.caller.From); err != nil {
 			return err
@@ -2174,6 +2411,15 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				return err // a repeated key is ignored, whatever Busy says
 			}
 		}
+		if guard != nil && guard.held {
+			var run string
+			if err := tx.QueryRowContext(ctx, `SELECT run FROM session_machine_runs WHERE session_id=?`, sid).Scan(&run); err != nil {
+				return err
+			}
+			if sid != guard.session || run != guard.run {
+				return errGuardEnded
+			}
+		}
 		if guard != nil && guard.proposal && guard.question != "" {
 			// A proposed answer answers the question it was proposed for, or
 			// nothing.
@@ -2186,7 +2432,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				return errGuardEnded
 			}
 		}
-		if guard != nil && !guard.proposal {
+		if guard != nil && !guard.proposal && guard.deferred == 0 {
 			var turn int64
 			err := tx.QueryRowContext(ctx, `SELECT id FROM turns WHERE session_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1`, sid).Scan(&turn)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -2212,7 +2458,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 			// The key is not taken: the transaction is rolled back.
 			return fmt.Errorf("core: send to %v: %s: %w", id, state, ErrAwake)
 		}
-		if !a.fresh && guard == nil && (state == control.Creating || state == control.Idle || state == control.Running) {
+		if !a.fresh && (guard == nil || guard.held || guard.deferred != 0) && (state == control.Creating || state == control.Idle || state == control.Running) {
 			// A conversation of one input's own runs (AsFresh): this input is
 			// for the conversation it set aside, which the session resumes once
 			// that one ended. It is refused, not delivered into it; the chat
@@ -2239,7 +2485,7 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 		}
 		marked := FirstInput{Principal: a.caller.Principal, From: a.caller.From, Key: key, Text: in.Text, Link: in.Link,
 			Before: in.Before, After: in.After, Via: a.caller.Via}
-		if guard == nil {
+		if guard == nil || guard.held || guard.deferred != 0 {
 			if waits, err = a.c.mustWait(ctx, tx, scope, id, state); err != nil {
 				return err
 			}
@@ -2273,13 +2519,35 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 				return err
 			}
 			pending, err = pend(ctx, tx, sid, question, control.Answer{Text: given.Text}, "")
+			if err == nil {
+				err = a.c.keepPendingAuthority(ctx, tx, pending, a.caller, control.OpSend)
+			}
 			return err
 		}
 		pending, hand, err = a.c.sendTx(ctx, tx, sid, marked)
+		if err == nil {
+			err = a.c.keepPendingAuthority(ctx, tx, pending, a.caller, control.OpSend)
+		}
 		return err
 	}
 	for {
-		err = a.c.Store.Update(ctx, take)
+		err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
+			if err := take(tx); err != nil {
+				return err
+			}
+			if accepted {
+				if guard != nil && guard.deferred != 0 {
+					if waits {
+						return ErrBusy
+					}
+					if err := a.c.Deferred.acceptedTx(ctx, tx, guard.deferred, sid, pending, wake); err != nil {
+						return err
+					}
+				}
+				return a.acceptHeld(ctx, tx, pending)
+			}
+			return nil
+		})
 		if !errors.Is(err, errPromptBuild) {
 			break
 		}
@@ -2341,7 +2609,18 @@ func (a *api) send(ctx context.Context, id control.ThreadID, key string, in cont
 // resume is given once tx is committed. fresh sets its conversation aside
 // for in's own (AsFresh).
 func (c *Core) wakeTx(ctx context.Context, tx *store.Tx, id control.ThreadID, sid int64, in FirstInput, fresh bool) (FirstInput, error) {
+	var pending int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pending_placements WHERE thread_id=?`, int64(id)).Scan(&pending); err != nil {
+		return in, err
+	}
+	if pending > 0 {
+		return in, fmt.Errorf("core: thread waits for placement: %w", ErrBusy)
+	}
 	in.Wake = true
+	in.AcceptedOperation = control.OpSend
+	if in.NoInput {
+		in.AcceptedOperation = control.OpAttach
+	}
 	if err := c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Wake}); err != nil {
 		return in, err
 	}
@@ -2393,6 +2672,9 @@ func (c *Core) sendTx(ctx context.Context, tx *store.Tx, sid int64, in FirstInpu
 		}
 	}
 	pending, err = pend(ctx, tx, sid, "", session.PendingInput{Input: hand, Origin: origin}, earlier)
+	if err == nil {
+		err = c.keepPendingAuthority(ctx, tx, pending, control.Caller{Principal: in.Principal, From: in.From, Via: in.Via}, control.OpSend)
+	}
 	hand.Text = earlier + hand.Text
 	return pending, hand, err
 }
@@ -2433,9 +2715,9 @@ func (a *api) sendHooks(ctx context.Context, id control.ThreadID, scope, key str
 	if a.c.stateRead != nil {
 		a.c.stateRead()
 	}
-	guardedFailure := state == control.Failed && guard != nil && !guard.proposal
+	guardedFailure := state == control.Failed && guard != nil && !guard.proposal && guard.deferred == 0
 	if err == nil && (state == control.Closed || state == control.Removed || guardedFailure) {
-		if guard != nil && !guard.proposal {
+		if guard != nil && !guard.proposal && guard.deferred == 0 {
 			return in, false, nil
 		}
 		return in, false, fmt.Errorf("core: send to %v: %w", id, ErrClosed)
@@ -2500,6 +2782,9 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 	if state != session.RequestOpen {
 		return fmt.Errorf("core: answer %q: the request is %s: %w", req, state, ErrNotOpen)
 	}
+	if held, err := a.hold(ctx, thread, "answer", string(req), string(req), heldAction{Answer: ans}); err != nil || held {
+		return err
+	}
 	// The machine refuses it, atomically, if it was closed since.
 	var pending int64
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
@@ -2512,6 +2797,12 @@ func (a *api) Answer(ctx context.Context, req control.RequestID, ans control.Ans
 			return err
 		}
 		pending, err = pend(ctx, tx, sid, agentReq, ans, "")
+		if err == nil {
+			err = a.c.keepPendingAuthority(ctx, tx, pending, a.caller, control.OpAnswer)
+			if err == nil {
+				err = a.acceptHeld(ctx, tx, pending)
+			}
+		}
 		return err
 	})
 	if err != nil {
@@ -2540,6 +2831,16 @@ func (a *api) Stop(ctx context.Context, id control.ThreadID, turn int64) error {
 			return fmt.Errorf("core: stop turn %d of thread %d: it is not running: %w", turn, id, session.ErrRefused)
 		}
 		return nil
+	}
+	request := ""
+	if turn != 0 {
+		request = fmt.Sprint(turn)
+	}
+	if held, err := a.hold(ctx, id, "stop", "", request, heldAction{}); err != nil || held {
+		if err != nil {
+			return err
+		}
+		return ErrActionHeld
 	}
 	// Who asked goes on the turn the runner interrupts, chosen in the same
 	// step, so that the reader of that turn's end can tell it was stopped.
@@ -2801,24 +3102,35 @@ const attachTimeout = 90 * time.Second
 // owner only, and only with OpAttach. A thread that is closed, removed or
 // failed, and an agent known to have no terminal, are refused before
 // anything changes. An asleep thread is woken with no input first.
-func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.Attachment, error) {
-	const name = "AttachTerminal"
+func (a *api) attachmentSession(ctx context.Context, id control.ThreadID, name string, remote bool) (int64, error) {
 	scope, err := a.checkThread(ctx, control.OpAttach, name, id)
 	if err != nil {
-		return control.Attachment{}, err
+		return 0, err
 	}
 	if owner := a.c.People.Owner(); owner == "" || a.caller.Principal != control.Principal(owner) {
-		return control.Attachment{}, a.refused(name, scope, "only the owner may attach a terminal")
+		return 0, a.refused(name, scope, "only the owner may attach a terminal")
+	}
+	var machine string
+	if err := a.c.Store.DB.QueryRowContext(ctx, `SELECT machine FROM threads WHERE id=?`, int64(id)).Scan(&machine); err != nil {
+		return 0, err
+	}
+	if (machine != store.LocalMachine) != remote {
+		return 0, fmt.Errorf("core: %s requires the matching local or worker attachment operation: %w", name, session.ErrRefused)
 	}
 	// What is typed there starts turns, as a Send would.
 	if err := a.left(name, scope); err != nil {
-		return control.Attachment{}, err
+		return 0, err
 	}
 	var (
 		sid    int64
 		number = int64(id)
 		wake   bool
 	)
+	checked, _, err := a.c.current(ctx, a.c.Store.DB, id)
+	if err != nil {
+		return 0, err
+	}
+	onPipes := a.c.Runner.OnPipes(checked)
 	err = a.c.Store.Update(ctx, func(tx *store.Tx) error {
 		wake = false
 		var (
@@ -2834,7 +3146,10 @@ func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.
 		case control.Failed:
 			return fmt.Errorf("core: attach to thread %d: its session failed and has no agent running: %w", number, session.ErrRefused)
 		}
-		if a.c.Runner.OnPipes(sid) {
+		if sid != checked {
+			return fmt.Errorf("core: attachment session changed; request it again: %w", session.ErrRefused)
+		}
+		if onPipes {
 			return fmt.Errorf("core: attach to thread %d: %w: %w", number, ErrNoTerminal, session.ErrRefused)
 		}
 		if state != control.Asleep {
@@ -2860,29 +3175,68 @@ func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.
 		if err := a.c.Machine.ApplyTx(ctx, tx, sid, session.Input{Kind: session.Wake}); err != nil {
 			return err
 		}
-		fi, _ := json.Marshal(FirstInput{Principal: a.caller.Principal, Wake: true, NoInput: true})
+		fi, _ := json.Marshal(FirstInput{AcceptedOperation: control.OpAttach, Principal: a.caller.Principal, From: a.caller.From, Via: a.caller.Via, Wake: true, NoInput: true})
 		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET first_input = ?, launch = 1 WHERE id = ?`, string(fi), sid); err != nil {
 			return fmt.Errorf("core: wake: %w", err)
 		}
 		return nil
 	})
 	if err != nil {
-		return control.Attachment{}, err
+		return 0, err
 	}
 	if wake {
 		if err := a.c.Runner.Wake(ctx, sid, a.caller.Principal); err != nil {
+			if a.c.Placement != nil && (remote || errors.Is(err, ErrPlacementWait) || a.c.uncertainLocalLaunch(ctx, sid)) {
+				if saveErr := a.c.waitForMachine(ctx, sid, err); saveErr != nil {
+					return 0, saveErr
+				}
+				return 0, fmt.Errorf("core: attachment is waiting on its recorded machine: %w", ErrPlacementWait)
+			}
 			if ferr := a.c.Machine.Apply(ctx, sid, session.Input{Kind: session.Exit, Reason: "resume: " + err.Error()}); ferr != nil {
 				a.c.Log.Error("recording a failed resume", "session", sid, "err", ferr)
 			}
-			return control.Attachment{}, fmt.Errorf("core: attach to thread %d: resume: %w", number, err)
+			return 0, fmt.Errorf("core: attach to thread %d: resume: %w", number, err)
 		}
+	}
+	return sid, nil
+}
+
+func (a *api) AttachTerminal(ctx context.Context, id control.ThreadID) (control.Attachment, error) {
+	if _, err := a.actThread(ctx, control.OpAttach, "AttachTerminal", id); err != nil {
+		return control.Attachment{}, err
+	}
+	if err := a.c.requireCheckedMachine(ctx, id); err != nil {
+		return control.Attachment{}, err
+	}
+	sid, err := a.attachmentSession(ctx, id, "AttachTerminal", false)
+	if err != nil {
+		return control.Attachment{}, err
 	}
 	wctx, cancel := context.WithTimeout(ctx, attachTimeout)
 	defer cancel()
 	sock, err := a.c.Runner.AttachSocket(wctx, sid)
 	if err != nil {
-		return control.Attachment{}, fmt.Errorf("core: attach to thread %d: %w", number, err)
+		return control.Attachment{}, err
 	}
-	a.c.Log.Info("a terminal attaches", "scope", scope, "thread", number, "person", string(a.caller.Principal))
-	return control.Attachment{Socket: sock, Number: number}, nil
+	return control.Attachment{Socket: sock, Number: int64(id)}, nil
+}
+
+func (a *api) AttachWorker(ctx context.Context, id control.ThreadID) (control.WorkerAttachment, error) {
+	if _, err := a.actThread(ctx, control.OpAttach, "AttachWorker", id); err != nil {
+		return control.WorkerAttachment{}, err
+	}
+	if err := a.c.requireCheckedMachine(ctx, id); err != nil {
+		return control.WorkerAttachment{}, err
+	}
+	sid, err := a.attachmentSession(ctx, id, "AttachWorker", true)
+	if err != nil {
+		return control.WorkerAttachment{}, err
+	}
+	runner, ok := a.c.Runner.(interface {
+		WorkerAttachment(context.Context, int64) (control.WorkerAttachment, error)
+	})
+	if !ok {
+		return control.WorkerAttachment{}, fmt.Errorf("core: worker attachment is unavailable: %w", session.ErrRefused)
+	}
+	return runner.WorkerAttachment(ctx, sid)
 }

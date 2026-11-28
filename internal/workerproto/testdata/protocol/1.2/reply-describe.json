@@ -1,0 +1,1 @@
+{"kind":"reply","id":"request-describe","binding":{"main":"main-A","worker":"worker-A"},"target":{"thread":7,"session":"session-A","run":"run-A"},"op":"describe","body":{"agent":"fake","config":"default","dir":"/worker/workspace","state_dir":"/worker/session","config_dir":"","no_project_settings":false,"terminal":true,"state":"running","waiting":[],"attached":0,"detached_ms":0}}

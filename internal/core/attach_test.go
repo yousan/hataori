@@ -100,7 +100,7 @@ func TestAttachTerminalWakesWithoutInput(t *testing.T) {
 	}
 	var fi string
 	f.core.Store.DB.QueryRow(`SELECT first_input FROM sessions WHERE id = ?`, sid).Scan(&fi)
-	if fi != `{"principal":"owner","key":"","text":"","wake":true,"no_input":true}` {
+	if fi != `{"accepted_operation":128,"principal":"owner","key":"","text":"","wake":true,"no_input":true}` {
 		t.Fatalf("first input %s", fi)
 	}
 }

@@ -94,6 +94,16 @@ body {
   outline-offset: 1px;
 }
 
+/* Shared interaction feedback keeps each button's state colors intact. */
+.shell button:enabled:hover {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.shell :where(button, summary, .filter, .box-row textarea, .answers-field textarea, .answers-check input):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .main {
   flex: 1;
   overflow: auto;
@@ -156,7 +166,7 @@ body {
 }
 
 .tree {
-  width: 320px;
+  width: clamp(180px, 24vw, 320px);
   flex: none;
   display: flex;
   flex-direction: column;
@@ -167,6 +177,7 @@ body {
 
 .tree-top {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 8px;
   border-bottom: 1px solid var(--line);
@@ -174,6 +185,7 @@ body {
 
 .filter {
   flex: 1;
+  flex-basis: 120px;
   min-width: 0;
   font: inherit;
   color: var(--fg);
@@ -185,6 +197,7 @@ body {
 
 .density {
   display: flex;
+  flex: none;
 }
 
 .density button {
@@ -467,6 +480,8 @@ body {
 
 .status {
   display: flex;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
   justify-content: space-between;
   gap: 12px;
   padding: 3px 12px;
@@ -478,10 +493,16 @@ body {
 .status-item,
 .status-right {
   display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
   gap: 10px;
   align-items: center;
-  white-space: nowrap;
-  overflow: hidden;
+  white-space: normal;
+  overflow: visible;
+}
+
+.status-right {
+  justify-content: flex-end;
 }
 
 .state-text {
@@ -498,6 +519,12 @@ body {
 
 .limits {
   gap: 12px;
+}
+
+.limits,
+.limit,
+.clients {
+  flex-wrap: wrap;
 }
 
 .limit-agent {
@@ -620,6 +647,16 @@ body {
 
 .passkeys li button {
   margin-left: auto;
+}
+
+.trusts {
+  white-space: normal;
+}
+
+.trusts li > span {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .passkeys-actions {
@@ -923,6 +960,27 @@ body {
   padding: 8px 10px 0;
 }
 
+.narrow-show .show {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.narrow-show .show button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.narrow-show .show-summary {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.narrow-show .show-summary .hidden-count,
+.narrow-show .show-summary .hidden-terminals {
+  white-space: normal;
+}
+
 .tab-main:focus-visible,
 .tab-close:focus-visible,
 .tools button:focus-visible {
@@ -954,7 +1012,7 @@ body {
 }
 
 .details {
-  width: 300px;
+  width: clamp(200px, 26vw, 300px);
   flex: none;
   border-left: 1px solid var(--line);
   background: var(--bar);
@@ -1244,10 +1302,11 @@ body {
 
 /* The text columns (title, agent and model, branch, last output) share
    what the other columns leave and are cut with an ellipsis, so the table
-   fits its pane whenever the other columns do (max-width: 0 lets a cell of
-   a table 100% wide shrink below its text); the tooltip has the whole
+   can shrink below its text (max-width: 0 on a cell of a table 100% wide);
+   the tooltip has the whole
    value. Agent and model, branch and last output each keep about 12
-   characters; the title gets what is left. */
+   characters; the title gets what is left, with a 16-character minimum.
+   The pane scrolls when those minimum widths no longer fit. */
 .all-threads td[data-col="title"],
 .all-threads td[data-col="agent"],
 .all-threads td[data-col="branch"],
@@ -1259,6 +1318,7 @@ body {
 
 .all-threads [data-col="title"] {
   width: 70%;
+  min-width: calc(16ch + 16px);
 }
 
 .all-threads td[data-col="agent"],
@@ -1346,7 +1406,8 @@ body {
 
 .field dt {
   flex: none;
-  width: 120px;
+  width: min(120px, 44%);
+  overflow-wrap: anywhere;
   color: var(--muted);
 }
 
@@ -1360,6 +1421,7 @@ body {
   padding: 8px;
   border-radius: 4px;
   border: 1px solid var(--st-waiting);
+  overflow-wrap: anywhere;
 }
 
 .details-top.failure {
@@ -1480,6 +1542,17 @@ body {
 
 .shell.narrow .status {
   flex-wrap: wrap;
+}
+
+.shell.narrow button,
+.shell.narrow summary {
+  min-width: 44px;
+  min-height: 44px;
+  touch-action: manipulation;
+}
+
+.shell.narrow summary {
+  padding-block: 12px;
 }
 
 .shell.narrow .status-item,
@@ -1698,8 +1771,33 @@ a.chat-link:hover {
   padding: 4px 6px;
 }
 
-.box-send {
+.box-send,
+.answers-row button,
+.answers-field button {
   font: inherit;
+  min-height: 28px;
+  max-width: 100%;
+  padding: 4px 10px;
+  color: var(--fg);
+  background: var(--bar);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.box-send:disabled,
+.answers-row button:disabled,
+.answers-field button:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
+.box-send:focus-visible,
+.answers-row button:focus-visible,
+.answers-field button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .box-note,
@@ -1723,6 +1821,7 @@ a.chat-link:hover {
 .answers-text {
   margin: 0 0 4px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .answers-row {
@@ -1733,8 +1832,10 @@ a.chat-link:hover {
 }
 
 .answers-row button,
-.answers-field button {
-  font: inherit;
+.answers-check {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .answers-check {
@@ -1759,6 +1860,11 @@ a.chat-link:hover {
   border: 1px solid var(--line);
   border-radius: 4px;
   padding: 4px 6px;
+}
+
+.shell.narrow .box-row textarea,
+.shell.narrow .answers-field textarea {
+  font-size: 16px;
 }
 
 /* A thread that failed as it started: what it was asked, who started it,
@@ -1983,6 +2089,17 @@ a.chat-link:hover {
 
 .tree .row:has(> .box) {
   padding: 0;
+}
+
+.tree.narrow-list .row,
+.tree.narrow-list .row > .box {
+  min-height: 44px;
+}
+
+.tree.narrow-list .row[data-thread] > .box {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .node-body .row > .box {

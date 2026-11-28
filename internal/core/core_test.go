@@ -267,6 +267,10 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 		"no operation": {Principal: "x", Scopes: []string{"s"}},
 	}
 	ops := map[string]func(control.API) error{
+		"DeferredSend": func(a control.API) error {
+			_, e := a.DeferredSend(ctx, control.DeferredSendRequest{Action: "queue", Target: id, Key: "deferred", Text: "later"})
+			return e
+		},
 		"Threads":      func(a control.API) error { _, err := a.Threads(ctx, control.Filter{Scope: "s"}); return err },
 		"Thread":       func(a control.API) error { _, err := a.Thread(ctx, id, 10, 0); return err },
 		"ThreadEvents": func(a control.API) error { _, err := a.ThreadEvents(ctx, id, 0, 10); return err },
@@ -364,7 +368,7 @@ func TestEveryOperationChecksTheCaller(t *testing.T) {
 			if cname == "other scope" && slices.Contains(namesThread, name) {
 				want = ErrNotFound
 			}
-			if name == "Forge" || name == "Remind" || name == "Files" {
+			if name == "Forge" || name == "Remind" || name == "Files" || name == "DeferredSend" {
 				want = control.ErrNotSupported
 			}
 			f.log.Reset()

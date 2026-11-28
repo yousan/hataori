@@ -1,0 +1,428 @@
+{
+  "total_count": 6,
+  "jobs": [
+    {
+      "id": 140922426981,
+      "run_id": 46126592224,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "changes",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026422,
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Require complete diff base",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:14Z",
+      "completed_at": "2026-11-28T08:36:23Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922426981"
+    },
+    {
+      "id": 140922470775,
+      "run_id": 46126592224,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "build-macos",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026433,
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "build",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:25Z",
+      "completed_at": "2026-11-28T08:36:45Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922470775"
+    },
+    {
+      "id": 140922470782,
+      "run_id": 46126592224,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "check",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026434,
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "gofmt",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run go vet ./...",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "build without cgo",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "compile tests without running them",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "core and adapter boundary",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:25Z",
+      "completed_at": "2026-11-28T08:38:14Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922470782"
+    },
+    {
+      "id": 140922470834,
+      "run_id": 46126592224,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "web",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026435,
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-node@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run npm ci --ignore-scripts",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run npm run check",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run npm run build",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "the committed build is the fresh one",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "the build is reproducible",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-node@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:36:25Z",
+      "completed_at": "2026-11-28T08:36:43Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922470834"
+    },
+    {
+      "id": 140922904916,
+      "run_id": 46126592224,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "test-macos",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026436,
+      "labels": [
+        "macos-latest"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-python@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "install tmux",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "a copy of Chrome of the tests' own",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run go vet ./...",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "isolated worker SSH scenarios",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "build without cgo",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "go test",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "let the copy of Chrome be removed",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-python@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:38:16Z",
+      "completed_at": "2026-11-28T09:05:10Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922904916"
+    },
+    {
+      "id": 140922904933,
+      "run_id": 46126592224,
+      "run_attempt": 1,
+      "head_sha": "cc7a192d69571defcd125f3cf02beeee075d8092",
+      "name": "test",
+      "status": "completed",
+      "conclusion": "success",
+      "runner_id": 1000026437,
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-python@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "install tmux",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "install sshd",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "isolated worker SSH scenarios",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run go test -timeout 30m ./...",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-python@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-go@v5",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "started_at": "2026-11-28T08:38:16Z",
+      "completed_at": "2026-11-28T09:00:29Z",
+      "check_run_url": "https://api.github.com/repos/yousan/hataori/check-runs/140922904933"
+    }
+  ]
+}

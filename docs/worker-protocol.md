@@ -1,10 +1,11 @@
 # Worker protocol
 
-Status: protocol foundation for #957, part of #956. This document specifies
-worker protocol **1.0**. It is independent of the control protocol described in
+Status: worker protocol and runner integration through #963, part of #956. This document specifies
+worker protocol **1.3**. It is independent of the control protocol described in
 `protocol.md`; a control socket and an unversioned host socket are never worker
-endpoints. The resident, SSH transport and runner integration ship in later
-issues. There is no remotely usable worker in this change.
+endpoints. The resident is described in `worker-resident.md`. SSH transport and
+the machine-bound runner are implemented; durable placement is implemented; away queues
+remain #964, before the first-worker guide and product gate in #965.
 
 ## Compatibility and golden files
 
@@ -96,7 +97,7 @@ versions and an `error` object. Only fixed, safe explanations may be returned.
 
 The exported structs in `internal/workerproto/bodies.go` define the JSON field
 names and types. All bodies are objects, including `Empty` (`{}`). The table is
-exhaustive for 1.0; an unlisted operation refuses. **S** means a registered
+exhaustive for 1.3; an unlisted operation refuses. **S** means a registered
 session/run is required, **D** means durable acceptance and a receipt reply.
 
 | Operation | Capability | Scope | Request body | Reply body |
@@ -106,7 +107,13 @@ session/run is required, **D** means durable acceptance and a receipt reply.
 | `probe` | health | connection | AgentConfig | AgentHealth |
 | `prepare` | host | S,D | Prepare | Receipt |
 | `start` | host | S,D | Start | Receipt |
+| `resolve_repository` (since 1.3) | placement | S | RepositoryReference | RepositoryReference |
+| `workspace_status` (since 1.3) | placement | S | Workspace | WorkspaceStatus |
+| `remake_workspace` (since 1.3) | placement | S,D | Workspace | Receipt |
+| `describe` (since 1.2) | runner | S | Empty | RunMetadata |
+| `bind_workspace` (since 1.2) | runner | S,D | BindWorkspace | Receipt |
 | `stop` | host | S,D | Stop | Receipt |
+| `end_host` (since 1.1) | lifecycle | S,D | Empty | Receipt |
 | `input` | host | S,D | Input | Receipt |
 | `answer` | host | S,D | Answer | Receipt |
 | `receipt` | receipts | S | ReceiptQuery | Receipt |
@@ -149,7 +156,11 @@ file, including adapter-owned files outside its root. Main never opens it.
 
 Health names the current boot, readiness, per-agent/configuration installation
 and login (`logged_in`, `logged_out`, `unknown`), and resource telemetry.
-`installed:false,login:unknown` means missing. Telemetry is bounded to a maximum
+1.1 adds optional `installation` (`installed`, `missing`, `unknown`) to distinguish
+an unavailable installation probe from a proven missing CLI. `installed` remains
+true when only login is unknown. A 1.0 `installed:false,login:unknown` alone cannot
+prove whether a CLI is missing or its probe failed. Telemetry adds optional
+`disk_free`; missing/zero disk never proves capacity. Telemetry is bounded to a maximum
 60-second validity period. Main checks sample age, boot and limits; stale,
 missing, future-dated or unknown observations never prove room for new work.
 Readiness is false until identity, owned hosts, pending receipts and waiting
@@ -262,9 +273,89 @@ separate in-memory routing and must never log the body on decode failure.
 
 ## Implementation status
 
-This foundation does not launch processes, open sockets, read files or remove
-directories. Future dispatchers must call the binding/target/capability guards
-before doing so, and implement the durable rules below before advertising a
-capability. Specification tests run on Linux and macOS without tmux, agent
+The resident implements owned process launch, sockets, retained reads and
+workspace operations. Every dispatcher checks binding, target and negotiated
+capabilities before resolving a resource or performing an effect. Main session
+I/O requires negotiated runner minor 1.2 before sending any effect; older
+residents cannot silently ignore required launch restrictions. Specification tests run on Linux and macOS without tmux, agent
 credentials, a service manager or an operator's SSH configuration. Runtime
 platform conformance, including macOS login-session access, remains #969.
+
+## Version 1.1 additions
+
+The immutable 1.0 corpus and checksum remain unchanged. 1.1 adds `lifecycle` and
+its durable `end_host` operation, requiring negotiated minor 1 or later and
+`receipts`. This ends only the exactly bound owned host; it does not reinterpret
+`stop`, whose named-turn interruption semantics remain unchanged. Optional
+`AgentHealth.installation` and `Telemetry.disk_free` refine health observations.
+No control-protocol version or golden file changes with this worker version.
+
+## Version 1.2 additions
+
+The 1.0 and 1.1 corpora remain immutable. Optional `AgentHealth.config_dir`
+identifies the worker-local configuration for separately keyed health reports;
+it is metadata and never a path to open on the main. Capability `runner` adds `describe`
+(Empty → RunMetadata) and durable `bind_workspace` (BindWorkspace → Receipt).
+`describe` returns adapter codec context only for a run with launch metadata.
+Its path strings are never main-side resource addresses. `Start.effort` and
+`Start.no_project_settings` are optional. The latter combines the durable main
+thread restriction with the registered worker profile restriction; the worker
+refuses before launch unless its adapter proves that it omitted project settings. `bind_workspace` transfers one owned directory's authority from a
+confirmed-ended run to a prepared run of the same thread, keeping its inode and
+removing the previous run's handle before a new host can start. Both targets
+must have valid ownership markers; its journal and receipt recover together.
+
+An input or answer refused before its write intent/effect records a durable
+`refused` receipt. Only that correlated receipt proves nothing was written. A
+refusal envelope after an intent or effect is uncertain, and never authorizes
+a blind retry. A new answer attempt key is permitted only after confirmed
+refusal of the previous attempt; unknown and complete attempts keep their
+original request.
+
+The resident now implements `follow` and `read`. Built-in sources are `events`
+and (for terminal agents) `terminal`; other source IDs are `file-` followed by
+the SHA-256 of an adapter-reported path. The resident independently discovers
+that path in its own actual host output through `agent.FollowSources`; a main
+supplied digest alone grants no file lookup. Each source has a persisted device,
+inode, handle and generation. Reads retain immutable prefixes under the run;
+replacement/truncation prevents extension while an already retained exact range
+remains available. Missing retained history is `history_lost`. The per-run
+retention budget is 64 MiB across at most 128 sources. Committed offsets never
+release data. `history_release` remains refused; no automatic pruning ships.
+
+Attachment handles are connection-local and are not receipts. The resident
+verifies the owned host on the same connection that becomes its attachment.
+Optional `Bytes.cols`, `rows`, `reset` and `ended` describe attachment streams.
+Only an explicit `ended` means normal host termination; EOF alone is connection
+loss. Keys/resize are accepted only for that live handle on that connection,
+never replayed. One attachment emits monotonically ordered ranges, and an RPC
+read repeats its caller's order for correlation. Main stores decode ordering,
+source identities and content hashes transactionally with resulting events and
+validates the same exact ranges during reconstruction.
+
+Envelope refusals are not no-write proofs: the resident may return `unavailable`
+after an effect whose acknowledgment was lost. Only a durable `refused` receipt
+or a local failure proven to precede sending permits a safe retry. Unknown
+input keeps the main's written marker and awaits the agent report or a visible
+`not delivered` outcome.
+
+## Version 1.3 additions
+
+The 1.0–1.2 corpora remain immutable. Negotiated minor 1.3 and capability
+`placement` are required before sending `Start.admission` or the new operations.
+`Admission` has optional `max_resident`, `max_starting`, `max_load`,
+`min_free_memory`, `min_free_disk` (bytes) (zero disables that limit).
+The resident rechecks fresh known normalized load, memory and disk and counts
+prepared/starting/unknown/live runs immediately before host start. A confirmed
+refusal authorizes a fresh attempt; an unknown receipt retains its original key
+and request and never authorizes another host.
+
+`RepositoryReference` contains required `repository`: an exact registered key
+or address, resolved only against resident configuration. `WorkspaceStatus`
+contains required `workspace`, `state` (`present`, `trashed`, `purged`) and
+optional `trash`. It requires registered identity/retained-trash proof; absence
+alone never proves purge. `remake_workspace` requires confirmed purged state,
+ended/gone/prepared run ownership and an empty original place. It journals the
+new identity before publication, refuses any occupied entry and keeps the same
+opaque handle. Terminal restored/purged trash records remain history after a
+workspace transfers to another run; they grant no current removal authority.

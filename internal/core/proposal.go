@@ -20,11 +20,13 @@ import (
 // send's text, or a start's repository, agent, model, effort and first
 // text. The model and the effort are those the proposal showed.
 type proposalCall struct {
-	Text   string `json:"text"`
-	Repo   string `json:"repo,omitempty"`
-	Agent  string `json:"agent,omitempty"`
-	Model  string `json:"model,omitempty"`
-	Effort string `json:"effort,omitempty"`
+	Deferred int64  `json:"deferred,omitempty"`
+	Machine  string `json:"machine,omitempty"`
+	Text     string `json:"text"`
+	Repo     string `json:"repo,omitempty"`
+	Agent    string `json:"agent,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
 	// Research is the start's (control.StartRequest.Research), kept from a
 	// caller that may ask for it.
 	Research bool `json:"research,omitempty"`
@@ -59,9 +61,12 @@ func (a *api) proposeStart(ctx context.Context, r control.StartRequest, agent, m
 	if err := a.asksHere(ctx, "Start", r.Scope); err != nil {
 		return err
 	}
-	call := proposalCall{Text: r.Input.Text, Repo: r.Repo, Agent: agent, Model: model, Effort: effort, Research: r.Research}
+	call := proposalCall{Machine: r.Machine, Text: r.Input.Text, Repo: r.Repo, Agent: agent, Model: model, Effort: effort, Research: r.Research}
 	return a.propose(ctx, "start", r.Key, call, func(tx *store.Tx, d map[string]any) (control.ThreadID, string, error) {
 		d["repo"], d["agent"], d["model"], d["effort"] = r.Repo, agent, model, effort
+		if r.Machine != "" {
+			d["machine"] = r.Machine
+		}
 		if r.Research {
 			d["research"] = true // since protocol 3.34
 		}
@@ -231,6 +236,12 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 	if err := json.Unmarshal([]byte(callJSON), &call); err != nil {
 		return fmt.Errorf("core: proposal %d: %w", number, err)
 	}
+	if call.Deferred != 0 {
+		if a.c.Deferred == nil {
+			return control.ErrNotSupported
+		}
+		return a.c.Deferred.answerProposal(ctx, a, req, ans, number, thread, call.Deferred)
+	}
 	// The outcome is written whatever the caller's context says by now.
 	record := func(outcome, reason string, allow bool, by decider, was string) error {
 		ctx := context.WithoutCancel(ctx)
@@ -342,7 +353,7 @@ func (a *api) answerProposal(ctx context.Context, req control.RequestID, ans con
 			}
 		}
 		var id control.ThreadID
-		id, err = sender.start(ctx, control.StartRequest{Key: key, Scope: scope, Repo: call.Repo, Agent: call.Agent,
+		id, err = sender.start(ctx, control.StartRequest{Machine: call.Machine, Key: key, Scope: scope, Repo: call.Repo, Agent: call.Agent,
 			Model: call.Model, Effort: call.Effort, Input: control.Input{Text: call.Text}, Research: call.Research}, control.KindOrdinary, nil)
 		if id != 0 {
 			// The thread is made; a launch that failed is the thread's own
@@ -370,6 +381,9 @@ const ProposalKeyPrefix = "proposal:"
 // proposalKey refuses key, a Start's or a Send's, when it is kept for the
 // calls of approved proposals and the caller is not making one.
 func (a *api) proposalKey(name, scope, key string) error {
+	if strings.HasPrefix(key, DeferredKeyPrefix) && (a.deferredID == 0 || key != fmt.Sprintf("%s%d", DeferredKeyPrefix, a.deferredID)) {
+		return a.refused(name, scope, "the key is kept for deferred instructions")
+	}
 	if strings.HasPrefix(key, ProposalKeyPrefix) && a.caller.Via != control.ViaProposal {
 		return a.refused(name, scope, "the key is kept for approved proposals")
 	}
@@ -475,6 +489,8 @@ func (c *Core) openProposals(ctx context.Context, id control.ThreadID, reqs []co
 					what = "a read-only research thread, without the repository's settings,"
 				}
 				r.Text = fmt.Sprintf("Proposal %d: start %s in %s? %s", number, what, repo, p.Text)
+			} else if p.Deferred != 0 {
+				r.Text = fmt.Sprintf("Proposal %d: queue deferred instruction %d for the same worker of thread %d? %s", number, p.Deferred, target.Int64, p.Text)
 			} else {
 				r.Text = fmt.Sprintf("Proposal %d: send to thread %d? %s", number, target.Int64, p.Text)
 			}

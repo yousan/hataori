@@ -73,7 +73,7 @@ func TestMinorCapabilitiesAndExtensions(t *testing.T) {
 }
 
 func TestDurableCapabilitiesRequireReceiptRecovery(t *testing.T) {
-	for _, capability := range []string{"host", "workspace", "transfer", "replay"} {
+	for _, capability := range []string{"host", "workspace", "transfer", "replay", "lifecycle"} {
 		peer := hello()
 		peer.Capabilities = []string{capability}
 		c, err := Negotiate(registration, hello(), peer)
@@ -373,5 +373,55 @@ func TestReplayRangesMustMatchRecordedRead(t *testing.T) {
 		if err := CheckRange(req, copy); err != nil {
 			t.Fatalf("distinct zero-byte state %s rejected: %v", state, err)
 		}
+	}
+}
+
+func TestLifecycleRequiresMinorAndReceipts(t *testing.T) {
+	peer := hello()
+	peer.Version = "1.0"
+	c, err := Negotiate(registration, hello(), peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := message(t, "request-end_host.json")
+	_, err = c.Decode(encoded(t, m), &target)
+	code(t, err, "unsupported_operation")
+	if _, err := connection(t).Decode(encoded(t, m), &target); err != nil {
+		t.Fatal(err)
+	}
+	peer = hello()
+	peer.Capabilities = []string{"lifecycle"}
+	_, err = Negotiate(registration, hello(), peer)
+	code(t, err, "unsupported_capability")
+}
+
+func TestHealthInstallationAndFreshDiskTelemetry(t *testing.T) {
+	for _, tc := range []struct {
+		state     string
+		installed bool
+		login     string
+		valid     bool
+	}{
+		{"installed", true, "logged_in", true}, {"installed", true, "unknown", true},
+		{"missing", false, "unknown", true}, {"unknown", false, "unknown", true},
+		{"unknown", true, "logged_in", false}, {"missing", true, "unknown", false},
+	} {
+		a := AgentHealth{AgentConfig: agentConfig, Installation: tc.state, Installed: tc.installed, Login: tc.login}
+		if agentHealth(a) != tc.valid {
+			t.Fatalf("health: %+v", a)
+		}
+	}
+	base := Telemetry{ObservedMS: 1000, ValidMS: 1000, Known: true, MemoryFree: 1024, DiskFree: 2048}
+	for _, tc := range []struct {
+		now   int64
+		valid bool
+	}{{999, false}, {1000, true}, {1999, true}, {2000, false}} {
+		if FreshTelemetry(base, tc.now) != tc.valid {
+			t.Fatalf("freshness at %d", tc.now)
+		}
+	}
+	base.Known = false
+	if telemetry(base) || FreshTelemetry(base, 1000) {
+		t.Fatal("unknown telemetry asserted resources")
 	}
 }

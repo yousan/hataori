@@ -190,7 +190,7 @@ func TestStatusInAChannelShowsNoThreadOfAnotherScope(t *testing.T) {
 			status = p
 		}
 	}
-	if !strings.Contains(status, "#"+strconv.FormatInt(own, 10)+" creating: own work") ||
+	if !strings.Contains(status, "#"+strconv.FormatInt(own, 10)+" creating on local: own work") ||
 		strings.Contains(status, "#"+strconv.FormatInt(other, 10)) || strings.Contains(status, "other work") {
 		t.Fatalf("status %q, want thread #%d and not #%d", status, own, other)
 	}

@@ -115,11 +115,11 @@ func (b *Budget) Used(ctx context.Context) (Used, error) {
 	// A proposal counts once, when it is made: what its approval runs is
 	// the caller's with the Via of a proposal, and is not counted again.
 	err = db.QueryRowContext(ctx, `SELECT count(*) FROM events e WHERE e.scope = ? AND e.time >= ? AND e.time < ?
-		AND json_extract(e.data, '$.from') = ? AND coalesce(json_extract(e.data, '$.via'), '') != ?
+		AND json_extract(e.data, '$.from') = ? AND coalesce(json_extract(e.data, '$.via'), '') NOT IN (?,?) AND json_extract(e.data, '$.deferred') IS NULL
 		AND (e.kind IN ('input', 'answer', 'proposal_made')
 			OR (e.kind = 'thread_created' AND NOT EXISTS (SELECT 1 FROM events f WHERE f.thread_id = e.thread_id
 				AND f.kind = 'input' AND json_extract(f.data, '$.from') = ?)))`,
-		b.Scope, hourMs, nextHourMs, from, control.ViaProposal, from).Scan(&u.Sends)
+		b.Scope, hourMs, nextHourMs, from, control.ViaProposal, control.ViaDeferred, from).Scan(&u.Sends)
 	if err != nil {
 		return u, fmt.Errorf("supervisor: budget: sends: %w", err)
 	}
@@ -127,7 +127,12 @@ func (b *Budget) Used(ctx context.Context) (Used, error) {
 	if err != nil {
 		return u, fmt.Errorf("supervisor: budget: reminders: %w", err)
 	}
-	u.Sends += set
+
+	var queued int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM deferred_sends WHERE scope=? AND created_at>=? AND created_at<? AND json_extract(data,'$.From')=?`, b.Scope, hourMs, nextHourMs, from).Scan(&queued); err != nil {
+		return u, fmt.Errorf("supervisor: budget: deferred: %w", err)
+	}
+	u.Sends += set + queued
 	if u.Tokens, err = b.tokens(ctx, u.Day); err != nil {
 		return u, err
 	}
@@ -384,6 +389,10 @@ func (l *limited) Remind(ctx context.Context, r control.RemindRequest) (control.
 func (b *Budget) take(ctx context.Context, call func() error) error {
 	b.calls.Lock()
 	defer b.calls.Unlock()
+	return b.takeLocked(ctx, call)
+}
+
+func (b *Budget) takeLocked(ctx context.Context, call func() error) error {
 	u, err := b.Used(ctx)
 	if err != nil {
 		return err
@@ -412,4 +421,26 @@ func (b *Budget) take(ctx context.Context, call func() error) error {
 	}
 	b.mu.Unlock()
 	return err
+}
+
+// A retry is a receipt lookup before the limit, under the same lock as all
+// immediate calls. It cannot consume the last grant twice after a lost reply.
+func (l *limited) DeferredSend(ctx context.Context, r control.DeferredSendRequest) (control.DeferredSend, error) {
+	if r.Action != "queue" {
+		return l.API.DeferredSend(ctx, r)
+	}
+	l.b.calls.Lock()
+	defer l.b.calls.Unlock()
+	find := r
+	find.Action = "find"
+	old, err := l.API.DeferredSend(ctx, find)
+	if err != nil {
+		return control.DeferredSend{}, err
+	}
+	if old.State != "absent" {
+		return old, nil
+	}
+	var out control.DeferredSend
+	err = l.b.takeLocked(ctx, func() error { var e error; out, e = l.API.DeferredSend(ctx, r); return e })
+	return out, err
 }

@@ -685,7 +685,7 @@ Under the scope's autonomy (below) a send or a start can be a proposal that a pe
 
 **Who its tools are** (#269; decisions 1 and 2 of #267). `hataori mcp --scope <scope>` connects to the control socket with a token in its hello (`$HATAORI_TOKEN`), which the daemon issues for each supervisor session and puts in that session's MCP config, in its state directory, outside the workspace. The daemon binds the connection to the Caller it issued the token for: that scope only, `OpRead | OpStart | OpSend`, every `Send` treated as `Refuse` (`Caller.RefuseBusy`), and every input marked (`Caller.Mark`) except an answer to an open question. Nothing `hataori mcp` sends widens it. An unknown or revoked token is refused and logged without the token; a connection with no token is still the owner. The caller's id is `supervisor:<scope>`, and the operator makes it a person by listing that id under a person of its own and that person in the scope's `people`: then the core's one check (section 5.1) allows its `Start` and `Send`, and its events name that person. Without the entry it can read its scope but gives no input, and removing the entry turns the supervisor off for that scope. Each input it gives, other than an answer to an open question, starts with the line `From the supervisor of this channel:`, added by the core from the caller, never by `hataori mcp`; a thread's title is made from the text without it. A send that answers a worker's open question is not marked, since the question tool takes the answer line by line or as a choice's label; the `answer` event names the supervisor's person. `read_thread` returns at most `--output-max` bytes of output (4096 when not given), with a line saying it was cut. A tool's refusal is a tool error that starts with the reason: `busy`, `not in this scope` or `not allowed`.
 
-**Its thread and its session** (#270; decision 3 of #267). A scope names its supervisor in the config (`scopes[].supervisor`: the agent, the model, the effort and instructions). The daemon starts its thread once, as the owner, in the scope's own channel, opened by the scope's front end like any thread, under the key `hataori-supervisor`. After a restart the daemon takes the scope's supervisor thread by its kind (section 5.1; before #857, the scope's newest confined thread), so nothing starts twice; a failed one is kept, and one the owner closed is replaced by a new one, under the key `hataori-supervisor-after-<number>` (closing a failed supervisor is how a person asks for a new one). A Start key is kept per scope, so a daemon that died during that Start gets the same thread back. The thread is started confined: `core.Core.StartConfined`, which is no operation of the control API, records it on the thread, and its directory is the scope's, in `<root>/confined/`, given by the workspace maker instead of a clone and outside `workspaces/`, which is all the remover removes; the core refuses to remove it anyway (#645; before, each thread had `<root>/confined/<number>`, made empty; below, *Its directory and its notes*). When the config names none, its model is the one the default agent's order gives a thread of the scope, and its effort is `high` (#652; below, *Its model and effort*). Every launch of its sessions, new, resumed after sleep, recovered after a daemon died or begun again for a lost conversation, reads the thread's confinement in the runner, so none is ever unconfined: the spec gets `Confine` with the MCP servers the daemon gives that launch, and an adapter whose launch does not say `Confined` is refused before any process starts, which fails the thread with that reason. Claude Code's launch adds `--restricted --strict-mcp-config --mcp-config <state>/claude-mcp.json --tools "Read,Glob,Grep"`, the flags checked above (until #868 the list had `Write` and `Edit` too); that check ran them with `--setting-sources project,local`, which the launch does not pass, and it also found that the user's own settings, skills and plugins add no tool (under `--restricted` the user's settings file is not loaded at all, see below). The check tried only Read and Write outside the directory. The session may have files written in its own directory, so the launch also keeps out what it could plant there for its next start: it adds `--setting-sources user`, so that the project's and the local settings files, which lie in that directory, stay out by that flag as well as by `--restricted` (which, as its help says and as Claude Code 2.1.328 showed, ignores the user's settings file too, whatever `--setting-sources` names: under it the init event lists none of the user's plugins and not the user's model, so a supervisor gets no `env`, hooks or plugins from the user's settings, only hataori's `--settings`, managed settings and the variables the adapter passes); it shows hataori's own status line alone, since hataori would otherwise copy a project's status line command into its `--settings`, and even the user's own runs in that directory, often running git; and it sets `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, `ENABLE_CLAUDEAI_MCP_SERVERS=false` and `GIT_DIR=/dev/null`, so that a CLAUDE.md there with imports of files outside is not loaded, no memory is kept outside the directory, no claude.ai connector joins the listed MCP server, and a `.git` there, whose config could name a command (such as `core.fsmonitor`) that the CLI's own look at the directory would make git run, is no repository. Nor may it write such files: the daemon refuses a path any part of which starts with a dot (`.claude/`, `.mcp.json`, `.git/`, `.vscode/`, ...; #868), and so, as a second line, does the session's `PermissionRequest` hook, which `--restricted` leaves the writes to settings, git and tool configuration files to, as it refuses any path outside the directory (#423). That the CLI honours the hook's refusal is documented, not yet checked against the real CLI **(unverified)**: the check needs a logged-in turn. These additions were not part of #268's check; the real supervisor check (`docs/testing.md`) plants each of them. Input that reaches the session can itself be a command: the CLI reads one that starts with `!` as a command for its shell mode, and runs it under `--restricted` too, and one that starts with `/` as one of its own commands (`/add-dir` widens the directories the file tools may use). So in a confined session, an input is pasted after `(message) `, and the CLI takes it as a prompt (#426; Claude Code 2.1.328, also after the CLI put an interrupted prompt back in the box), unless its first character past spaces is a digit or a letter of a common script (Latin, Greek, Cyrillic, Han, kana, Hangul syllables), all of which show: what the CLI takes out of the start, and which starts it reads as a command, are the CLI's own, so the adapter does not rely on them; and no control character but line feeds and tabs is pasted into it, so that nothing in it starts an escape sequence, with a carriage return pasted as a line feed, since it is what Enter sends and would submit the text before it where a paste is not bracketed (#914). After a restart, an input that an older hataori may have left in the box, pasted in a way this rule would not paste it, is not submitted (the runner records which written inputs it wrote itself, and tells the codec of the others, `agent.Input.Earlier`), and nothing is pasted after it until the CLI reports each such input as a prompt that is not a task notification's (known only by what an older hataori pasted for it, also as the CLI reports it, without the escape sequences that start with ESC [ and the characters that do not show; not by a prompt that the CLI may report of an input pasted before it, nor by what this hataori would paste for it, which can be another input's paste), or the session ends; the turn it was to start ends after the input timeout as not delivered, naming no input, the inputs given meanwhile end as not delivered, and such an input does not end meanwhile, so that it is handed to the codec again after another restart while the same agent runs; the session's end, with which the box's text goes, ends it as not delivered, and so, at once, each other input pasted and not reported, in the order pasted, so that the one waited for, if any, whose turn it is, ends first; any other turn that runs then (one typed at the terminal, say) ends with the first as not delivered (only the first end ends a turn; the others' ends only remove them). Meanwhile each input the thread is given ends at once as not delivered, and the thread is not closed while its agent is idle, since the row is pending; its agent is put to sleep after the idle period as ever, which each such input starts again, and the agent its next input starts has an empty box: before the runner launches an agent, it removes the rows of what was written to one before, which nothing reports any more, so that the input is neither held again nor pending. Only an input that still has a row is held: what an older hataori pasted for an input that has ended is not known. The agent's launch says that its adapter does so, and an agent whose launch does not cannot be confined. Input can also name a file: the CLI puts what `@path`, `@server:resource` or `@agent-<type>` in a paste names into the conversation, and `--restricted` keeps out only files outside the directory (2.1.332, Appendix B, "Mentions in a paste"). So in a confined session every `@` of an input, also one in a word, is pasted as `(at)`, and the instructions tell the agent so, so that it writes `@` itself in what it passes on and where it mentions a person; an adapter whose launch does not say that its agent takes no input for a mention (`NoMentions`) is refused like one that does not say `Confined` (#887), and so is one whose launch does not say that it leaves the session no built-in tool that writes (`NoWriteTools`, #868). The MCP config names one server, `hataori mcp --scope <scope> --root <root>`, with the session's token in `HATAORI_TOKEN`. Claude Code connects to it beside its start and takes a prompt before it is connected, and that turn's first request then has none of its tools; no setting makes the interactive CLI wait (2.1.331). So `hataori mcp` reports to the session's host once the CLI has its tools, and input is pasted after that, or after 10 seconds without the report, with a line in the daemon's log (#704). A session keeps one token for its life (decision 1): the daemon issues it at the session's first launch and keeps it in the session's state directory, gives it to each launch, and binds it again at a restart, before the socket serves, so an agent that kept running keeps its tools; the token of an older session of the thread is revoked when a newer one starts. The stored spec keeps the confinement without the MCP servers, so no token is in the store. An ordinary thread's launch is unchanged, byte for byte. Codex cannot start a confined session yet, so a Codex supervisor fails until the Codex adapter confines.
+**Its thread and its session** (#270; decision 3 of #267). A scope names its supervisor in the config (`scopes[].supervisor`: the agent, the model, the effort and instructions). The daemon starts its thread once, as the owner, in the scope's own channel, opened by the scope's front end like any thread, under the key `hataori-supervisor`. After a restart the daemon takes the scope's supervisor thread by its kind (section 5.1; before #857, the scope's newest confined thread), so nothing starts twice; a failed one is kept, and one the owner closed is replaced by a new one, under the key `hataori-supervisor-after-<number>` (closing a failed supervisor is how a person asks for a new one). A Start key is kept per scope, so a daemon that died during that Start gets the same thread back. The thread is started confined: `core.Core.StartConfined`, which is no operation of the control API, records it on the thread, and its directory is the scope's, in `<root>/confined/`, given by the workspace maker instead of a clone and outside `workspaces/`, which is all the remover removes; the core refuses to remove it anyway (#645; before, each thread had `<root>/confined/<number>`, made empty; below, *Its directory and its notes*). When the config names no model, its model is the one the selected supervisor agent's order gives a thread of the scope, and its effort is `high` (#652; below, *Its model and effort*). Every launch of its sessions, new, resumed after sleep, recovered after a daemon died or begun again for a lost conversation, reads the thread's confinement in the runner, so none is ever unconfined: the spec gets `Confine` with the MCP servers the daemon gives that launch, and an adapter whose launch does not say `Confined` is refused before any process starts, which fails the thread with that reason. Claude Code's launch adds `--restricted --strict-mcp-config --mcp-config <state>/claude-mcp.json --tools "Read,Glob,Grep"`, the flags checked above (until #868 the list had `Write` and `Edit` too); that check ran them with `--setting-sources project,local`, which the launch does not pass, and it also found that the user's own settings, skills and plugins add no tool (under `--restricted` the user's settings file is not loaded at all, see below). The check tried only Read and Write outside the directory. The session may have files written in its own directory, so the launch also keeps out what it could plant there for its next start: it adds `--setting-sources user`, so that the project's and the local settings files, which lie in that directory, stay out by that flag as well as by `--restricted` (which, as its help says and as Claude Code 2.1.328 showed, ignores the user's settings file too, whatever `--setting-sources` names: under it the init event lists none of the user's plugins and not the user's model, so a supervisor gets no `env`, hooks or plugins from the user's settings, only hataori's `--settings`, managed settings and the variables the adapter passes); it shows hataori's own status line alone, since hataori would otherwise copy a project's status line command into its `--settings`, and even the user's own runs in that directory, often running git; and it sets `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, `ENABLE_CLAUDEAI_MCP_SERVERS=false` and `GIT_DIR=/dev/null`, so that a CLAUDE.md there with imports of files outside is not loaded, no memory is kept outside the directory, no claude.ai connector joins the listed MCP server, and a `.git` there, whose config could name a command (such as `core.fsmonitor`) that the CLI's own look at the directory would make git run, is no repository. Nor may it write such files: the daemon refuses a path any part of which starts with a dot (`.claude/`, `.mcp.json`, `.git/`, `.vscode/`, ...; #868), and so, as a second line, does the session's `PermissionRequest` hook, which `--restricted` leaves the writes to settings, git and tool configuration files to, as it refuses any path outside the directory (#423). That the CLI honours the hook's refusal is documented, not yet checked against the real CLI **(unverified)**: the check needs a logged-in turn. These additions were not part of #268's check; the real supervisor check (`docs/testing.md`) plants each of them. Input that reaches the session can itself be a command: the CLI reads one that starts with `!` as a command for its shell mode, and runs it under `--restricted` too, and one that starts with `/` as one of its own commands (`/add-dir` widens the directories the file tools may use). So in a confined session, an input is pasted after `(message) `, and the CLI takes it as a prompt (#426; Claude Code 2.1.328, also after the CLI put an interrupted prompt back in the box), unless its first character past spaces is a digit or a letter of a common script (Latin, Greek, Cyrillic, Han, kana, Hangul syllables), all of which show: what the CLI takes out of the start, and which starts it reads as a command, are the CLI's own, so the adapter does not rely on them; and no control character but line feeds and tabs is pasted into it, so that nothing in it starts an escape sequence, with a carriage return pasted as a line feed, since it is what Enter sends and would submit the text before it where a paste is not bracketed (#914). After a restart, an input that an older hataori may have left in the box, pasted in a way this rule would not paste it, is not submitted (the runner records which written inputs it wrote itself, and tells the codec of the others, `agent.Input.Earlier`), and nothing is pasted after it until the CLI reports each such input as a prompt that is not a task notification's (known only by what an older hataori pasted for it, also as the CLI reports it, without the escape sequences that start with ESC [ and the characters that do not show; not by a prompt that the CLI may report of an input pasted before it, nor by what this hataori would paste for it, which can be another input's paste), or the session ends; the turn it was to start ends after the input timeout as not delivered, naming no input, the inputs given meanwhile end as not delivered, and such an input does not end meanwhile, so that it is handed to the codec again after another restart while the same agent runs; the session's end, with which the box's text goes, ends it as not delivered, and so, at once, each other input pasted and not reported, in the order pasted, so that the one waited for, if any, whose turn it is, ends first; any other turn that runs then (one typed at the terminal, say) ends with the first as not delivered (only the first end ends a turn; the others' ends only remove them). Meanwhile each input the thread is given ends at once as not delivered, and the thread is not closed while its agent is idle, since the row is pending; its agent is put to sleep after the idle period as ever, which each such input starts again, and the agent its next input starts has an empty box: before the runner launches an agent, it removes the rows of what was written to one before, which nothing reports any more, so that the input is neither held again nor pending. Only an input that still has a row is held: what an older hataori pasted for an input that has ended is not known. The agent's launch says that its adapter does so, and an agent whose launch does not cannot be confined. Input can also name a file: the CLI puts what `@path`, `@server:resource` or `@agent-<type>` in a paste names into the conversation, and `--restricted` keeps out only files outside the directory (2.1.332, Appendix B, "Mentions in a paste"). So in a confined session every `@` of an input, also one in a word, is pasted as `(at)`, and the instructions tell the agent so, so that it writes `@` itself in what it passes on and where it mentions a person; an adapter whose launch does not say that its agent takes no input for a mention (`NoMentions`) is refused like one that does not say `Confined` (#887), and so is one whose launch does not say that it leaves the session no built-in tool that writes (`NoWriteTools`, #868). The MCP config names one server, `hataori mcp --scope <scope> --root <root>`, with the session's token in `HATAORI_TOKEN`. Claude Code connects to it beside its start and takes a prompt before it is connected, and that turn's first request then has none of its tools; no setting makes the interactive CLI wait (2.1.331). So `hataori mcp` reports to the session's host once the CLI has its tools, and input is pasted after that, or after 10 seconds without the report, with a line in the daemon's log (#704). A session keeps one token for its life (decision 1): the daemon issues it at the session's first launch and keeps it in the session's state directory, gives it to each launch, and binds it again at a restart, before the socket serves, so an agent that kept running keeps its tools; the token of an older session of the thread is revoked when a newer one starts. The stored spec keeps the confinement without the MCP servers, so no token is in the store. An ordinary thread's launch is unchanged, byte for byte. Codex now has an explicitly selected, fail-closed Linux confined launch for the verified CLI/model combination: empty native environments on every turn, an authoritative pinned Direct model catalog with no exec/wait cells, isolated mutable CLI state, read-only existing authentication, supplied scope MCP only, and literal input without file/skill expansion. See [current proof, limitations and non-destructive switching](../notes/codex-supervisor-1088/README.md). Other Codex versions/models/platforms and unsupported adapters remain refused.
 
 One limit is not enforced by this: the supervisor can *ask* a worker thread to merge or delete. What a worker may do is decided by that worker's own rules. Messages from a supervisor are marked as such, so a worker's instructions can treat them differently from a person's; an answer to a worker's question is not marked, and its `answer` event names the supervisor.
 
@@ -771,7 +771,7 @@ A turn that a person started is posted whatever `report` says. The chat front en
 
 *A config change reaches its session* (#641). Every launch of a supervisor's session, a resume included, takes its model, its effort, its instructions and its MCP server from the config the daemon loaded. When the daemon starts, it compares what the supervisor's live session was launched with to what a launch would give now. When they differ, the daemon puts the session to sleep at its first idle moment (no turn running, no open request, no background task), as the idle period would, and logs one line that names what changed; the next message resumes the same conversation, in the same thread, with the new launch, and the next wake gets a new conversation with it (below, *A wake in a conversation of its own*). A running turn is not interrupted, and without a change nothing is relaunched. A new hataori whose built-in layer differs counts as a change, and so does a change of a config key that the config's layer states. The user's files are not compared: a change to one is named in the next wake instead (below, *Two layers*). *Why:* in a busy channel the supervisor was never idle for the idle period, so a change never reached it, and the only way was a new thread, which lost the conversation.
 
-*Its model and effort.* When `scopes[].supervisor` names none, its model is the one the default agent's order gives a thread of the scope (the scope's model when the scope runs the default agent, then the adapter section, then the top-level key), and its effort is `high`. (#652; an adapter no longer names a cheapest model.) *Why:* on the cheapest model without an effort its answers stayed on the surface; on the scope's model at effort `high` it worked questions out, cited the design and found an inconsistency in its own instructions.
+*Its model and effort.* `scopes[].supervisor.agent` selects its adapter independently of workers; absent, it uses the instance default. Without an explicit supervisor model, the selected agent's model order applies: the scope's model only when its worker adapter matches, then the selected adapter section, then top-level only for the instance default, then the CLI default. Its effort defaults to `high`. Existing sessions keep their adapter; changing it uses the [operator switch procedure](../notes/codex-supervisor-1088/README.md), preserving notes/history and workers. (#652; an adapter no longer names a cheapest model.) *Why:* on the cheapest model without an effort its answers stayed on the surface; on the scope's model at effort `high` it worked questions out, cited the design and found an inconsistency in its own instructions.
 
 *Two layers: what hataori defines, and what the user defines* (the maintainer, 2026-11-23, section 10). A person should be able to tune every response, not only reports: light reports or step-by-step ones, the tone, the length. What the supervisor may do must not move with that. So its instructions come in layers, given in this order at every launch, and an earlier layer wins over a later one:
 
@@ -1967,6 +1967,107 @@ All numbers are `yousan/c-lord` issues.
 
 Declared in `internal/control`, `internal/surface` and `internal/agent`; the packages hold the types this appendix leaves out. Names will move during phase 1; the split between the three packages should not. A pull request that changes one of the packages changes this appendix with it.
 
+### Durable deferred management input
+
+Protocol 3.48 adds `API.DeferredSend(context.Context, DeferredSendRequest)
+(DeferredSend, error)` for explicit queue/find/inspect/cancel. `Caller.DeferInput`
+is a daemon-only grant, never a socket argument. It is set for a configured
+supervisor in act/propose, and reconstructed from current trusted policy before
+delivery. Existing immediate `Send` semantics are unchanged. See
+[the approved design](../notes/deferred-supervisor-send/design.md) and
+[the operation contract](../protocol.md#operation-deferredsend).
+
+`agent.DeferredInputAdapter` is optional: `CanDeferInput() bool` and
+`ValidateDeferredInput(Actions) error` declare one complete pipe submission,
+idle-only hold and exact Written ACK reconstruction. Absence refuses queueing.
+The codec must also implement `DeferredInputCodec.DeferredInputReady` to
+recheck current native idle state before freezing an emitted action and before
+the first attempt when the original receiver proves a frozen key absent. An
+earlier emitted action or the logical session state alone is insufficient.
+`agent.Input.IdleOnly` survives acceptance and codec holding: it cannot steer
+or be acknowledged by equal text/a bare native turn notification.
+`agent.Input.Command [][]byte` is opaque frozen adapter command evidence for
+Written reconstruction; the generic core/runner do not parse provider RPCs.
+Deferred codec IDs carry the durable queue number, separately from reusable
+ordinary pending rowids and the `first` slot. Current origin keys are checked
+before translating an action/ACK back to its delivery slot; stale generations
+cannot write or acknowledge the next input.
+Codex restores the original turn/start request/thread association through
+warmIO; only its exact successful RPC response acknowledges this input.
+
+The owned host's private input-batch-v1 capability binds an opaque live run.
+It reserves each key/digest before writing the complete frozen batch and keeps
+128 receipts without eviction, refusing new keys at capacity; batches are at
+most 128 KiB/128 chunks. The durable frozen batch and ordinary Written marker
+commit together. Reconnect reconciles only that original run/key/bytes after
+retained-read/readiness checks; written clocks come from actual receiver
+completion and are preserved across reconstructions. Host receipt is not an
+agent ACK. A pending receipt fences later codec I/O; consumed later actions
+require reconstruction before writing. Later input/answer rows stay in the
+recovery horizon and wait before entering the codec, so an input held without
+an emitted action cannot be enqueued twice after recovery. A pending/unknown
+receipt is probed before new output is consumed. Proven absence allows ordinary
+native replies/ticks, rechecks questions before idle waiting, and suspends only
+the deferred input's pre-write deadline. Ordinary batch I/O completes before a
+subsequent fresh read can authorize absent bytes; an unfrozen input waits rather
+than acquiring a fence around remaining one-shot native responses.
+Cached exact ACK restoration propagates
+store failures and reconstructs again rather than losing the acknowledgement.
+A complete receiver rejection (including non-evicting capacity exhaustion) is
+terminal, distinct from an ambiguous connection failure. Global terminal holder
+preference does not exclude an existing owned pipe host; the actual holder is
+checked. Dead receivers/partial writes are explicit unconfirmed failure,
+without a replacement worker or a new-run retry. No claim is made for exactly
+once arbitrary pipe effects across receiver death.
+
+### Machine session I/O
+
+`internal/machineio.Session` binds reads, metadata, pipes, hook replies and host
+lifecycle to a machine and run. Local sessions retain the own holder and tmux
+adapter paths; worker sessions never resolve reported paths or PIDs on main.
+`FollowSources` is an optional agent adapter contract: it extracts followed
+files from the resident's actual session output, without I/O. The resident
+registers opaque handles and retains bounded reconstruction data for the run.
+The pure codec and session state machine remain on main. Missing history,
+changed identities and read failures pause with `ThreadInfo.IOPaused`.
+
+`agent.InputRefuser.RefuseInput(ids, reason)` retires confirmed-unsent inputs
+without ending another running turn; remote codecs implement it for bounded
+transport rejection, including steering inputs.
+
+The optional control interface `WorkerAttacher` declares
+`AttachWorker(context.Context, ThreadID) (WorkerAttachment, error)`. It has the
+owner/scope checks of local attach and gives one configured, pinned target to an
+independent owner connection. Existing `Attachment.Socket` remains local.
+`ThreadInfo.Machine` is a configured key; neither it nor worker output grants
+scope authority. The public protocol versions these additive declarations
+separately from the worker protocol.
+
+`StartRequest.Machine` optionally names an exact machine. `ThreadInfo` adds
+`PlacementPending`, `PlacementReason` and scoped `MachineAvailability`
+(`State`, `At`, `Reason`). The `placement` event reports pending/selected/canceled
+placement. Supervisor proposals preserve the optional requested machine.
+
+`Core.MachinePlacement` combines configured limits with fresh observations and
+a callback rebuilding accepted caller provenance from current grants.
+`AdmitSession` reserves transactionally before workspace/host effects;
+`DispatchPlacements` rechecks durable unplaced starts oldest first. Runner's
+`Admit` callback also guards wake/replacement and the last local launch point.
+`FirstInput.AcceptedOperation` retains the original Start/Send/Attach operation
+for current-grant recovery checks. `PlacementEnded` requires positive local
+holder proof, including superseded runs; `PlacementRecovered` recognizes an
+original phase-two host before applying new-start resource admission. Remote
+release uses bound inventory. A canceled dispatch retains a distinct durable
+launch marker excluded from both recovery and reconnect, so later restarts
+cannot deliver input whose original authority was revoked.
+`Runner.RevalidateLaunch` calls `Core.RevalidatePlacementLaunch` before
+reconnecting creating sessions with retained first input, separately from
+resource admission. Placement activation persists, so removing the last worker
+or limit cannot disable accepted-input authorization after a restart. A canceled
+intent stays canceled when its original permission is later restored.
+Optional `WorkerWorkspaces` routes removal, reopen and trash acknowledgement
+to typed resident operations; opaque worker handles are never main paths.
+
 ### Control API
 
 ```go
@@ -3113,7 +3214,7 @@ type Message struct {
 type Adapter interface {
 	// Probe reports whether the agent is installed and logged in.
 	// The Codex adapter runs `codex --version` and reads the exit status of `codex login status`.
-	Probe(ctx context.Context) (Health, error)
+	Probe(ctx context.Context, spec Spec) (Health, error)
 
 	// Launch returns how to start the agent for spec: a new session,
 	// or a resumed one when spec.ResumeID is set.
@@ -3126,6 +3227,33 @@ type Adapter interface {
 
 	// NewCodec returns the translator for one running session.
 	NewCodec(spec Spec) Codec
+}
+
+// WorkerAdapters is optional for local adapters, required by a worker resident.
+// It returns a local adapter excluding ambient pass_env from probes/launches.
+type WorkerAdapters interface {
+	ForWorker() Adapter
+}
+
+// ProjectSettingsOmitter is optional, pure adapter capability metadata.
+// Missing or false support refuses ordinary research before creating a
+// thread, workspace, session, proposal or launch. A confined supervisor's
+// support does not establish this separate ordinary-worker capability.
+type ProjectSettingsOmitter interface {
+	CanOmitProjectSettings() bool
+}
+
+// CanOmitProjectSettings returns false for an undeclared capability.
+func CanOmitProjectSettings(a Adapter) bool
+
+// Every actual requested launch must still attest Launch.NoProjectSettings;
+// this metadata cannot bypass the runner's independent fail-closed check.
+
+// Health is a probe observation; uncertainty never authorizes new work.
+type Health struct {
+	Installed, LoggedIn bool
+	Unknown bool // installation or login could not be established (#959)
+	Version, Detail string
 }
 
 // ErrNoCodeBack is returned by LoginCode, for every code, when the login
@@ -3471,6 +3599,43 @@ The holder for a tmux window a person started is `internal/holder/tmux` (#399). 
 
 Section 4.8. `HostTerminal.Reported` and `ReportedSession` are declared above, since protocol 3.15 (#397). So are `TakeIn`, `Release` and `TakeInRequest`, since protocol 3.17 (#400).
 
+### Machine absence interfaces (#964)
+
+`Core.Away` supplies machine availability separately from session state and
+rebuilds current caller authority before durable held-action dispatch. The new
+store migration records availability generations, per-session catch-up markers,
+held actions/absence notices and durable pause intervals. Only current-generation
+committed output plus receipt/hook reconciliation permits dispatch. Original
+session/run/turn/request targets remain fixed; unknown inventory retains slots.
+`Runner.RevalidatePending` and `RevalidateInitial` check accepted but unwritten
+input at the last dispatch boundary, including an initial input whose session
+became idle during catch-up. Rejected initial input is archived with provenance and owed context, while the
+completed host keeps launch zero, its follower, binding and reservation. Only the
+initial input's recorded caller turn may end on withdrawal. Regrant never revives
+that archived input.
+`agent.ClockedTicker.TickClocks(active, wall)` separates paused codec delivery
+deadlines from real worker-hook expiry. `agent.Input.WrittenAt` restores the original active delivery clock after codec
+reconstruction; durable write timestamps and pause intervals preserve the remaining
+budget across reconnect and main restart. `agent.HookReconciler` optionally withdraws requests whose original host hooks
+are no longer waiting; native pipe questions keep their own protocol semantics.
+`workerssh.Worker.Invalidate` blocks work after a failed application stream until
+identity/version/inventory probing succeeds again. Public protocol 3.47 carries
+availability/action events and `action_held`; worker protocol remains independently
+1.3 because its existing inventory/receipt/waiting-hook contract is unchanged.
+Accepted answer receipts and their synthetic caller turn IDs are linked to
+pending inputs by a durable random receipt key, not a reusable SQLite row number.
+A terminal refusal ends only that still-current caller turn.
+Immediate no-write refusals and recovered refusals commit journal state and
+written markers atomically; an absent receipt always remains uncertain. A proven
+transient no-write refusal preserves the accepted answer for reconstruction,
+original-hook and current-authority checks before a fresh attempt. Resolved
+refused attempts remain audited without being reconciled repeatedly.
+Terminal codec/stale-worker refusals are durable and visible; complete receipts retire the original pending
+answer, while unresolved receipts block catch-up completion. Written provenance
+is restored before decoding buffered output, and acknowledgements retire input
+during catch-up without dispatching new work.
+No actual macOS worker runtime support follows from these fixtures or CI.
+
 ## Appendix E: acceptance criteria after phase 1
 
 Every phase here also has this criterion: the change touches no core package, except to add an operation to the control API or to register an adapter; the supervisor phase may also let the control socket bind a connection to a limited `Caller` (which plugins use too, section 7.3) and let a session be started confined (no shell, only the listed tools, section 7.1); the plugin phase may also limit a `Caller` to the operations and event kinds a plugin was granted, and add hook points (section 7.3).
@@ -3558,7 +3723,7 @@ Section 7.1, "The channel's development manager". Besides the phase criterion, i
 - [ ] Under `watch` the supervisor's start, send and interrupt request are refused (a look-up, #857, is not a start). Under `propose` a send and a start run only after a person of the scope approved them in the supervisor's thread, and once; a refusal reaches the supervisor in its next wake. Under `act` they run at once. An interrupt needs a person's approval in every mode.
 - [ ] A wake's turn whose final answer is `(quiet)` posts nothing, and no wake's turn posts the text before its final answer. Neither does a turn that answers messages to others only, answered `(quiet)`, post anything; any other turn that a person started is posted whole. `@<name>` of a person of the scope is the only mention in a supervisor's thread, and a completed turn that a person started posts no ping.
 - [ ] After a change of `model`, `effort` or `instructions` and a daemon restart, the supervisor's next turn runs with the new settings, in the same conversation and the same chat thread; a running turn is not interrupted, and a restart without a change relaunches nothing.
-- [ ] With no `model` or `effort` in `scopes[].supervisor`, its session runs the scope's model for the default agent at effort `high`.
+- [ ] With no `agent`, `model` or `effort` in `scopes[].supervisor`, its session runs the scope's model for the default agent at effort `high`; explicit selection uses the selected adapter's model order without changing workers.
 - [ ] With `report` `"needed"` a wake's answer that names no person is not posted; with `"digest"` such answers are posted together once per `report_every`, also across a restart; with `mention` `"never"` nothing in the thread mentions anyone; during `quiet_hours` nothing mentions anyone, and at their end one message mentions each person named during them. A turn a person started is posted under every `report`.
 - [ ] Each launch gives hataori's layer, then the config's layer, then `AGENTS.md`, `SOUL.md`, `USER.md` and `IDENTITY.md` from the scope's directory, each when present, in that order (golden file). A file that is a symbolic link, not a regular file, or over 32 KB is skipped with one log line, and an import in a file is not followed.
 - [ ] A user's file that asks for `act`, a tool or a repository the config does not give changes nothing the daemon allows (tested under `propose` with a file that asks for `act`).
