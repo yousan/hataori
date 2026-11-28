@@ -2,18 +2,9 @@ name: tmux compatibility
 
 on:
   pull_request:
-    paths:
-      - internal/holder/tmux/**
-      - internal/hostterm/**
-      - internal/runner/closed_terminal_test.go
-      - .github/workflows/tmux.yml
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   push:
     branches: [main]
-    paths:
-      - internal/holder/tmux/**
-      - internal/hostterm/**
-      - internal/runner/closed_terminal_test.go
-      - .github/workflows/tmux.yml
   workflow_dispatch:
     inputs:
       count:
@@ -42,7 +33,32 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Evaluate the complete diff at job level so even a docs-only change has
+  # a skipped check, and ready_for_review needs no additional push.
+  changes:
+    name: tmux changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code == 'true' || steps.filter.outputs.policy == 'true' }}
+      tmux: ${{ steps.filter.outputs.tmux }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        id: filter
+        with:
+          base: ${{ github.event.before || github.ref }}
+          predicate-quantifier: every
+          filters: .github/filters.yml
+
   tmux:
+    needs: changes
+    if: >-
+      (github.event_name != 'pull_request' || !github.event.pull_request.draft) &&
+      (github.event_name == 'workflow_dispatch' ||
+        (needs.changes.outputs.code == 'true' && needs.changes.outputs.tmux == 'true'))
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     strategy:
