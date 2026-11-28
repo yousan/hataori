@@ -24,7 +24,7 @@ func (a *Adapter) verifyCandidate(ctx context.Context, record CandidateRecord) (
 	if err != nil {
 		return nil, c, err
 	}
-	id, err := a.candidateRunID(ctx, c, r.Sweep)
+	id, err := a.discoverRun(ctx, c, r.Sweep)
 	if err != nil || id <= 0 {
 		return nil, c, fmt.Errorf("unique frozen candidate run unavailable")
 	}
@@ -85,51 +85,6 @@ func (a *Adapter) verifyCandidate(ctx context.Context, record CandidateRecord) (
 		}
 	}
 	return evidence, c, nil
-}
-
-// Discovery does not claim approval. Only the subsequent current-run and full
-// completion verification credit the unique ID, without rereading the entire
-// immutable execution closure once per discovery/verification phase.
-func (a *Adapter) candidateRunID(ctx context.Context, c verifiedControl, s Sweep) (int64, error) {
-	var found int64
-	total := -1
-	seen := map[int64]bool{}
-	for page := 1; page <= 10; page++ {
-		var batch struct {
-			Total int         `json:"total_count"`
-			Runs  []runRecord `json:"workflow_runs"`
-		}
-		p := fmt.Sprintf("%s/actions/workflows/%d/runs?event=workflow_dispatch&branch=%s&head_sha=%s&per_page=100&page=%d", a.prefix(), c.requirement.WorkflowID, url.QueryEscape(strings.TrimPrefix(dispatchRef(s), "heads/")), s.Target, page)
-		if err := a.request(ctx, "GET", p, nil, &batch); err != nil {
-			return 0, err
-		}
-		if total < 0 {
-			total = batch.Total
-		}
-		if total != batch.Total || total < 0 || total > 1000 {
-			return 0, fmt.Errorf("candidate run enumeration unstable")
-		}
-		for _, run := range batch.Runs {
-			if run.ID <= 0 || seen[run.ID] {
-				return 0, fmt.Errorf("candidate run identity ambiguous")
-			}
-			seen[run.ID] = true
-			if run.Title != sweepTitle(s) {
-				continue
-			}
-			if found != 0 {
-				return 0, fmt.Errorf("duplicate frozen candidate run")
-			}
-			found = run.ID
-		}
-		if len(batch.Runs) < 100 {
-			if len(seen) != total || found == 0 {
-				return 0, fmt.Errorf("candidate run enumeration incomplete")
-			}
-			return found, nil
-		}
-	}
-	return 0, fmt.Errorf("candidate run enumeration incomplete")
 }
 
 func executedCandidateJobs(jobs map[string]jobRecord, steps, labels map[string][]string, deadline time.Time) ([]int64, error) {

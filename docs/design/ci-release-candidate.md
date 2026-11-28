@@ -17,14 +17,18 @@ default; the existing root remains compatible when this optional field is absent
 
 ```
 ci-coordinator candidate-freeze AUTHORITY_DIR --pull N
+ci-coordinator candidate-prepare AUTHORITY_DIR --pull N
+ci-coordinator candidate-pump AUTHORITY_DIR --pull N
+ci-coordinator candidate-dispatch-reconcile AUTHORITY_DIR --pull N
 ci-coordinator candidate-verify AUTHORITY_DIR --pull N
 ci-coordinator candidate-main AUTHORITY_DIR --pull N
 ci-coordinator candidate-status AUTHORITY_DIR --pull N
 ci-coordinator candidate-invalidate AUTHORITY_DIR --reason DIAGNOSIS
 ```
 
-These commands use the real GitHub adapter and private durable store. They never
-send a merge, ref update, workflow dispatch, rerun or cancellation. All results
+These commands use the real GitHub adapter and private durable store. Only
+`candidate-pump` may create the fixed proof ref and send one workflow dispatch
+for a prepared intent. They never send a merge, rerun or cancellation. All results
 have PromotionAllowed/ReleaseAllowed/UpgradeAllowed false. The CLI deliberately
 reports Closed=true and nonzero exit even after successful evidence collection:
 an unproved promotion route is still closed. Status is historical evidence, not
@@ -53,6 +57,48 @@ rechecks current root/policy validity inside that serialized path; historical
 on-time candidate evidence may be observed after candidate expiry, while expired
 current authority cannot commit a new main observation.
 
+## Durable candidate dispatch
+
+After freeze, `candidate-prepare` creates a local pre-lane outbox row. It does not
+initialize a coverage lane or send anything. A unique intent ID cannot be reused
+from candidate history, bootstrap or a coverage sweep; only one candidate intent
+can remain prepared or uncertain. Prepared, uncertain, bound and retired receipts
+survive restart and are never deleted by invalidation or a new candidate.
+
+`candidate-pump` first discovers an existing matching run. If none exists and the
+intent is still prepared, it uses the shared real Actions sender: validate the
+approved execution closure, workflow registration and dispatcher identity; create
+or reconcile the deterministic `ci-sweeps` ref at C; recheck the ready candidate,
+refs and exact mandatory approvals; then atomically claim the intent as uncertain
+in the private SQLite transaction before the POST. The request uses the frozen
+ref and exact integration-proof inputs/run title. Expired authority or candidate,
+observed movement and missing approvals refuse sending. These reads do not make
+GitHub refs/reviews atomic and do not confer promotion authority.
+
+A successful dispatch POST returns no run ID. A lost response or crash, including
+a crash after the durable claim but before sending, therefore remains uncertain.
+No pump/restart retries that POST. Read-only `candidate-dispatch-reconcile` uses
+complete bounded run discovery and the current run endpoint to identify the
+original attempt 1, frozen target/ref, workflow, actor, scope and timestamps. It
+never creates refs or sends. Duplicate, unknown, mismatched or rerun metadata
+cannot bind. This is at-most-one local send claim, not an external exactly-once
+promise: a zero-run uncertain receipt needs diagnosis, not blind resend.
+
+Reconcile may retain a historical receipt after candidate expiry, ref movement or
+review withdrawal, using the unchanged signed request and still-valid current
+control/root. It cannot extend expiry or grant full validation. Full verification
+still checks fresh candidate/ref/review state and all required executed proof
+steps; a retained outbox must bind that exact run before evidence is committed.
+Restart thus connects the original receipt to evidence without trusting a
+success string. Binding queued/running/failed metadata is only identity capture.
+
+Owner invalidation may retire a definitely unsent prepared intent. It cannot
+abandon an uncertain send or a bound run that is still running/unknown. A known
+terminal original run may be invalidated while its receipt remains retained; a
+new tuple must use a new intent ID. No path cancels a proof or releases coverage
+debt. Root/key/credential/process/DB provisioning and the first real candidate
+execution remain external, unacquired inputs; merging this code activates none.
+
 ## Full proof and artifacts
 
 The frozen `Sweep` has a unique `candidate-` intent ID, From=B and Target=C. Its
@@ -60,8 +106,7 @@ title and frozen `ci-sweeps` ref use the existing integration-proof contract.
 Verification discovers exactly one matching actual run: no successful previous
 run is required before constructing/freezing the request. The registered manual
 workflow can execute that first proof after its trusted dispatcher/ref route is
-established. This increment supplies no candidate dispatch sender and does not
-call one. Unknown/duplicate discovery never selects a newer success silently.
+established. Unknown/duplicate discovery never selects a newer success silently.
 
 Full Linux/macOS, reproducible web, cross-build and applicable ten-version tmux
 steps must actually execute under the approved workflow/closure/runner contract.
@@ -104,7 +149,7 @@ The existing integration Git receiver tests do not establish that contract for
 GitHub/main. Candidate evidence alone cannot bypass existing PR targets, required
 provider/Claude reviews, main checks, Pages or operator release/upgrade consent.
 
-Rollback invalidates the prepared candidate under the authenticated owner,
+Rollback invalidates an eligible candidate under the authenticated owner,
 retains its evidence and returns work to existing full main routes separately.
 It does not reset coverage debt, retarget another owner's PR, cancel proof,
 rewrite history or roll back an external main write. No routing/profile adoption

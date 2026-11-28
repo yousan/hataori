@@ -323,7 +323,7 @@ func RunCLI(ctx context.Context, args []string, out io.Writer, binary string) in
 		}
 	}
 	allowed := map[string]bool{"bootstrap": true, "bootstrap-prepare": true, "bootstrap-pump": true, "observe": true, "admission": true, "integrate": true, "pump": true, "status": true, "control-transition": true, "done": true, "summary": true, "recover": true, "bootstrap-recover": true}
-	for _, name := range []string{"candidate-freeze", "candidate-verify", "candidate-main", "candidate-status", "candidate-invalidate"} {
+	for _, name := range []string{"candidate-freeze", "candidate-prepare", "candidate-pump", "candidate-dispatch-reconcile", "candidate-verify", "candidate-main", "candidate-status", "candidate-invalidate"} {
 		allowed[name] = true
 	}
 	if strings.HasPrefix(op, "candidate-") && ((op != "candidate-invalidate" && pull == 0) || (op == "candidate-invalidate" && reason == "")) {
