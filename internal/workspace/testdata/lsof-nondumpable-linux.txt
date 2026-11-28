@@ -1,0 +1,5 @@
+p12345\0
+fcwd\0tunknown\0n/proc/12345/cwd (readlink: Permission denied)\0
+frtd\0tunknown\0n/proc/12345/root (readlink: Permission denied)\0
+ftxt\0tunknown\0n/proc/12345/exe (readlink: Permission denied)\0
+fNOFD\0n/proc/12345/fd (opendir: Permission denied)\0

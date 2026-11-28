@@ -2670,8 +2670,8 @@ func readGitfile(p string) (string, error) {
 // the workspace. lsof is asked on Linux and on macOS alike; a missing or
 // failing lsof refuses, and so does one that does not report a directory
 // this check holds open, the workspace itself: that shows that the names
-// and the inode numbers lsof prints are the ones compared with. Only the
-// processes of the user hataori runs as can be seen, unless it runs as root.
+// and the inode numbers lsof prints are the ones compared with. Files
+// lsof cannot inspect refuse too: even root may lack permission.
 func (c *checker) processes() error {
 	top, ok := lsofName(c.top)
 	if !ok {
@@ -2689,59 +2689,76 @@ func (c *checker) processes() error {
 	topID, _ := fileIDOf(st)
 	self, heldFD := strconv.Itoa(os.Getpid()), strconv.Itoa(int(held.Fd()))
 
-	// lsof is asked before and after the workspace is read: before, what a
-	// process uses then is still found where it makes directories and goes on
-	// in them; after, what it says is as new as it can be.
-	before, err := c.lsof()
-	if err != nil {
-		return err
-	}
-	in, err := c.contents()
-	if err != nil {
-		return err
-	}
-	after, err := c.lsof()
-	if err != nil {
-		return err
-	}
-	for _, open := range [][]openFile{before, after} {
-		seen := false
-		// On Linux each thread but the first is reported on its own, and may
-		// have its own working directory and open files.
-		threadSeen := runtime.GOOS != "linux"
-		for _, f := range open {
-			id, hasID := f.id()
-			if f.name == top || strings.HasPrefix(f.name, top+"/") || strings.HasPrefix(f.name, top+" ") {
-				if f.pid == self && f.fd == heldFD {
-					if !hasID || id != topID {
-						return &Refusal{Reason: UnknownUse, Detail: "lsof does not say which file it is that this check holds open"}
+	// A descriptor may close while lsof reads it. Discard an incomplete
+	// proof and try the whole step again, at most three times. Permission
+	// failures are not transient and still refuse immediately.
+	for attempt := 0; ; attempt++ {
+		// lsof is asked before and after the workspace is read: before, what a
+		// process uses then is still found where it makes directories and goes on
+		// in them; after, what it says is as new as it can be.
+		before, err := c.lsof()
+		if err != nil {
+			return err
+		}
+		in, err := c.contents()
+		if err != nil {
+			return err
+		}
+		after, err := c.lsof()
+		if err != nil {
+			return err
+		}
+		retry := false
+		for _, open := range [][]openFile{before, after} {
+			seen := false
+			// On Linux each thread but the first is reported on its own, and may
+			// have its own working directory and open files.
+			threadSeen := runtime.GOOS != "linux"
+			for _, f := range open {
+				if f.kind == "unknown" || f.fd == "NOFD" {
+					if attempt < 2 && f.vanished() {
+						retry = true
+						continue
 					}
-					seen = seen || f.thread == ""
-					threadSeen = threadSeen || f.thread != ""
-					continue
+					return &Refusal{Reason: UnknownUse, Detail: "lsof cannot inspect what " + f.use()}
 				}
-				return &Refusal{Reason: InUse, Detail: f.use()}
+				id, hasID := f.id()
+				if f.name == top || strings.HasPrefix(f.name, top+"/") || strings.HasPrefix(f.name, top+" ") {
+					if f.pid == self && f.fd == heldFD {
+						if !hasID || id != topID {
+							return &Refusal{Reason: UnknownUse, Detail: "lsof does not say which file it is that this check holds open"}
+						}
+						seen = seen || f.thread == ""
+						threadSeen = threadSeen || f.thread != ""
+						continue
+					}
+					return &Refusal{Reason: InUse, Detail: f.use()}
+				}
+				if !hasID && (f.kind == "REG" || f.kind == "DIR") {
+					return &Refusal{Reason: UnknownUse, Detail: "lsof does not say which file it is that " + f.use()}
+				}
+				if there, ok := in[id]; hasID && ok && there.all() {
+					return &Refusal{Reason: InUse, Detail: f.use() + ", which is " + there.rel}
+				}
 			}
-			if !hasID && (f.kind == "REG" || f.kind == "DIR") {
-				return &Refusal{Reason: UnknownUse, Detail: "lsof does not say which file it is that " + f.use()}
+			if !seen {
+				return &Refusal{Reason: UnknownUse, Detail: "lsof does not report the workspace, which this check holds open"}
 			}
-			if there, ok := in[id]; hasID && ok && there.all() {
-				return &Refusal{Reason: InUse, Detail: f.use() + ", which is " + there.rel}
+			if !threadSeen {
+				return &Refusal{Reason: UnknownUse, Detail: "lsof does not report what each thread has open"}
 			}
 		}
-		if !seen {
-			return &Refusal{Reason: UnknownUse, Detail: "lsof does not report the workspace, which this check holds open"}
+		if retry {
+			continue
 		}
-		if !threadSeen {
-			return &Refusal{Reason: UnknownUse, Detail: "lsof does not report what each thread has open"}
-		}
+		return nil
 	}
-	return nil
 }
 
 // lsof is every file that lsof reports.
 func (c *checker) lsof() ([]openFile, error) {
-	args := []string{"-n", "-P", "-w"}
+	// -w suppresses unreadable files and may hide an entire process.
+	args := []string{"-n", "-P"}
 	if uid := os.Geteuid(); runtime.GOOS == "linux" {
 		// lsof lists the threads of every process when no process is selected;
 		// with -K, or -K and -u, it leaves out those with one thread only.
@@ -2828,6 +2845,22 @@ func (i inside) all() bool { return i.dir || i.names >= i.links }
 
 // openFile is a file that lsof reports, with the fields as it prints them.
 type openFile struct{ pid, thread, fd, kind, dev, ino, name string }
+
+// vanished is a Linux descriptor that closed while lsof read its link.
+// It permits a new proof, never accepting the incomplete one.
+func (f openFile) vanished() bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	if _, err := strconv.ParseUint(f.fd, 10, 64); err != nil {
+		return false
+	}
+	p := "/proc/" + f.pid
+	if f.thread != "" {
+		p += "/task/" + f.thread
+	}
+	return f.name == p+"/fd/"+f.fd+" (readlink: No such file or directory)"
+}
 
 func (f openFile) use() string {
 	who := "process " + f.pid

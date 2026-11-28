@@ -81,9 +81,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-      # The host terminal tests start a tmux server of their own.
-      - name: install tmux
-        run: command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
+      # The host terminal tests start a tmux server of their own. The
+      # removal tests need a process namespace with a reaper, so unrelated
+      # protected processes and orphaned zombies cannot block their proof.
+      - name: install tmux and tini
+        run: |
+          if ! command -v tmux >/dev/null || ! command -v tini >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y tmux tini
+          fi
       # The hataori connect tests start an sshd of their own, as this user.
       - name: install sshd
         run: test -x /usr/sbin/sshd || { sudo apt-get update && sudo apt-get install -y openssh-server; }
@@ -92,7 +98,12 @@ jobs:
       # cmd/hataori runs the daemon, session hosts and a browser for each
       # end-to-end test, and takes close to go test's default of ten minutes
       # per package on macOS (#625).
-      - run: go test -timeout 30m ./...
+      - name: go test in a private process namespace
+        run: |
+          sudo --preserve-env=HOME,CI unshare --pid --fork --mount-proc \
+            setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
+            env "PATH=$PATH" "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}" \
+            tini -- go test -p 1 -timeout 30m ./...
 
   # The same code runs on macOS (design, section 6.4).
   test-macos:
