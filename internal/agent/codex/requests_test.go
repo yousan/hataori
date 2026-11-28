@@ -181,7 +181,7 @@ func TestApprovalsAskInChat(t *testing.T) {
 				}
 				if q := requestEvent(t, a); q != nil {
 					want := []string{"/usr/bin/zsh -lc 'touch approved.txt'", "/tmp/capture-work/patch.txt"}
-					if count >= len(want) || !q.Approval || q.Text != want[count] || len(q.Choices) != 0 || len(a.Write) != 0 {
+					if count >= len(want) || !q.Approval || q.NonBlocking || q.Text != want[count] || len(q.Choices) != 0 || len(a.Write) != 0 {
 						t.Fatalf("request %+v actions %+v", q, a)
 					}
 					count++
@@ -258,7 +258,7 @@ func TestAsyncQuestions(t *testing.T) {
 					req = q
 					var p params
 					_ = json.Unmarshal(m.Params, &p)
-					if q.ID != p.Item.ID || q.Text != "Which colour do you like?" || q.Approval || !reflect.DeepEqual(q.Choices, colourChoices) {
+					if q.ID != p.Item.ID || q.Text != "Which colour do you like?" || q.Approval || !q.NonBlocking || !reflect.DeepEqual(q.Choices, colourChoices) {
 						t.Fatal(q)
 					}
 				}
@@ -398,7 +398,7 @@ func TestPlanQuestion(t *testing.T) {
 					t.Fatal("missing request")
 				}
 				if q := requestEvent(t, a); q != nil {
-					if q.Approval || q.Text != planText || !reflect.DeepEqual(q.Choices, planChoices) {
+					if q.Approval || q.NonBlocking || q.Text != planText || !reflect.DeepEqual(q.Choices, planChoices) {
 						t.Fatal(q)
 					}
 					answer := agent.Answer{Request: q.ID}

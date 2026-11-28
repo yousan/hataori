@@ -541,9 +541,12 @@ type UsageCount struct {
 type RequestInfo struct {
 	ID       string
 	Approval bool // an approval rather than a question
-	Text     string
-	Choices  []string
-	Multi    bool // several of Choices may be chosen at once
+	// NonBlocking marks an asynchronous question that leaves the agent's
+	// turn running. Approvals always block; false preserves older adapters.
+	NonBlocking bool `json:",omitempty"`
+	Text        string
+	Choices     []string
+	Multi       bool // several of Choices may be chosen at once
 }
 
 // Factory makes an Adapter from its section of the instance's config,
