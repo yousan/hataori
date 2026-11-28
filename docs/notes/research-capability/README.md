@@ -50,8 +50,9 @@ explicitly for the new tool-description qualification.
 Focused local regressions cover:
 
 - Unsupported act/propose requests with missing or false declarations: every
-  fixture database table retains its count, and owner, workspace and runner
-  calls remain zero.
+  fixture database table retains its count, with no new owner, workspace or
+  runner calls. The proposal case has a valid existing same-scope asking
+  thread; removing preflight really creates a proposal and fails the check.
 - Scope-selected support, an explicit unsupported override and unchanged
   ordinary starts, with durable adapter identity and research flag checks.
 - Start/resume launch descriptions for supported adapters and unsupported
